@@ -1,0 +1,52 @@
+[project]
+name = "access-parsers"
+dynamic = ["version"]
+description = "Collection of parsers to read/write input and output files used in ACCESS climate models."
+authors = [
+  {name = "Micael Oliveira", email="micael.oliveira@anu.edu.au"},
+]
+readme = "README.md"
+keywords = ["parser", "access"]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "f90nml",
+    "ruamel.yaml",
+]
+
+[build-system]
+requires = ["setuptools", "setuptools_scm[toml]"]
+build-backend = "setuptools.build_meta"
+
+
+[tool.setuptools_scm]
+write_to = "src/access/parsers/_version.py"
+
+
+[project.optional-dependencies]
+devel = [
+    "flake8",
+    "black",
+    "pre-commit",
+]
+test = [
+    "pytest",
+    "pytest-cov",
+]
+
+[tool.pytest.ini_options]
+addopts = ["--cov=access.parsers", "--cov-report=term", "--cov-report=html", "--cov-report=xml"]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+omit = ["src/access/parsers/__init__.py", "src/access/parsers/_version.py"]
+
+[tool.black]
+line-length = 120
+
+[tool.flake8]
+max-line-length = 120
