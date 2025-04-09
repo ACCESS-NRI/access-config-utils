@@ -1,7 +1,7 @@
 import pytest
-import filecmp
+from unittest.mock import mock_open, patch
+from pathlib import Path
 
-from test_utils import MockFile
 from access.parsers.nuopc_config import read_nuopc_config, write_nuopc_config
 
 
@@ -30,9 +30,8 @@ def simple_nuopc_config():
 
 
 @pytest.fixture()
-def simple_nuopc_config_file(tmp_path):
-    file = tmp_path / "simple_config_file"
-    resource_file_str = """DRIVER_attributes::
+def simple_nuopc_config_file():
+    return """DRIVER_attributes::
   Verbosity = off
   cime_model = cesm
   logFilePostFix = .log
@@ -53,38 +52,39 @@ ALLCOMP_attributes::
 ::
 
 """
-    return MockFile(file, resource_file_str)
 
 
 @pytest.fixture()
-def invalid_nuopc_config_file(tmp_path):
-    file = tmp_path / "invalid_config_file"
-    resource_file_str = """DRIVER_attributes::
+def invalid_nuopc_config_file():
+    return """DRIVER_attributes::
   Verbosity: off
   cime_model - cesm
 ::
 
 COMPONENTS::: atm ocn
 """
-    return MockFile(file, resource_file_str)
 
 
-def test_read_nuopc_config(tmp_path, simple_nuopc_config, simple_nuopc_config_file):
-    config_from_file = read_nuopc_config(file_name=simple_nuopc_config_file.file)
+@patch("pathlib.Path.is_file", new=lambda file: True)
+def test_read_nuopc_config(simple_nuopc_config, simple_nuopc_config_file):
+    with patch("builtins.open", mock_open(read_data=simple_nuopc_config_file)) as m:
+        config = read_nuopc_config(file_name="simple_nuopc_config_file")
 
-    assert config_from_file == simple_nuopc_config
-
-
-def test_write_nuopc_config(tmp_path, simple_nuopc_config, simple_nuopc_config_file):
-    file = tmp_path / "config_file"
-    write_nuopc_config(simple_nuopc_config, file)
-
-    assert filecmp.cmp(file, simple_nuopc_config_file.file)
+        assert config == simple_nuopc_config
 
 
-def test_read_invalid_nuopc_config_file(tmp_path, invalid_nuopc_config_file):
-    with pytest.raises(ValueError):
-        read_nuopc_config(file_name=invalid_nuopc_config_file.file)
+def test_write_nuopc_config(simple_nuopc_config, simple_nuopc_config_file):
+    with patch("builtins.open", mock_open()) as m:
+        write_nuopc_config(simple_nuopc_config, Path("config_file"))
+
+        assert simple_nuopc_config_file == "".join(call.args[0] for call in m().write.mock_calls)
+
+
+@patch("pathlib.Path.is_file", new=lambda file: True)
+def test_read_invalid_nuopc_config_file(invalid_nuopc_config_file):
+    with patch("builtins.open", mock_open(read_data=invalid_nuopc_config_file)) as m:
+        with pytest.raises(ValueError):
+            read_nuopc_config(file_name="invalid_nuopc_config_file")
 
 
 def test_read_missing_nuopc_config_file():
