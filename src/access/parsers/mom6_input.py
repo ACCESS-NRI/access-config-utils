@@ -1,3 +1,6 @@
+# Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
+# SPDX-License-Identifier: Apache-2.0
+
 """Utilities to handle MOM6 parameter files.
 
 The MOM6 parameter file format is described here:

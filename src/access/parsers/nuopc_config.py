@@ -1,3 +1,6 @@
+# Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
+# SPDX-License-Identifier: Apache-2.0
+
 """Utilities to handle NUOPC configuration files.
 
 The `nuopc.runconfig` files use by the CESM driver, and thus by ACCESS-OM3, are a mixture of two file formats: Resource
