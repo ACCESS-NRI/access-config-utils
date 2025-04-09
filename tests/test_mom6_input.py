@@ -1,3 +1,6 @@
+# Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
+# SPDX-License-Identifier: Apache-2.0
+
 import pytest
 from unittest.mock import mock_open, patch
 from pathlib import Path

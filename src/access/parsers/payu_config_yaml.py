@@ -1,3 +1,6 @@
+# Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
+# SPDX-License-Identifier: Apache-2.0
+
 """Utilities to handle payu configuration files.
 
 Configuration for payu experiments are stored using YAML. Documentation about these files can be found here:

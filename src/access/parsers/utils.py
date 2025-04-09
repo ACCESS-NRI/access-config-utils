@@ -1,3 +1,7 @@
+# Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
+# SPDX-License-Identifier: Apache-2.0
+
+
 def convert_from_string(value: str):
     """Tries to convert a string to the most appropriate type. Leaves it unchanged if conversion does not succeed.
 
