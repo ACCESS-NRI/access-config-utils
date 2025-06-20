@@ -15,6 +15,7 @@ classifiers = [
 ]
 dependencies = [
     "f90nml",
+    "lark",
     "ruamel.yaml",
 ]
 
