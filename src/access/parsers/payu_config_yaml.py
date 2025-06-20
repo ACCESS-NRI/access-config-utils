@@ -1,44 +1,53 @@
 # Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Utilities to handle payu configuration files.
+"""Utilities to handle YAML-based configuration files.
 
-Configuration for payu experiments are stored using YAML. Documentation about these files can be found here:
-
-    https://payu.readthedocs.io/en/latest/config.html
-
-Round-trip parsing is supported by using the ruamel.yaml parser.
+The ruamel.yaml parser provides round-trip parsing of YAML files and has all capabilities we require. Here we simply
+provide wrappers around the ruamel.yaml classes so that the API is the same/similar to the other parsers.
 """
 
-from pathlib import Path
+from io import StringIO
+from typing import Any
+
 from ruamel.yaml import YAML, CommentedMap
 
 
-def read_payu_config_yaml(file_name: str) -> CommentedMap:
-    """Read a payu configuration file.
+class YAMLConfig(dict):
+    """Class to store a YAML configuration as a dict.
 
-    This function uses ruamel to parse the YAML file, so that we can do round-trip parsing.
-
-    Args:
-        file_name: Name of file to read.
-
-    Returns:
-        dict: Payu configuration.
+    The YAML parsers generates an instance of CommentedMap, which in turn also behaves like a dictionary. Unfortunately
+    we cannot simply subclass CommentedMap. This is because the dump method of YAML calls the __str__ method of
+    CommentedMap, which leads to a infinite recursion when calling the __str__ method of this class. This means that,
+    instead, we need to keep a copy of the CommentedMap and sync it with the dict.
     """
-    fname = Path(file_name)
-    if not fname.is_file():
-        raise FileNotFoundError(f"File not found: {fname.as_posix()}")
 
-    config = YAML().load(fname)
+    def __init__(self, map: CommentedMap) -> None:
+        self.map = map
+        super().__init__(map)
 
-    return config
+    def __str__(self) -> str:
+        output = StringIO("")
+        YAML().dump(self.map, output)
+        return output.getvalue()
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        super().__setitem__(key, value)
+        self.map[key] = value
+
+    def __getitem__(self, key: str) -> Any:
+        return self.map[key]
+
+    def __delitem__(self, key: str) -> None:
+        super().__delitem__(key)
+        del self.map[key]
 
 
-def write_payu_config_yaml(config: [dict | CommentedMap], file: Path):
-    """Write a Payu configuration to a file.
+class YAMLParser:
+    """Wrapper class to the ruamel.yaml parser."""
 
-    Args:
-        config (dict| CommentedMap): Payu configuration.
-        file(Path): File to write to.
-    """
-    YAML().dump(config, file)
+    def __init__(self) -> None:
+        self.parser = YAML()
+
+    def parse(self, stream: str) -> YAMLConfig:
+        return YAMLConfig(self.parser.load(stream))
