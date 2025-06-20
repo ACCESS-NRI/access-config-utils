@@ -1,10 +1,10 @@
 # Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Utilities to handle NUOPC configuration files.
+"""Parser for NUOPC configuration files.
 
-The `nuopc.runconfig` files used by the CESM driver, and thus by the NUOPC-based ACCESS models, are a mixture of formats.
- At the top-level, one has the Resource Files as implemented in ESMF. From the ESMF documentation:
+The `nuopc.runconfig` files used by the CESM driver, and thus by the NUOPC-based ACCESS models, are a mixture of
+formats. At the top-level, one has the Resource Files as implemented in ESMF. From the ESMF documentation:
 
     A Resource File (RF) is a text file consisting of list of label-value pairs. There is a limit of 1024 characters per
     line and the Resource File can contain a maximum of 200 records. Each label should be followed by some data, the
@@ -48,7 +48,9 @@ The `nuopc.runconfig` files used by the CESM driver, and thus by the NUOPC-based
 See https://earthsystemmodeling.org/docs/release/ESMF_8_6_0/ESMF_refdoc/node6.html#SECTION06090000000000000000 for
 further details.
 
-The CESM driver then uses tables as defined in Resource Files to store lists of key-value pairs instead of simple values:
+
+The CESM driver then uses tables as defined in Resource Files to store lists of key-value pairs instead of simple
+values:
 
     DRIVER_attributes::
      Verbosity = off
@@ -67,82 +69,62 @@ The CESM driver then uses tables as defined in Resource Files to store lists of 
      ocn2glc_levels = 1:10:19:26:30:33:35
     ::
 
-This format of key-value pairs does not seem to be documented and, although it resembles Fortran namlists, it is not.
+This format of key-value pairs does not seem to be documented and, although it resembles Fortran namelists, it is not.
 For example, the keys are case-sensitive, which is not the case in Fortran namelists. The format used to store arrays
 of values is also not the same as in Fortran namelists.
 """
 
-from pathlib import Path
-import re
-
-from access.parsers.utils import convert_from_string, convert_to_string
+from access.parsers.config import ConfigParser
 
 
-def read_nuopc_config(file_name: str) -> dict:
-    """Read a NUOPC config file and return its contents as a dictionary.
+class NUOPCParser(ConfigParser):
+    """NUOPC config parser."""
 
-    Args:
-        file_name (str): File to read.
+    @property
+    def case_sensitive_keys(self) -> bool:
+        return True
 
-    Returns:
-        dict: Contents of file.
-    """
-    fname = Path(file_name)
-    if not fname.is_file():
-        raise FileNotFoundError(f"File not found: {fname.as_posix()}")
+    @property
+    def grammar(self) -> str:
+        return """
+?start: lines*
 
-    label_value_pattern = re.compile(r"\s*(\w+)\s*:\s*(.+)\s*")
-    table_start_pattern = re.compile(r"\s*(\w+)\s*::\s*")
-    table_end_pattern = re.compile(r"\s*::\s*")
-    assignment_pattern = re.compile(r"\s*(\w+)\s*=\s*(\S+)\s*")
+?lines: rfile_key_value
+      | rfile_key_list
+      | rfile_key_block
+      | empty_line
 
-    config = {}
-    with open(fname, "r") as stream:
-        reading_table = False
-        label = None
-        table = None
-        for line in stream:
-            line = re.sub(r"(#).*", "", line)
-            if line.strip():
-                if reading_table:
-                    if re.match(table_end_pattern, line):
-                        config[label] = table
-                        reading_table = False
-                    else:
-                        match = re.match(assignment_pattern, line)
-                        if match:
-                            table[match.group(1)] = convert_from_string(match.group(2))
-                        else:
-                            raise ValueError(
-                                f"Line: {line} in file {file_name} is not a valid NUOPC configuration specification"
-                            )
+rfile_key_value: ws* key ":" ws* value line_end -> key_value
+rfile_key_list: ws* key ":" ws* value (ws* value)+ line_end -> key_list
+rfile_key_block: ws* key "::" line_end block "::" line_end -> key_block
 
-                elif re.match(table_start_pattern, line):
-                    reading_table = True
-                    match = re.match(label_value_pattern, line)
-                    label = match.group(1)
-                    table = {}
+block: block_line*
 
-                elif re.match(label_value_pattern, line):
-                    match = re.match(label_value_pattern, line)
-                    config[match.group(1)] = [convert_from_string(string) for string in match.group(2).split()]
+?block_line: block_key_value
+           | block_key_list
+           | empty_line
 
-    return config
+block_key_value : ws* key ws* "=" ws* value line_end -> key_value
+block_key_list : ws* key ws* "=" ws* value (":"value)+ line_end -> key_list
 
+?value: logical
+      | integer
+      | float
+      | double
+      | identifier
+      | path
 
-def write_nuopc_config(config: dict, file: Path):
-    """Write a dictionary to a NUOPC config file.
+empty_line: line_end
+line_end: (comment|ws*) NEWLINE
 
-    Args:
-        config (dict): NUOPC configuration to write.
-        file (Path): File to write to.
-    """
-    with open(file, "w") as stream:
-        for key, item in config.items():
-            if isinstance(item, dict):
-                stream.write(key + "::\n")
-                for label, value in item.items():
-                    stream.write("  " + label + " = " + convert_to_string(value) + "\n")
-                stream.write("::\n\n")
-            else:
-                stream.write(key + ": " + " ".join(map(convert_to_string, item)) + "\n")
+%import config.key
+%import config.logical
+%import config.integer
+%import config.float
+%import config.double
+%import config.identifier
+%import config.path
+%import config.comment
+%import config.ws
+%import config.NEWLINE
+"""
