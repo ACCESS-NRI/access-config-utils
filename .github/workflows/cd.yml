@@ -1,0 +1,72 @@
+name: CD
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  PY_VERSION: 3.12
+
+jobs:
+  pypi-build:
+    name: Build package for PyPI
+    if: github.repository == 'ACCESS-NRI/access-parsers'  # exclude forks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PY_VERSION }}
+
+      - run: |
+          python3 -m pip install --upgrade build && python3 -m build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: dist
+
+  pypi-publish:
+    # Split build and publish to restrict trusted publishing to just this workflow
+    needs: ['pypi-build']
+    name: Publish to PyPI.org
+    runs-on: ubuntu-latest
+    permissions:
+      # IMPORTANT: this permission is mandatory for trusted publishing
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: dist
+
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc # v1.12.4
+
+  conda:
+    name: Build with conda and upload
+    if: github.repository == 'ACCESS-NRI/access-parsers'  # exclude forks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup conda environment
+        uses: conda-incubator/setup-miniconda@835234971496cad1653abb28a638a281cf32541f # v3.2.0
+        with:
+          miniconda-version: "latest"
+          python-version: ${{ env.PY_VERSION }}
+          environment-file: conda/environment.yml
+          auto-update-conda: false
+          auto-activate-base: false
+          show-channel-urls: true
+
+      - name: Build and upload conda package
+        uses: ACCESS-NRI/action-build-and-upload-conda-packages@v3.0.0
+        with:
+          meta_yaml_dir: conda
+          user: ${{ vars.ANACONDA_USER }}
+          label: main
+          token: ${{ secrets.ANACONDA_TOKEN }}
+

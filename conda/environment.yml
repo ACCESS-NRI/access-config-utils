@@ -1,0 +1,10 @@
+channels:
+  - conda-forge
+  - accessnri
+  - default
+
+dependencies:
+  - anaconda-client
+  - conda-build
+  - conda-verify
+  - setuptools_scm
