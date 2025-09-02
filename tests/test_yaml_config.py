@@ -3,7 +3,7 @@
 
 import pytest
 
-from access.parsers.payu_config_yaml import YAMLParser
+from access.parsers.yaml_config import YAMLParser
 
 
 @pytest.fixture(scope="module")
@@ -13,7 +13,7 @@ def parser():
 
 
 @pytest.fixture()
-def simple_payu_config():
+def simple_yaml_config():
     """Fixture returning a dictionary storing a payu config file."""
     return {
         "project": "x77",
@@ -33,7 +33,7 @@ def simple_payu_config():
 
 
 @pytest.fixture()
-def simple_payu_config_file():
+def simple_yaml_config_file():
     """Fixture returning the contents of a simple payu config file."""
     return """project: x77
 ncpus: 48
@@ -51,7 +51,7 @@ input:
 
 
 @pytest.fixture()
-def payu_config_file():
+def yaml_config_file():
     """Fixture returning the contents of a more complex payu config file."""
     return """# PBS configuration
 
@@ -81,7 +81,7 @@ input:
 
 
 @pytest.fixture()
-def modified_payu_config_file():
+def modified_yaml_config_file():
     """Fixture returning the contents the previous payu config file after introducing some modifications."""
     return """# PBS configuration
 
@@ -109,19 +109,19 @@ input:
 """
 
 
-def test_read_payu_config(parser, simple_payu_config, simple_payu_config_file):
+def test_read_yaml_config(parser, simple_yaml_config, simple_yaml_config_file):
     """Test parsing of a simple file."""
-    config = parser.parse(simple_payu_config_file)
+    config = parser.parse(simple_yaml_config_file)
 
-    assert config == simple_payu_config
+    assert config == simple_yaml_config
 
 
-def test_round_trip_payu_config(parser, payu_config_file, modified_payu_config_file):
+def test_round_trip_yaml_config(parser, yaml_config_file, modified_yaml_config_file):
     """Test round-trip parsing of a more complex file with mutation of the config."""
-    config = parser.parse(payu_config_file)
+    config = parser.parse(yaml_config_file)
 
     config["ncpus"] = 64
     config["input"][0] = "/some/other/path/to/inputs/1deg/mom"
     del config["exe"]
 
-    assert modified_payu_config_file == str(config)
+    assert modified_yaml_config_file == str(config)
