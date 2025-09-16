@@ -36,23 +36,23 @@ class ProfilingParser(ABC):
         """list: Metrics available when using this parser."""
 
     @abstractmethod
-    def read(self, path: Path) -> dict:
-        """Given a path, open the corresponding file/directory, parse its contents, and return a dictionary holding the
-        profiling data.
+    def read(self, stream: str) -> dict:
+        """Parse the given text.
 
         Args:
-            path (Path): path to parse. Can be a file or directory, depending on the parser.
+            stream (str): text to parse.
 
         Returns:
             dict: profiling data.
         """
+
 
 def _convert_from_string(value: str) -> Any:
     """Tries to convert a string to the most appropriate numeric type. Leaves it unchanged if conversion does not succeed.
 
     Args:
         value (str): string to convert.
-    
+
     Returns:
         Any: the converted string or the original string.
     """

@@ -19,14 +19,12 @@ import re
 
 
 class FMSProfilingParser(ProfilingParser):
-    """FMS profiling output parser.
-    """
+    """FMS profiling output parser."""
 
-    def __init__(self, filename: str, has_hits: bool = True):
+    def __init__(self, has_hits: bool = True):
         """Instantiate FMS profiling parser.
 
         Args:
-            filename (str): name of log file containing FMS timings.
             has_hits (bool): whether FMS timings contains "hits" column.
         """
         super().__init__()
@@ -37,16 +35,12 @@ class FMSProfilingParser(ProfilingParser):
         else:
             self._metrics = []
         self._metrics += ["tmin", "tmax", "tavg", "tstd", "tfrac", "grain", "pemin", "pemax"]
-        self._filename = filename
 
     @property
     def metrics(self) -> list:
         return self._metrics
 
-    def read(self, path: Path) -> dict:
-        profiling_file = path / self._filename
-        if not profiling_file.is_file():
-            raise FileNotFoundError(f"File not found: {profiling_file.as_posix()}")
+    def read(self, stream: str) -> dict:
 
         # Regular expression to extract the profiling section from the file
         header = r"\s*" + r"\s*".join(self._metrics) + r"\s*"
@@ -63,31 +57,26 @@ class FMSProfilingParser(ProfilingParser):
         # Parse data
         stats = {"region": []}
         stats.update({m: [] for m in self.metrics})
-        with open(profiling_file, "r") as f:
-            profiling_section = profiling_section_p.search(f.read()).group(1)
-            for line in profiling_region_p.finditer(profiling_section):
-                stats["region"].append(line.group("region"))
-                for metric in self.metrics:
-                    stats[str(metric)].append(_convert_from_string(line.group(metric)))
+        profiling_section = profiling_section_p.search(stream).group(1)
+        for line in profiling_region_p.finditer(profiling_section):
+            stats["region"].append(line.group("region"))
+            for metric in self.metrics:
+                stats[str(metric)].append(_convert_from_string(line.group(metric)))
 
         return stats
 
+
 class MOM5ProfilingParser(FMSProfilingParser):
     """MOM5 profiling output parser."""
-    def __init__(self, filename: str):
-        """Instantiate MOM5 profiling parser.
 
-        Args:
-            filename (str): name of log file containing MOM5 FMS timings.
-        """
-        super().__init__(filename, has_hits = False)
+    def __init__(self):
+        """Instantiate MOM5 profiling parser."""
+        super().__init__(has_hits=False)
+
 
 class MOM6ProfilingParser(FMSProfilingParser):
     """MOM6 profiling output parser."""
-    def __init__(self, filename: str):
-        """Instantiate MOM6 profiling parser.
 
-        Args:
-            filename (str): name of log file containing MOM6 FMS timings.
-        """
-        super().__init__(filename, has_hits = True)
+    def __init__(self):
+        """Instantiate MOM6 profiling parser."""
+        super().__init__(has_hits=True)
