@@ -1,0 +1,64 @@
+// Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
+// SPDX-License-Identifier: Apache-2.0
+
+// Common terminals and rules for use in all ACCESS configuration parsers
+
+// Dictionary keys
+key : CNAME
+
+// Fortran logicals
+logical: FTRUE | FFALSE
+FTRUE: ".true."i
+FFALSE: ".false."i
+
+// Booleans
+bool: TRUE | FALSE
+TRUE: "True"
+FALSE: "False"
+
+// Integers
+integer: SIGNED_INT
+
+// Floats
+float: SIGNED_FLOAT
+
+// Fortran double values
+double: SIGNED_DOUBLE
+_DOUBLE_EXP    : ("d"|"D") SIGNED_INT
+DOUBLE        : INT _DOUBLE_EXP | DECIMAL _DOUBLE_EXP?
+SIGNED_DOUBLE : ["+"|"-"] DOUBLE
+
+// Fortran complex floats
+complex: CMPLX
+CMPLX: "(" WS_INLINE* SIGNED_FLOAT WS_INLINE* "," WS_INLINE* SIGNED_FLOAT WS_INLINE* ")"
+
+// Fortran complex doubles
+double_complex: DCMPLX
+DCMPLX: "(" WS_INLINE* SIGNED_DOUBLE WS_INLINE* "," WS_INLINE* SIGNED_DOUBLE WS_INLINE* ")"
+
+// Identifiers
+identifier: CNAME
+
+// Quoted strings
+string: STRING
+STRING: /(".*?(?<!\\)(\\\\)*?"|'(?!'').*?(?<!\\)(\\\\)*?')/
+
+// Unix-like filesystem paths
+path: PATH
+PATH_COMPONENT : /[a-zA-Z0-9._-]+/
+PATH           : ("/" | "./" | "../")? PATH_COMPONENT ("/" PATH_COMPONENT)* ("/")?
+
+// Space, newlines and comments
+ws: WS_INLINE
+NEWLINE: CR? LF
+comment: /[ \t]*#[^\n]*/
+fortran_comment: /[ \t]*![^\n]*/
+
+%import common.CNAME
+%import common.SIGNED_INT
+%import common.SIGNED_FLOAT
+%import common.INT
+%import common.DECIMAL
+%import common.CR
+%import common.LF
+%import common.WS_INLINE

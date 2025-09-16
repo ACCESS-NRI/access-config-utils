@@ -2,113 +2,135 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-from unittest.mock import mock_open, patch
-from pathlib import Path
+from lark.exceptions import UnexpectedCharacters, UnexpectedEOF
 
-from access.parsers.mom6_input import Mom6Input, write_mom6_input, read_mom6_input
+from access.parsers.mom6_input import MOM6InputParser
 
 
-@pytest.fixture()
-def simple_mom6_input():
+@pytest.fixture(scope="module")
+def parser():
+    """Fixture instantiating the parser."""
+    return MOM6InputParser()
+
+
+@pytest.fixture(scope="module")
+def mom6_input():
+    """Fixture returning a dict holding the parsed content of a mom6_input file."""
     return {
-        "REGRIDDING_COORDINATE_MODE": "ZSTAR",
-        "N_SMOOTH": 4,
-        "INCORRECT_DIRECTIVE": 2,
-        "IGNORED_DIRECTIVE": 3,
-        "DT": 1800.0,
+        "VAR1": "test",
+        "BLOCK": {"BVAR": 4, "BLIST": [1, 2, 3]},
+        "Var2": 2,
+        "List": ["a", "b", "c"],
+        "FLOAT1": 1800.0,
+        "FLOAT2": 1e-10,
         "BOOL": True,
     }
 
 
-@pytest.fixture()
-def simple_mom6_input_file():
-    return """BOOL = True
-DT = 1800.0
-IGNORED_DIRECTIVE = 3
-INCORRECT_DIRECTIVE = 2
-N_SMOOTH = 4
-REGRIDDING_COORDINATE_MODE = 'ZSTAR'
-"""
-
-
-@pytest.fixture()
-def complex_mom6_input_file():
+@pytest.fixture(scope="module")
+def mom6_input_file():
+    """Fixture returning the content of a mom6_input file."""
     return """
-/* This is a comment
-   spanning two lines */
-REGRIDDING_COORDINATE_MODE = Z*
-KPP%
-N_SMOOTH = 4
-%KPP
+BOOL = True ! This is a comment
+FLOAT1 = 1800.0
 
-#COMMENT_DIRECTIVE = 1
-# INCORRECT_DIRECTIVE = 2
-#override IGNORED_DIRECTIVE = 3
-DT = 1800.0  ! This is a comment
-! This is another comment
-!COMMENTED_VAR = 3
-TO_BE_REMOVED = 10.0 
-BOOL = True
+  ! This is another comment
+
+FLOAT2 = 1e-10
+VAR1="test"
+Var2 = 2
+BLOCK%
+BVAR = 4
+ ! A comment inside a block
+BLIST = 1,2,3
+%BLOCK ! Yet another comment
+
+List = 'a','b','c'
 """
 
 
-@pytest.fixture()
+@pytest.fixture(scope="module")
 def modified_mom6_input_file():
+    """Fixture returning the content of the previous mom6_input file, but with some modifications."""
     return """
+BOOL = True ! This is a comment
+FLOAT1 = 900.0
 
+  ! This is another comment
 
-REGRIDDING_COORDINATE_MODE = Z*
-KPP%
-N_SMOOTH = 4
-%KPP
+FLOAT2 = 1e-10
+VAR1="replaced"
+Var2 = 2
+BLOCK%
+BVAR = 32
+ ! A comment inside a block
+BLIST = 1,2,3
+%BLOCK ! Yet another comment
 
-#COMMENT_DIRECTIVE = 1
-# INCORRECT_DIRECTIVE = 2
-#override IGNORED_DIRECTIVE = 3
-DT = 900.0  ! This is a comment
-! This is another comment
-!COMMENTED_VAR = 3
-BOOL = True
-
-
-ADDED_VAR = 32
+List = 'a','b','c'
 """
 
 
-@patch("pathlib.Path.is_file", new=lambda file: True)
-def test_read_mom6_input(simple_mom6_input, simple_mom6_input_file):
-    with patch("builtins.open", mock_open(read_data=simple_mom6_input_file)) as m:
-        config = read_mom6_input(file_name="simple_mom6_input_file")
-
-        assert config == simple_mom6_input
-
-
-def test_write_mom6_input(simple_mom6_input, simple_mom6_input_file):
-    with patch("pathlib.Path.open", mock_open()) as m:
-        write_mom6_input(simple_mom6_input, Path("config_file"))
-
-        assert simple_mom6_input_file == "".join(call.args[0] for call in m().write.mock_calls)
-
-
-@patch("pathlib.Path.is_file", new=lambda file: True)
-def test_round_trip_mom6_input(complex_mom6_input_file, modified_mom6_input_file):
-    with patch("builtins.open", mock_open(read_data=complex_mom6_input_file)) as m1:
-        config = read_mom6_input(file_name="complex_config_file")
-
-        config["dt"] = 900.0
-        config["ADDED_VAR"] = 1
-        config["ADDED_VAR"] = 32
-        del config["N_SMOOTH"]
-        config["N_SMOOTH"] = 4
-        del config["TO_BE_REMOVED"]
-
-        with patch("pathlib.Path.open", mock_open()) as m:
-            write_mom6_input(config, Path("some_other_config_file"))
-
-            assert config["ADDED_VAR"] == 32
-            assert modified_mom6_input_file == "".join(call.args[0] for call in m().write.mock_calls)
+def test_valid_mom6_input(parser):
+    """Test the basic grammar constructs"""
+    assert dict(parser.parse("TEST = 'a'")) == {"TEST": "a"}
+    assert dict(parser.parse("TEST='a'")) == {"TEST": "a"}
+    assert dict(parser.parse('TEST = "a"')) == {"TEST": "a"}
+    assert dict(parser.parse("TEST = True")) == {"TEST": True}
+    assert dict(parser.parse("TEST = False")) == {"TEST": False}
+    assert dict(parser.parse("TEST = 'a','b'")) == {"TEST": ["a", "b"]}
+    assert dict(parser.parse("TEST = 1,2")) == {"TEST": [1, 2]}
+    assert dict(parser.parse("TEST%\na=1\n%TEST")) == {"TEST": {"a": 1}}
+    assert dict(parser.parse("TEST = 'a' ! Comment\n ! Comment\n")) == {"TEST": "a"}
+    assert dict(parser.parse("TEST%\na=1\n ! Comment\n%TEST")) == {"TEST": {"a": 1}}
 
 
-def test_read_missing_mom6_file():
-    with pytest.raises(FileNotFoundError):
-        Mom6Input(file_name="garbage")
+def test_invalid_mom6_input(parser):
+    """Test checking that the parser catches malformed expressions"""
+    with pytest.raises(UnexpectedCharacters):
+        parser.parse(" TEST = a")
+
+    with pytest.raises(UnexpectedCharacters):
+        parser.parse("TEST = a")
+
+    with pytest.raises(UnexpectedCharacters):
+        parser.parse("TEST : a")
+
+    with pytest.raises(UnexpectedCharacters):
+        parser.parse("TEST = true")
+
+    with pytest.raises(UnexpectedCharacters):
+        parser.parse("TEST = false")
+
+    with pytest.raises(UnexpectedCharacters):
+        dict(parser.parse("%TEST\na=1\n%TEST"))
+
+    with pytest.raises(UnexpectedCharacters):
+        dict(parser.parse("TEST%\na=1\nTEST%"))
+
+    with pytest.raises(UnexpectedCharacters):
+        parser.parse("BLOCK%\n TEST ='a'")
+
+
+def test_mom6_input_parse(parser, mom6_input, mom6_input_file):
+    """Test parsing of a file."""
+    config = parser.parse(mom6_input_file)
+    assert dict(config) == mom6_input
+
+
+def test_mom6_input_roundtrip(parser, mom6_input_file):
+    """Test round-trip parsing."""
+    config = parser.parse(mom6_input_file)
+
+    assert str(config) == mom6_input_file
+
+
+def test_mom6_input_roundtrip_with_mutation(parser, mom6_input_file, modified_mom6_input_file):
+    """Test round-trip parsing with mutation of the config."""
+    config = parser.parse(mom6_input_file)
+
+    config["VAR1"] = "replaced"
+    config["FLOAT1"] = 900.0
+    config["BLOCK"]["BVAR"] = 32
+
+    assert str(config) == modified_mom6_input_file

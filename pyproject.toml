@@ -14,7 +14,7 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "f90nml",
+    "lark",
     "ruamel.yaml",
 ]
 
