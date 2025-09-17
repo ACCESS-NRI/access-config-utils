@@ -63,19 +63,3 @@ class FMSProfilingParser(ProfilingParser):
                 stats[str(metric)].append(_convert_from_string(line.group(metric)))
 
         return stats
-
-
-class MOM5ProfilingParser(FMSProfilingParser):
-    """MOM5 profiling output parser."""
-
-    def __init__(self):
-        """Instantiate MOM5 profiling parser."""
-        super().__init__(has_hits=False)
-
-
-class MOM6ProfilingParser(FMSProfilingParser):
-    """MOM6 profiling output parser."""
-
-    def __init__(self):
-        """Instantiate MOM6 profiling parser."""
-        super().__init__(has_hits=True)

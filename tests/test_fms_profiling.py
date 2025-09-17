@@ -3,24 +3,24 @@
 
 import pytest
 
-from access.parsers.mom_profiling import MOM5ProfilingParser, MOM6ProfilingParser
+from access.parsers.fms_profiling import FMSProfilingParser
 
 
 @pytest.fixture(scope="module")
-def mom5_parser():
-    """Fixture instantiating the MOM5 parser."""
-    return MOM5ProfilingParser()
+def fms_hits_parser():
+    """Fixture instantiating the FMS parser where hits column is present."""
+    return FMSProfilingParser()
 
 
 @pytest.fixture(scope="module")
-def mom6_parser():
-    """Fixture instantiating the MOM6 parser."""
-    return MOM6ProfilingParser()
+def fms_nohits_parser():
+    """Fixture instantiating the FMS parser where hits column is not present."""
+    return FMSProfilingParser(has_hits=False)
 
 
 @pytest.fixture(scope="module")
-def mom5_profiling():
-    """Fixture returning a dict holding the parsed content of a mom6_input file."""
+def fms_nohits_profiling():
+    """Fixture returning a dict holding the parsed FMS timing content without hits."""
     return {
         "region": [
             "Total runtime",
@@ -40,8 +40,8 @@ def mom5_profiling():
 
 
 @pytest.fixture(scope="module")
-def mom5_log_file():
-    """Fixture returning the timing content of a mom5 log file."""
+def fms_nohits_log_file():
+    """Fixture returning the FMS timing content without hits column."""
     return """ MPP_DOMAINS_STACK high water mark=      747000
 
 Tabulating mpp_clock statistics across     49 PEs...
@@ -61,8 +61,8 @@ oasis_send                            2.468914      2.756777      2.593809      
 
 
 @pytest.fixture(scope="module")
-def mom6_profiling():
-    """Fixture returning a dict holding the parsed content of a mom6_input file."""
+def fms_hits_profiling():
+    """Fixture returning a dict holding the parsed FMS timing content with hits."""
     return {
         "region": [
             "Total runtime",
@@ -122,8 +122,8 @@ def mom6_profiling():
 
 
 @pytest.fixture(scope="module")
-def mom6_log_file():
-    """Fixture returning the timing content of a mom6 log file."""
+def fms_hits_log_file():
+    """Fixture returning a dict holding the parsed FMS timing content wiht hits."""
     return """ MPP_DOMAINS_STACK high water mark=      380512
 
 Tabulating mpp_clock statistics across      1 PEs...
@@ -144,23 +144,23 @@ Ocean Other                            192      1.710326      1.710326      1.71
 """
 
 
-def test_mom5_profiling(mom5_parser, mom5_log_file, mom5_profiling):
-    """Test the correct parsing of MOM5 timing information."""
-    mom5_parsed_log = mom5_parser.read(mom5_log_file)
-    for idx, region in enumerate(mom5_profiling.keys()):
-        assert region in mom5_parsed_log, f"{region} not found in mom5 parsed log"
+def test_fms_nohits_profiling(fms_nohits_parser, fms_nohits_log_file, fms_nohits_profiling):
+    """Test the correct parsing of FMS timing information without hits column."""
+    parsed_log = fms_nohits_parser.read(fms_nohits_log_file)
+    for idx, region in enumerate(fms_nohits_profiling.keys()):
+        assert region in parsed_log, f"{region} not found in mom5 parsed log"
         for metric in ("tmin", "tmax", "tavg", "tstd"):
             assert (
-                mom5_profiling[metric][idx] == mom5_parsed_log[metric][idx]
+                fms_nohits_profiling[metric][idx] == parsed_log[metric][idx]
             ), f"Incorrect {metric} for region {region} (idx: {idx})."
 
 
-def test_mom6_profiling(mom6_parser, mom6_log_file, mom6_profiling):
-    """Test the correct parsing of MOM6 timing information."""
-    mom6_parsed_log = mom6_parser.read(mom6_log_file)
-    for idx, region in enumerate(mom6_profiling.keys()):
-        assert region in mom6_parsed_log, f"{region} not found in mom6 parsed log"
+def test_mom6_profiling(fms_hits_parser, fms_hits_log_file, fms_hits_profiling):
+    """Test the correct parsing of FMS timing information with hits column."""
+    parsed_log = fms_hits_parser.read(fms_hits_log_file)
+    for idx, region in enumerate(fms_hits_profiling.keys()):
+        assert region in parsed_log, f"{region} not found in mom6 parsed log"
         for metric in ("hits", "tmin", "tmax", "tavg", "tstd"):
             assert (
-                mom6_profiling[metric][idx] == mom6_parsed_log[metric][idx]
+                fms_hits_profiling[metric][idx] == parsed_log[metric][idx]
             ), f"Incorrect {metric} for region {region} (idx: {idx})."
