@@ -48,10 +48,8 @@ class PayuJSONProfilingParser(ProfilingParser):
 
         # remove known keys not relevant to profiling
         for unwanted_key in ("payu_start_time", "payu_finish_time"):
-            try:
+            if unwanted_key in timings:
                 del timings[unwanted_key]
-            except KeyError:
-                continue
 
         result = {"regions": [], "walltime": []}
 
