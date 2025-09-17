@@ -14,7 +14,6 @@ Ocean thermodynamics and tracers     72     27.377185     33.281659     29.95014
 """
 
 from access.parsers.profiling import ProfilingParser, _convert_from_string
-from pathlib import Path
 import re
 
 

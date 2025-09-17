@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-from lark.exceptions import UnexpectedCharacters, UnexpectedEOF
 
 from access.parsers.mom_profiling import MOM5ProfilingParser, MOM6ProfilingParser
 

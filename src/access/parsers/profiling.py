@@ -4,7 +4,6 @@
 """Classes and utilities to build profiling parsers for reading profiling data."""
 
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import Any
 
 
