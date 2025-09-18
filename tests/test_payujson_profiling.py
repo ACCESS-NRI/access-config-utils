@@ -14,7 +14,7 @@ def payujson_parser():
 
 @pytest.fixture(scope="module")
 def payujson_profiling():
-    """Fixture returning a dict holding the parsed FMS timing content without hits."""
+    """Fixture returning a dict holding the parsed Payu JSON timing content."""
     return {
         "region": [
             "payu_setup_duration_seconds",
@@ -29,7 +29,7 @@ def payujson_profiling():
 
 @pytest.fixture(scope="module")
 def payujson_log_file():
-    """Fixture returning the FMS timing content without hits column."""
+    """Fixture returning the Payu JSON timing content."""
     return """{
     "scheduler_job_id": "149764665.gadi-pbs",
     "timings": {
