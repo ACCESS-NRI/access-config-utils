@@ -51,11 +51,11 @@ class PayuJSONProfilingParser(ProfilingParser):
             if unwanted_key in timings:
                 del timings[unwanted_key]
 
-        result = {"regions": [], "walltime": []}
+        result = {"region": [], "walltime": []}
 
         # transpose dict to be consistent with other profiling parsers.
         for k, v in timings.items():
-            result["regions"].append(k)
+            result["region"].append(k)
             result["walltime"].append(v)
 
         return result

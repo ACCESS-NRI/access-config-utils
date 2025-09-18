@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-import datetime
 
 from access.parsers.payujson_profiling import PayuJSONProfilingParser
 
@@ -17,7 +16,7 @@ def payujson_parser():
 def payujson_profiling():
     """Fixture returning a dict holding the parsed FMS timing content without hits."""
     return {
-        "regions": [
+        "region": [
             "payu_setup_duration_seconds",
             "payu_model_run_duration_seconds",
             "payu_run_duration_seconds",
