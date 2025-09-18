@@ -19,13 +19,8 @@ dependencies = [
 ]
 
 [build-system]
-requires = ["setuptools", "setuptools_scm[toml]"]
+requires = ["setuptools>=80", "setuptools_scm[toml]>=8"]
 build-backend = "setuptools.build_meta"
-
-
-[tool.setuptools_scm]
-write_to = "src/access/parsers/_version.py"
-
 
 [project.optional-dependencies]
 devel = [
@@ -43,7 +38,7 @@ addopts = ["--cov=access.parsers", "--cov-report=term", "--cov-report=html", "--
 testpaths = ["tests"]
 
 [tool.coverage.run]
-omit = ["src/access/parsers/__init__.py", "src/access/parsers/_version.py"]
+omit = ["src/access/parsers/__init__.py"]
 
 [tool.black]
 line-length = 120
