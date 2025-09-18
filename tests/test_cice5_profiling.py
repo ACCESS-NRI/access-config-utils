@@ -19,7 +19,7 @@ def cice5_parser():
 
 @pytest.fixture(scope="module")
 def cice5_profiling():
-    """Fixture returning a dict holding the parsed FMS timing content without hits."""
+    """Fixture returning a dict holding the parsed CICE5 timing content."""
     return {
         "region": ["Total", "TimeLoop"],
         "min": [16197.42, 16197.14],

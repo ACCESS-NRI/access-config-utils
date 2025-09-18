@@ -33,9 +33,22 @@ class CICE5ProfilingParser(ProfilingParser):
 
     @property
     def metrics(self) -> list:
+        """Implements "metrics" abstract method/property.
+
+        Returns:
+            list: the metric names captured by this parser.
+        """
         return self._metrics
 
     def read(self, stream: str) -> dict:
+        """Implements "read" abstract method to parse profiling data in CICE5 log output.
+
+        Args:
+            stream (str): String containing the CICE5 log to be parsed.
+
+        Returns:
+            dict: Parsed timing information.
+        """
         # Initialize result dictionary
         result = {"region": [], "min": [], "max": [], "mean": []}
 
