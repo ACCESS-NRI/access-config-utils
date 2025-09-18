@@ -56,7 +56,11 @@ class FMSProfilingParser(ProfilingParser):
         # Parse data
         stats = {"region": []}
         stats.update({m: [] for m in self.metrics})
-        profiling_section = profiling_section_p.search(stream).group(1)
+        match = profiling_section_p.search(stream)
+        if match == None:
+            raise ValueError("No FMS profiling data found")
+        else:
+            profiling_section = match.group(1)
         for line in profiling_region_p.finditer(profiling_section):
             stats["region"].append(line.group("region"))
             for metric in self.metrics:
