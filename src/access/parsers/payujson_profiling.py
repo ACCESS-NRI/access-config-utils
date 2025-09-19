@@ -52,21 +52,23 @@ class PayuJSONProfilingParser(ProfilingParser):
             dict: Parsed timing information.
 
         Raises:
-            KeyError: when "timings" key is missing in input JSON.
-            ValueError: if stream is not a string with valid JSON.
+            ValueError: when input stream is not valid Payu JSON output.
         """
+        errmsg = "No Payu profiling data found"
 
         try:
             timings = json.loads(stream)["timings"]
-        except KeyError:
-            raise KeyError('"timings" key missing in stream.')
-        except json.JSONDecodeError:
-            raise ValueError("Invalid JSON supplied.")
+        except:
+            raise ValueError(errmsg)
 
         # remove known keys not relevant to profiling
         for unwanted_key in ("payu_start_time", "payu_finish_time"):
             if unwanted_key in timings:
                 del timings[unwanted_key]
+
+        # error if no relevant keys in timings
+        if not timings:
+            raise ValueError(errmsg)
 
         result = {"region": [], "walltime": []}
 
