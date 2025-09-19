@@ -61,6 +61,17 @@ Timer   2:  TimeLoop   16197.19 seconds
 """
 
 
+@pytest.fixture(scope="module")
+def cice5_incorrect_log_file():
+    """Fixture returning an incorrect CICE5 timing content."""
+    return """Timer stats (node): min =    16197.42 seconds
+                      max =    16197.47 seconds
+                      mean=    16197.44 seconds
+  Timer stats(block): min =        0.00 seconds
+                      max =        0.00 seconds
+                      mean=        0.00 seconds"""
+
+
 def test_cice5_profiling(cice5_required_metrics, cice5_parser, cice5_log_file, cice5_profiling):
     """Test the correct parsing of CICE5 timing information."""
     parsed_log = cice5_parser.read(cice5_log_file)
@@ -77,3 +88,9 @@ def test_cice5_profiling(cice5_required_metrics, cice5_parser, cice5_log_file, c
             assert (
                 cice5_profiling[metric][idx] == parsed_log[metric][idx]
             ), f"Incorrect {metric} for region {region} (idx: {idx})."
+
+
+def test_cice5_incorrect_profiling(cice5_parser, cice5_incorrect_log_file):
+    """Test the parsing of incirrect CICE5 timing information."""
+    with pytest.raises(ValueError):
+        cice5_parser.read(cice5_incorrect_log_file)

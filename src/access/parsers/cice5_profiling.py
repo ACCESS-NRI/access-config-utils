@@ -48,6 +48,9 @@ class CICE5ProfilingParser(ProfilingParser):
 
         Returns:
             dict: Parsed timing information.
+
+        Raises:
+            ValueError: If matching timings aren't found.
         """
         # Initialize result dictionary
         result = {"region": [], "min": [], "max": [], "mean": []}
@@ -58,6 +61,9 @@ class CICE5ProfilingParser(ProfilingParser):
 
         # Find all matches
         matches = re.findall(pattern, stream, re.MULTILINE | re.DOTALL)
+
+        if not matches:
+            raise ValueError("No CICE5 profiling data found")
 
         # Extract data from matches
         for match in matches:
