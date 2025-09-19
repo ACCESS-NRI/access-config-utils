@@ -123,7 +123,7 @@ def fms_hits_profiling():
 
 @pytest.fixture(scope="module")
 def fms_hits_log_file():
-    """Fixture returning a dict holding the parsed FMS timing content wiht hits."""
+    """Fixture returning the FMS timing content with hits."""
     return """ MPP_DOMAINS_STACK high water mark=      380512
 
 Tabulating mpp_clock statistics across      1 PEs...
@@ -144,6 +144,19 @@ Ocean Other                            192      1.710326      1.710326      1.71
 """
 
 
+@pytest.fixture(scope="module")
+def fms_incorrect_log_file():
+    """Fixture returning an incorrect FMS timing content."""
+    return """ MPP_DOMAINS_STACK high water mark=      380512
+
+Tabulating mpp_clock statistics across      1 PEs...
+
+                                      hits                        tmax          tavg          tstd  tfrac grain pemin pemax
+Total runtime                            1    100.641190    100.641190    100.641190      0.000000  1.000     0     0     0
+high water mark=           0
+"""
+
+
 def test_fms_nohits_profiling(fms_nohits_parser, fms_nohits_log_file, fms_nohits_profiling):
     """Test the correct parsing of FMS timing information without hits column."""
     parsed_log = fms_nohits_parser.read(fms_nohits_log_file)
@@ -155,7 +168,7 @@ def test_fms_nohits_profiling(fms_nohits_parser, fms_nohits_log_file, fms_nohits
             ), f"Incorrect {metric} for region {region} (idx: {idx})."
 
 
-def test_mom6_profiling(fms_hits_parser, fms_hits_log_file, fms_hits_profiling):
+def test_fms_hits_profiling(fms_hits_parser, fms_hits_log_file, fms_hits_profiling):
     """Test the correct parsing of FMS timing information with hits column."""
     parsed_log = fms_hits_parser.read(fms_hits_log_file)
     for idx, region in enumerate(fms_hits_profiling.keys()):
@@ -164,3 +177,9 @@ def test_mom6_profiling(fms_hits_parser, fms_hits_log_file, fms_hits_profiling):
             assert (
                 fms_hits_profiling[metric][idx] == parsed_log[metric][idx]
             ), f"Incorrect {metric} for region {region} (idx: {idx})."
+
+
+def test_fms_incorrect_profiling(fms_hits_parser, fms_incorrect_log_file):
+    """Test the parsing of incorrect FMS timing information."""
+    with pytest.raises(ValueError):
+        fms_hits_parser.read(fms_incorrect_log_file)
