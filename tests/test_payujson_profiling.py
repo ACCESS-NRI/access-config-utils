@@ -62,9 +62,14 @@ def test_payujson_profiling(payujson_parser, payujson_log_file, payujson_profili
         ), f"Incorrect walltime for region {region} (idx: {idx})."
 
 
-def test_payujson_errors(payujson_parser):
+def test_payujson_incorrect_profiling(payujson_parser):
     """Test that exceptions get raised appropriately."""
-    with pytest.raises(KeyError):
+    # missing "timings" key
+    with pytest.raises(ValueError):
         payujson_parser.read('{"a": 123}')
+    # empty "timings" value
+    with pytest.raises(ValueError):
+        payujson_parser.read('{"timings": {"payu_start_time": "2025-09-16T08:52:50.748807"}}')
+    # invalid JSON altogether
     with pytest.raises(ValueError):
         payujson_parser.read("abc def")
