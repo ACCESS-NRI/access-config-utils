@@ -1,0 +1,42 @@
+{% set data = load_setup_py_data(setup_file='../setup.py', from_recipe_dir=True) %}
+{% set version = data.get('version') %}
+{% set pyproj = load_file_data('../pyproject.toml', from_recipe_dir=True) %}
+{% set project = pyproj.get('project') %}
+
+package:
+    name: access-parsers
+    version: "{{ version }}"
+
+build:
+    noarch: python
+    number: 0
+    script: "{{ PYTHON }}  -m pip install . -vv"
+    entry_points:
+        {% for name, script in project.get('scripts', {}).items() %}
+        - {{ name }} = {{ script }}
+        {% endfor %}
+
+source:
+    path: ../
+
+requirements:
+    host:
+        - python
+        - pip
+        - setuptools >=61.0.0
+        - setuptools_scm
+    run:
+        - python >=3.10
+        {% for dep in project.get('dependencies', []) %}
+        - {{ dep }}
+        {% endfor %}
+
+test:
+    imports:
+        - access.parsers
+
+about:
+    home: https://github.com/ACCESS-NRI/access-parsers/
+    license: Apache Software
+    license_family: APACHE
+    summary: "Various functions to read and write configuration files for the models developed at ACCESS-NRI."
