@@ -319,22 +319,22 @@ def test_um13_parsing(um13_raw_profiling_data, um13_parsed_profile_data):
 def test_um7_parser_missing_header(um7_malformed_profiling_data_missing_header):
     parser = UMProfilingParser()
     with pytest.raises(ValueError):
-        stats = parser.read(um7_malformed_profiling_data_missing_header)
+        parser.read(um7_malformed_profiling_data_missing_header)
 
 
 def test_um7_parser_missing_footer(um7_malformed_profiling_data_missing_footer):
     parser = UMProfilingParser()
     with pytest.raises(ValueError):
-        stats = parser.read(um7_malformed_profiling_data_missing_footer)
+        parser.read(um7_malformed_profiling_data_missing_footer)
 
 
 def test_um7_parser_missing_section(um7_malformed_profiling_data_missing_profiling_section):
     parser = UMProfilingParser()
     with pytest.raises(AssertionError):
-        stats = parser.read(um7_malformed_profiling_data_missing_profiling_section)
+        parser.read(um7_malformed_profiling_data_missing_profiling_section)
 
 
 def test_um7_parser_malformed_columns(um7_malformed_profiling_data_bad_columndata):
     parser = UMProfilingParser()
     with pytest.raises(AssertionError):
-        stats = parser.read(um7_malformed_profiling_data_bad_columndata)
+        parser.read(um7_malformed_profiling_data_bad_columndata)
