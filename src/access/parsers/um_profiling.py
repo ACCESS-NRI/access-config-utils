@@ -58,7 +58,7 @@ class UMProfilingParser(ProfilingParser):
     def metrics(self) -> list:
         return self._metrics
 
-    def _get_um_version(self, stream: str) -> str:
+    def get_um_version(self, stream: str) -> str:
         """Extract UM version from the input stream.
 
         Args:
@@ -67,11 +67,11 @@ class UMProfilingParser(ProfilingParser):
             str: A standardised UM version string.
 
         >>> data='**************** Based upon UM release vn13.1             *****************'
-        >>> _get_um_version(data)
+        >>> get_um_version(data)
         '13.1'
 
         >>> data='UM Version No         703'
-        >>> _get_um_version(data)
+        >>> get_um_version(data)
         '7.3'
 
         """
@@ -91,6 +91,11 @@ class UMProfilingParser(ProfilingParser):
             return ver
 
         return None
+
+    def _match_um_header(stream: str, raw_headers: str) -> re.Match:
+        header = r"MPP : Inclusive timer summary\s+WALLCLOCK  TIMES\s*" + r"\s*".join(raw_headers) + r"\s*"
+        header_pattern = re.compile(header, re.MULTILINE)
+        return header_pattern.search(stream)
 
     def read(self, stream: str) -> dict:
         """Parse UM profiling data from a string.
@@ -129,35 +134,42 @@ class UMProfilingParser(ProfilingParser):
 
         Raises:
             ValueError: If the UM version number can not be found in the input string data.
-            ValueError: if no matching header, footer or section is found.
-            
-            A warning is printed into the logger if the expected format is not found in *all* of the 
-            lines within the profiling section.
+            ValueError: If a match for any of header, footer or section is not found.
+            AssertionError: If the expected format is not found in *all* of the lines within the
+                            profiling section.
         """
 
+        raw_headers_dict = {
+            "7": ["ROUTINE", "MEAN", "MEDIAN", "SD", r"\% of mean", "MAX", r"\(PE\)", "MIN", r"\(PE\)"],
+            "13": ["N", "ROUTINE", "MEAN", "MEDIAN", "SD", r"\% of mean", "MAX", r"\(PE\)", "MIN", r"\(PE\)"]
+        }
+
         # Need to check UM version to determine the correct headers
-        um_version = self._get_um_version(stream)
+        um_version = self.get_um_version(stream)
         if not um_version:
             logger.debug("Could not determine UM version from input stream.")
             logger.debug("Input stream: %s", stream)
-            raise ValueError("Could not determine UM version from input stream.")
+            # UM version was not there in the input stream - let's try to check if there are any of the known matching
+            # headers
+            for um_ver_test, raw_headers in raw_headers_dict.items():
+                header_match = _match_um_header(stream, raw_headers)
+                if header_match:
+                    um_version = um_ver_test
+                    break
 
         logger.debug("Detected UM version: %s", um_version)
-        if um_version.startswith("7"):
-            raw_headers = ["ROUTINE", "MEAN", "MEDIAN", "SD", r"\% of mean", "MAX", r"\(PE\)", "MIN", r"\(PE\)"]
-        else:
-            raw_headers = ["N", "ROUTINE", "MEAN", "MEDIAN", "SD", r"\% of mean", "MAX", r"\(PE\)", "MIN", r"\(PE\)"]
+        if um_version not in raw_headers_dict.keys():
+            raise ValueError(f"Could not determine UM version from input stream. Valid versions are {raw_headers_dict.keys()}")
 
+        raw_headers = raw_headers_dict[um_version]
         # This is a programming/logic issue (and not a input data or user-configuration issue) 
         # which is why I am using an assert here. MS 22nd Sep, 2025
         assert (len(raw_headers) == (len(self._metrics) + 1)) or (len(raw_headers) == (len(self._metrics) + 2)), \
             f"Expected that number of column names in the input to exceed the number of parsed metrics by exactly 1"\
-            f" (UM v7.x) or exactly 2 (UM v13.x). Number of input column names = {len(raw_headers)},"\
-            f" while number of parsed metrics={len(self._metrics)}"
+            f" (UM v7.x) or exactly 2 (UM v13.x).\nNumber of input column names = {len(raw_headers)}, input column names = {raw_headers}.\n"\
+            f"Number of parsed metrics={len(metrics)}, metric names = {metrics}.\n\nPlease file a bug-report with this log message\n"
 
-        header = r"MPP : Inclusive timer summary\s+WALLCLOCK  TIMES\s*" + r"\s*".join(raw_headers) + r"\s*"
-        header_pattern = re.compile(header, re.MULTILINE)
-        header_match = header_pattern.search(stream)
+        header_match = _match_um_header(stream, raw_headers)
         if not header_match:
             logger.debug("Header pattern: %s", header)
             logger.debug("Input string: %s", stream)
@@ -184,7 +196,7 @@ class UMProfilingParser(ProfilingParser):
         profiling_section = profiling_section.group(1)
         logger.debug("Found section: %s", profiling_section)
 
-        # This is dark reg-exp arts - seems to work, I roughly understood when I 
+        # This is regex dark arts - seems to work, I roughly understood when I 
         # was refining this named capture group, but I might not be able to in
         # the future. Made heavy use of the regex debugger at regex101.com :) - MS 19/9/2025 
         profile_line = r"^\s*\d+\s+(?P<region>[a-zA-Z:()_/\-*&0-9\s\.]+(?<!\s))"
@@ -216,11 +228,11 @@ class UMProfilingParser(ProfilingParser):
         num_lines = len(profiling_section.strip().split("\n"))
         logger.debug(f"Found {num_lines} lines in profiling section")
         if len(stats["region"]) != num_lines:
-            logger.warning(f"Expected {num_lines} regions, found {len(stats['region'])}")
+            raise AssertionError(f"Expected {num_lines} regions, found {len(stats['region'])}")
 
         for metric in metrics:
             if len(stats[metric]) != num_lines:
-                logger.warning(f"Expected {num_lines} entries for {metric}, found {len(stats[metric])}")
+                raise AssertionError(f"Expected {num_lines} entries for {metric}, found {len(stats[metric])}")
 
         logger.info(f"Found {len(stats["region"])} regions with profiling info")
         return stats
