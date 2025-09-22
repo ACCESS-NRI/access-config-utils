@@ -239,10 +239,8 @@ def test_um7_parsing(um7_raw_profiling_data, um7_parsed_profile_data):
         um7_parsed_profile_data["region"]
     ), f"Number of matched regions should be *exactly* {len(um7_parsed_profile_data['region'])}"
 
-    metrics = parser.metrics
-    numvals = len(stats["region"])
     for metric in parser.metrics:
-        for idx in range(numvals):
+        for idx, region in enumerate(stats["region"]):
             assert (
                 stats[metric][idx] == um7_parsed_profile_data[metric][idx]
             ), f"Incorrect {metric} for region {region} (index: {idx})."
@@ -257,10 +255,8 @@ def test_um13_parsing(um13_raw_profiling_data, um13_parsed_profile_data):
         um13_parsed_profile_data["region"]
     ), f"Number of matched regions should be *exactly* {len(um13_parsed_profile_data['region'])}"
 
-    metrics = parser.metrics
-    numvals = len(stats["region"])
     for metric in parser.metrics:
-        for idx in range(numvals):
+        for idx, region in enumerate(stats["region"]):
             assert (
                 stats[metric][idx] == um13_parsed_profile_data[metric][idx]
             ), f"Incorrect {metric} for region {region} (index: {idx})."
