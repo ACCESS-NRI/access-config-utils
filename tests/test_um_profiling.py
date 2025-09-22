@@ -5,6 +5,7 @@ import pytest
 
 from access.parsers.um_profiling import UMProfilingParser
 
+
 @pytest.fixture(scope="module")
 def um7_raw_profiling_data():
     """Fixture with raw UM7.x profiling data"""
@@ -75,6 +76,7 @@ def um7_raw_profiling_data():
         
         """
     }
+
 
 @pytest.fixture(scope="module")
 def um13_raw_profiling_data():
@@ -169,7 +171,14 @@ N  ROUTINE                                MEAN       MEDIAN        SD   % of mea
 def um7_parsed_profile_data():
     """Fixture containing the parsed data with regions, and the associated metrics"""
     return {
-        "region": ['AS3 Atmos_Phys2', 'AP2 Boundary Layer', 'AS5-8 Updates', 'AS2 S-L Advection', 'AS1 Atmos_Phys1', 'AP2 Convection'],
+        "region": [
+            "AS3 Atmos_Phys2",
+            "AP2 Boundary Layer",
+            "AS5-8 Updates",
+            "AS2 S-L Advection",
+            "AS1 Atmos_Phys1",
+            "AP2 Convection",
+        ],
         "tavg": [1308.3, 956.5, 884.63, 746.73, 561.27, 493.73],
         "tmed": [1308.3, 956.14, 885.53, 746.73, 562.54, 493.82],
         "tstd": [0.02, 3.26, 2.89, 0.01, 10.63, 0.18],
@@ -184,7 +193,14 @@ def um7_parsed_profile_data():
 def um13_parsed_profile_data():
     """Fixture containing the parsed data with regions, and the associated metrics"""
     return {
-        "region": ['U_MODEL_4A', 'Atm_Step_4A (AS)', 'AS Atmos_Phys1 (AP1)', 'AS S-L Advect (AA)', 'AS UKCA_MAIN1', 'AS Atmos_Phys2 (AP2)'],
+        "region": [
+            "U_MODEL_4A",
+            "Atm_Step_4A (AS)",
+            "AS Atmos_Phys1 (AP1)",
+            "AS S-L Advect (AA)",
+            "AS UKCA_MAIN1",
+            "AS Atmos_Phys2 (AP2)",
+        ],
         "tavg": [1314.55, 1272.16, 466.83, 180.79, 173.52, 144.45],
         "tmed": [1314.55, 1273.09, 466.81, 181.45, 174.45, 144.33],
         "tstd": [0.06, 4.6, 0.21, 1.67, 4.6, 2.71],
@@ -197,40 +213,48 @@ def um13_parsed_profile_data():
 
 def test_um_metric_names():
     parser = UMProfilingParser()
-    assert parser.metrics == ['tavg', 'tmed', 'tstd', 'tmax', 'pemax', 'tmin', 'pemin']
+    assert parser.metrics == ["tavg", "tmed", "tstd", "tmax", "pemax", "tmin", "pemin"]
+
 
 def test_um7_version_parsing(um7_raw_profiling_data):
     parser = UMProfilingParser()
-    assert parser.get_um_version(um7_raw_profiling_data) == '7.3', 'Incorrect parsing for UM version'
+    assert parser.get_um_version(um7_raw_profiling_data) == "7.3", "Incorrect parsing for UM version"
+
 
 def test_um13_version_parsing(um13_raw_profiling_data):
     parser = UMProfilingParser()
-    assert parser.get_um_version(um13_raw_profiling_data) == '13.1', 'Incorrect parsing for UM version'
+    assert parser.get_um_version(um13_raw_profiling_data) == "13.1", "Incorrect parsing for UM version"
+
 
 def test_um7_parsing(um7_raw_profiling_data, um7_parsed_profile_data):
     parser = UMProfilingParser()
     stats = parser.read(um7_raw_profiling_data)
 
     # Might also be worthwhile to check that the 'region' key exists first
-    assert len(stats['region']) == len(um7_parsed_profile_data['region']), \
-        f"Number of matched regions should be *exactly* {len(um7_parsed_profile_data['region'])}"
+    assert len(stats["region"]) == len(
+        um7_parsed_profile_data["region"]
+    ), f"Number of matched regions should be *exactly* {len(um7_parsed_profile_data['region'])}"
 
     metrics = parser.metrics
     for idx, region in enumerate(stats.keys()):
         for metric in metrics:
-            assert stats[metric][idx] == um7_parsed_profile_data[metric][idx], \
-                f"Incorrect {metric} for region {region} (index: {idx})."
+            assert (
+                stats[metric][idx] == um7_parsed_profile_data[metric][idx]
+            ), f"Incorrect {metric} for region {region} (index: {idx})."
+
 
 def test_um13_parsing(um13_raw_profiling_data, um13_parsed_profile_data):
     parser = UMProfilingParser()
     stats = parser.read(um13_raw_profiling_data)
 
     # Might also be worthwhile to check that the 'region' key exists first
-    assert len(stats['region']) == len(um13_parsed_profile_data['region']), \
-        f"Number of matched regions should be *exactly* {len(um13_parsed_profile_data['region'])}"
+    assert len(stats["region"]) == len(
+        um13_parsed_profile_data["region"]
+    ), f"Number of matched regions should be *exactly* {len(um13_parsed_profile_data['region'])}"
 
     metrics = parser.metrics
     for idx, region in enumerate(stats.keys()):
         for metric in metrics:
-            assert stats[metric][idx] == um13_parsed_profile_data[metric][idx], \
-                f"Incorrect {metric} for region {region} (index: {idx})."
+            assert (
+                stats[metric][idx] == um13_parsed_profile_data[metric][idx]
+            ), f"Incorrect {metric} for region {region} (index: {idx})."
