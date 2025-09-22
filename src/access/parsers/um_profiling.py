@@ -188,10 +188,6 @@ class UMProfilingParser(ProfilingParser):
         # Match *everything* between the header and footer
         profiling_section_p = re.compile(header + r"(.*)" + footer, re.MULTILINE | re.DOTALL)
         profiling_section = profiling_section_p.search(stream)
-        if not profiling_section:
-            logger.debug("Section pattern: %s", profiling_section_p)
-            logger.debug("Input string: %s", stream)
-            raise ValueError("No matching section found.")
 
         profiling_section = profiling_section.group(1)
         logger.debug("Found section: %s", profiling_section)
