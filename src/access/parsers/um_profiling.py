@@ -91,10 +91,10 @@ class UMProfilingParser(ProfilingParser):
 
         return None
 
-    def _match_um_header(self, stream: str, raw_headers: str) -> re.Match:
+    def _match_um_header(self, stream: str, raw_headers: str) -> (str, re.Match):
         header = r"MPP : Inclusive timer summary\s+WALLCLOCK  TIMES\s*" + r"\s*".join(raw_headers) + r"\s*"
         header_pattern = re.compile(header, re.MULTILINE)
-        return header_pattern.search(stream)
+        return header, header_pattern.search(stream)
 
     def read(self, stream: str) -> dict:
         """Parse UM profiling data from a string.
@@ -138,6 +138,9 @@ class UMProfilingParser(ProfilingParser):
                             profiling section.
         """
 
+        # First create the local variable with the metrics list
+        metrics = self.metrics
+
         raw_headers_dict = {
             "7": ["ROUTINE", "MEAN", "MEDIAN", "SD", r"\% of mean", "MAX", r"\(PE\)", "MIN", r"\(PE\)"],
             "13": ["N", "ROUTINE", "MEAN", "MEDIAN", "SD", r"\% of mean", "MAX", r"\(PE\)", "MIN", r"\(PE\)"],
@@ -151,7 +154,7 @@ class UMProfilingParser(ProfilingParser):
             # UM version was not there in the input stream - let's try to check if there are any of the known matching
             # headers
             for um_ver_test, raw_headers in raw_headers_dict.items():
-                header_match = self._match_um_header(stream, raw_headers)
+                _, header_match = self._match_um_header(stream, raw_headers)
                 if header_match:
                     um_version = um_ver_test
                     break
@@ -161,8 +164,8 @@ class UMProfilingParser(ProfilingParser):
             raise ValueError(
                 f"Could not determine UM version from input stream. Valid versions are {list(raw_headers_dict.keys())}"
             )
-
         raw_headers = raw_headers_dict[um_version]
+
         # This is a programming/logic issue (and not a input data or user-configuration issue)
         # which is why I am using an assert here. MS 22nd Sep, 2025
         assert (len(raw_headers) == (len(self._metrics) + 1)) or (len(raw_headers) == (len(self._metrics) + 2)), (
@@ -171,7 +174,7 @@ class UMProfilingParser(ProfilingParser):
             f"Number of parsed metrics={len(metrics)}, metric names = {metrics}.\n\nPlease file a bug-report with this log message\n"
         )
 
-        header_match = self._match_um_header(stream, raw_headers)
+        header, header_match = self._match_um_header(stream, raw_headers)
         if not header_match:
             logger.debug("Header pattern: %s", header)
             logger.debug("Input string: %s", stream)
@@ -202,7 +205,7 @@ class UMProfilingParser(ProfilingParser):
         # was refining this named capture group, but I might not be able to in
         # the future. Made heavy use of the regex debugger at regex101.com :) - MS 19/9/2025
         profile_line = r"^\s*\d+\s+(?P<region>[a-zA-Z:()_/\-*&0-9\s\.]+(?<!\s))"
-        for metric in self.metrics:
+        for metric in metrics:
             logger.debug(f"Adding {metric =}")
             if metric in ["pemax", "pemin"]:
                 add_pattern = (
@@ -217,9 +220,9 @@ class UMProfilingParser(ProfilingParser):
                     r"\s+(?P<" + metric + r">[0-9.]+)"
                 )  # standard white-space followed by a sequence of digits or '.'
 
-            logger.debug(f"   {add_pattern = } for {metric = }")
+            logger.debug(f"{add_pattern=} for {metric=}")
             profile_line += add_pattern
-            logger.debug(f"   {profile_line = } after {metric = }")
+            logger.debug(f"{profile_line=} after {metric=}")
 
         profile_line += r"$"  # the regexp should match till the end of line.
         profiling_region_p = re.compile(profile_line, re.MULTILINE)
