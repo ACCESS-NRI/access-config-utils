@@ -234,7 +234,7 @@ class UMProfilingParser(ProfilingParser):
         num_lines = len(profiling_section.strip().split("\n"))
         logger.debug(f"Found {num_lines} lines in profiling section")
         if len(stats["region"]) != num_lines:
-            raise AssertionError(f"Expected {num_lines} regions, found {len(stats['region'])}.)
+            raise AssertionError(f"Expected {num_lines} regions, found {len(stats['region'])}.")
 
         for metric in metrics:
             if len(stats[metric]) != num_lines:
