@@ -74,7 +74,6 @@ def um7_raw_profiling_data():
   7 AP1 Radiation         75658.68          315.30    239.96                  1.00
         
         """
-    
 
 
 @pytest.fixture(scope="module")
@@ -162,7 +161,6 @@ N  ROUTINE                                MEAN       MEDIAN        SD   % of mea
 ?  Caution This run generated 27 warnings
       
         """
-    
 
 
 @pytest.fixture(scope="module")
@@ -218,14 +216,18 @@ def test_um7_version_parsing(um7_raw_profiling_data):
     parser = UMProfilingParser()
     expected_version = "7.3"
     version = parser.get_um_version(um7_raw_profiling_data)
-    assert version == expected_version, f"Incorrect parsing for UM version. Found {version} instead of the correct {expected_version}"
+    assert (
+        version == expected_version
+    ), f"Incorrect parsing for UM version. Found {version} instead of the correct {expected_version}"
 
 
 def test_um13_version_parsing(um13_raw_profiling_data):
     parser = UMProfilingParser()
     expected_version = "13.1"
     version = parser.get_um_version(um13_raw_profiling_data)
-    assert version == expected_version, f"Incorrect parsing for UM version. Found {version} instead of the correct {expected_version}"
+    assert (
+        version == expected_version
+    ), f"Incorrect parsing for UM version. Found {version} instead of the correct {expected_version}"
 
 
 def test_um7_parsing(um7_raw_profiling_data, um7_parsed_profile_data):
