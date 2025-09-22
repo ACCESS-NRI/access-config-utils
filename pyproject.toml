@@ -4,6 +4,7 @@ dynamic = ["version"]
 description = "Collection of parsers to read/write input and output files used in ACCESS climate models."
 authors = [
   {name = "Micael Oliveira", email="micael.oliveira@anu.edu.au"},
+  {name = "Manodeep Sinha", email="manodeep.sinha@anu.edu.au"},
 ]
 readme = "README.md"
 keywords = ["parser", "access"]
