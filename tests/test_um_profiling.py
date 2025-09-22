@@ -20,13 +20,13 @@ def um7_raw_profiling_data():
 *
  23 AP1 Energy Correct.  ****      0.41      0.00      0.41      0.00    1.00
  24 AS18 Assimilation    ****      0.01      0.00      0.02      0.00    0.88
- 
- MPP Timing information : 
-                   240  processors in configuration                     16  x 
+
+ MPP Timing information :
+                   240  processors in configuration                     16  x
                     15
- 
+
  MPP : Inclusive timer summary
- 
+
  WALLCLOCK  TIMES
     ROUTINE                   MEAN   MEDIAN       SD   % of mean      MAX   (PE)      MIN   (PE)
   1 AS3 Atmos_Phys2        1308.30  1308.30     0.02       0.00%  1308.33 ( 118)  1308.26 ( 221)
@@ -35,7 +35,7 @@ def um7_raw_profiling_data():
   4 AS2 S-L Advection       746.73   746.73     0.01       0.00%   746.74 (  47)   746.71 ( 181)
   5 AS1 Atmos_Phys1         561.27   562.54    10.63       1.89%   580.32 (  42)   538.58 ( 212)
   6 AP2 Convection          493.73   493.82     0.18       0.04%   493.93 (  76)   493.34 (  20)
- 
+
  CPU TIMES (sorted by wallclock times)
     ROUTINE                   MEAN   MEDIAN       SD   % of mean      MAX   (PE)      MIN   (PE)
   1 AS3 Atmos_Phys2        1308.30  1308.30     0.02       0.00%  1308.33 ( 118)  1308.26 ( 221)
@@ -62,7 +62,7 @@ def um7_raw_profiling_data():
  22 AP1 Conv Eng Corr         0.57     0.57     0.00       0.61%     0.58 (   5)     0.56 ( 135)
  23 AP1 Energy Correct.       0.42     0.42     0.02       3.73%     0.46 (  83)     0.38 ( 215)
  24 AS18 Assimilation         0.01     0.01     0.00       9.45%     0.02 (  64)     0.01 ( 196)
- 
+
  PARALLEL SPEEDUP SUMMARY (sorted by wallclock times)
     ROUTINE              CPU TOTAL   WALLCLOCK MAX   SPEEDUP   PARALLEL EFFICIENCY
   1 AS3 Atmos_Phys2       ********         1308.33    239.99                  1.00
@@ -72,7 +72,7 @@ def um7_raw_profiling_data():
   5 AS1 Atmos_Phys1       ********          580.32    232.12                  0.97
   6 AP2 Convection        ********          493.93    239.90                  1.00
   7 AP1 Radiation         75658.68          315.30    239.96                  1.00
-        
+
         """
 
 
@@ -93,7 +93,7 @@ Timer information is for whole run
 PE 0 Elapsed CPU Time:           1300.190 seconds
 PE 0 Elapsed Wallclock Time:     1318.208 seconds
 Total Elapsed CPU Time:           758274.502 seconds
-*        
+*
 MPP Timing information :
 576 processors in atmosphere configuration 24 x 24
 Number of OMP threads : 1
@@ -159,7 +159,7 @@ N  ROUTINE                                MEAN       MEDIAN        SD   % of mea
 46 Init_Atm_Step (FS)                     0.00         0.00      0.00     ******%         0.00 (  0)         0.00 (  1)
 
 ?  Caution This run generated 27 warnings
-      
+
         """
 
 
@@ -240,8 +240,9 @@ def test_um7_parsing(um7_raw_profiling_data, um7_parsed_profile_data):
     ), f"Number of matched regions should be *exactly* {len(um7_parsed_profile_data['region'])}"
 
     metrics = parser.metrics
-    for idx, region in enumerate(stats.keys()):
-        for metric in metrics:
+    numvals = len(stats["region"])
+    for metric in parser.metrics:
+        for idx in range(numvals):
             assert (
                 stats[metric][idx] == um7_parsed_profile_data[metric][idx]
             ), f"Incorrect {metric} for region {region} (index: {idx})."
@@ -257,8 +258,9 @@ def test_um13_parsing(um13_raw_profiling_data, um13_parsed_profile_data):
     ), f"Number of matched regions should be *exactly* {len(um13_parsed_profile_data['region'])}"
 
     metrics = parser.metrics
-    for idx, region in enumerate(stats.keys()):
-        for metric in metrics:
+    numvals = len(stats["region"])
+    for metric in parser.metrics:
+        for idx in range(numvals):
             assert (
                 stats[metric][idx] == um13_parsed_profile_data[metric][idx]
             ), f"Incorrect {metric} for region {region} (index: {idx})."

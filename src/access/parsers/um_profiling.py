@@ -74,13 +74,13 @@ class UMProfilingParser(ProfilingParser):
         '7.3'
 
         """
-        version_p = re.compile(r"^\**\s*Based upon UM release vn(?P<version>[\d\.]+)\s+\**$", re.MULTILINE)
+        version_p = re.compile(r"Based upon UM release vn(?P<version>[\d\.]+)")
         version_m = version_p.search(stream)
         if version_m:
             return version_m.group("version")
 
         # This works for UM7.3 (possibly 7.x)
-        version_p = re.compile(r"^\s*UM Version No\s*(?P<version>[\d\.]+)", re.MULTILINE)
+        version_p = re.compile(r"UM Version No\s*(?P<version>[\d\.]+)")
         version_m = version_p.search(stream)
         if version_m:
             ver = version_m.group("version")
@@ -151,28 +151,23 @@ class UMProfilingParser(ProfilingParser):
         if not um_version:
             logger.debug("Could not determine UM version from input stream.")
             logger.debug("Input stream: %s", stream)
-            # UM version was not there in the input stream - let's try to check if there are any of the known matching
-            # headers
-            for um_ver_test, raw_headers in raw_headers_dict.items():
-                _, header_match = self._match_um_header(stream, raw_headers)
-                if header_match:
-                    um_version = um_ver_test
+            # UM version was not there in the input stream - let's try to check if
+            # there are any of the known matching headers
+            for test_um_ver, raw_headers in raw_headers_dict.items():
+                _, h_match = self._match_um_header(stream, raw_headers)
+                if h_match:
+                    um_version = test_um_ver
                     break
 
         logger.debug("Detected UM version: %s", um_version)
-        if um_version not in raw_headers_dict.keys():
+        um_version_major = um_version.split(".")[0]
+        if um_version_major not in raw_headers_dict.keys():
             raise ValueError(
-                f"Could not determine UM version from input stream. Valid versions are {list(raw_headers_dict.keys())}"
+                f"Full UM version = {um_version} detected. UM major version = "
+                f"{um_version_major} is invalid. Valid versions are "
+                f"{list(raw_headers_dict.keys())}"
             )
-        raw_headers = raw_headers_dict[um_version]
-
-        # This is a programming/logic issue (and not a input data or user-configuration issue)
-        # which is why I am using an assert here. MS 22nd Sep, 2025
-        assert (len(raw_headers) == (len(self._metrics) + 1)) or (len(raw_headers) == (len(self._metrics) + 2)), (
-            f"Expected that number of column names in the input to exceed the number of parsed metrics by exactly 1"
-            f" (UM v7.x) or exactly 2 (UM v13.x).\nNumber of input column names = {len(raw_headers)}, input column names = {raw_headers}.\n"
-            f"Number of parsed metrics={len(metrics)}, metric names = {metrics}.\n\nPlease file a bug-report with this log message\n"
-        )
+        raw_headers = raw_headers_dict[um_version_major]
 
         header, header_match = self._match_um_header(stream, raw_headers)
         if not header_match:
@@ -206,12 +201,12 @@ class UMProfilingParser(ProfilingParser):
         # the future. Made heavy use of the regex debugger at regex101.com :) - MS 19/9/2025
         profile_line = r"^\s*\d+\s+(?P<region>[a-zA-Z:()_/\-*&0-9\s\.]+(?<!\s))"
         for metric in metrics:
-            logger.debug(f"Adding {metric =}")
+            logger.debug(f"Adding {metric=}")
             if metric in ["pemax", "pemin"]:
-                add_pattern = (
-                    r"\s+\(\s*(?P<" + metric + r">[0-9.]+)\s*\)"
-                )  # the pemax and pemin values are enclosed within brackets, we need to ignore both the opening and closing brackets
-            elif metric == "SD":
+                # the pemax and pemin values are enclosed within brackets '()',
+                # so we need to ignore both the opening and closing brackets
+                add_pattern = r"\s+\(\s*(?P<" + metric + r">[0-9.]+)\s*\)"
+            elif metric == "tstd":
                 add_pattern = (
                     r"\s+(?P<" + metric + r">[0-9.]+)\s+[\S]+"
                 )  # SD is followed by % of mean -> ignore that column
@@ -239,7 +234,7 @@ class UMProfilingParser(ProfilingParser):
         num_lines = len(profiling_section.strip().split("\n"))
         logger.debug(f"Found {num_lines} lines in profiling section")
         if len(stats["region"]) != num_lines:
-            raise AssertionError(f"Expected {num_lines} regions, found {len(stats['region'])}")
+            raise AssertionError(f"Expected {num_lines} regions, found {len(stats['region'])}.)
 
         for metric in metrics:
             if len(stats[metric]) != num_lines:
