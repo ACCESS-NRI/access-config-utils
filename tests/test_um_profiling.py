@@ -77,6 +77,60 @@ def um7_raw_profiling_data():
 
 
 @pytest.fixture(scope="module")
+def um7_malformed_profiling_data_missing_footer():
+    return r"""
+     UM Version No         703
+ MPP : Inclusive timer summary
+
+ WALLCLOCK  TIMES
+    ROUTINE                   MEAN   MEDIAN       SD   % of mean      MAX   (PE)      MIN   (PE)
+  1 AS3 Atmos_Phys2        1308.30   ******      0.02       0.00%  1308.33 ( 118)  1308.26 ( 221)
+  2 AP2 Boundary Layer      956.50   956.14     3.26       0.34%   981.28 ( 136)   953.28 (  43)
+
+    """
+
+
+@pytest.fixture(scope="module")
+def um7_malformed_profiling_data_missing_header():
+    return r"""
+     UM Version No         703
+ MPP : Inclusive timer summary
+
+    ROUTINE                   MEAN   MEDIAN       SD   % of mean      MAX   (PE)      MIN   (PE)
+  1 AS3 Atmos_Phys2        1308.30   ******      0.02       0.00%  1308.33 ( 118)  1308.26 ( 221)
+  2 AP2 Boundary Layer      956.50   956.14     3.26       0.34%   981.28 ( 136)   953.28 (  43)
+
+    """
+
+
+@pytest.fixture(scope="module")
+def um7_malformed_profiling_data_missing_profiling_section():
+    return r"""
+     UM Version No         703
+ MPP : Inclusive timer summary
+
+ WALLCLOCK  TIMES
+    ROUTINE                   MEAN   MEDIAN       SD   % of mean      MAX   (PE)      MIN   (PE)
+ CPU TIMES (sorted by wallclock times)
+    """
+
+
+@pytest.fixture(scope="module")
+def um7_malformed_profiling_data_bad_columndata():
+    return r"""
+     UM Version No         703
+ MPP : Inclusive timer summary
+
+ WALLCLOCK  TIMES
+    ROUTINE                   MEAN   MEDIAN       SD   % of mean      MAX   (PE)      MIN   (PE)
+  1 AS3 Atmos_Phys2        1308.30   ******      0.02       0.00%  1308.33 ( 118)  1308.26 ( 221)
+  2 AP2 Boundary Layer      956.50   956.14     3.26       0.34%   981.28 ( 136)   953.28 (  43)
+
+ CPU TIMES (sorted by wallclock times)
+    """
+
+
+@pytest.fixture(scope="module")
 def um13_raw_profiling_data():
     """Fixture with raw UM13.x profiling data."""
 
@@ -260,3 +314,27 @@ def test_um13_parsing(um13_raw_profiling_data, um13_parsed_profile_data):
             assert (
                 stats[metric][idx] == um13_parsed_profile_data[metric][idx]
             ), f"Incorrect {metric} for region {region} (index: {idx})."
+
+
+def test_um7_parser_missing_header(um7_malformed_profiling_data_missing_header):
+    parser = UMProfilingParser()
+    with pytest.raises(ValueError):
+        stats = parser.read(um7_malformed_profiling_data_missing_header)
+
+
+def test_um7_parser_missing_footer(um7_malformed_profiling_data_missing_footer):
+    parser = UMProfilingParser()
+    with pytest.raises(ValueError):
+        stats = parser.read(um7_malformed_profiling_data_missing_footer)
+
+
+def test_um7_parser_missing_section(um7_malformed_profiling_data_missing_profiling_section):
+    parser = UMProfilingParser()
+    with pytest.raises(AssertionError):
+        stats = parser.read(um7_malformed_profiling_data_missing_profiling_section)
+
+
+def test_um7_parser_malformed_columns(um7_malformed_profiling_data_bad_columndata):
+    parser = UMProfilingParser()
+    with pytest.raises(AssertionError):
+        stats = parser.read(um7_malformed_profiling_data_bad_columndata)
