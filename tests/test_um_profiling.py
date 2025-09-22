@@ -9,8 +9,7 @@ from access.parsers.um_profiling import UMProfilingParser
 @pytest.fixture(scope="module")
 def um7_raw_profiling_data():
     """Fixture with raw UM7.x profiling data"""
-    return {
-        r"""
+    return r"""
  FIXED LENGTH HEADER
  -------------------
  Dump format version    20
@@ -75,21 +74,20 @@ def um7_raw_profiling_data():
   7 AP1 Radiation         75658.68          315.30    239.96                  1.00
         
         """
-    }
+    
 
 
 @pytest.fixture(scope="module")
 def um13_raw_profiling_data():
     """Fixture with raw UM13.x profiling data."""
-    return {
-        r"""
-*******************************************************************************
-**************** End of UM RUN Job : 07:34:50 on 27/08/2025 *****************
-**************** Based upon UM release vn13.1             *****************
-*******************************************************************************
 
+    return r"""
+ *******************************************************************************
+ **************** End of UM RUN Job : 07:34:50 on 27/08/2025 *****************
+ **************** Based upon UM release vn13.1             *****************
+ *******************************************************************************
 
-******************************************
+ ******************************************
 
 END OF RUN - TIMER OUTPUT
 Timer information is for whole run
@@ -164,7 +162,7 @@ N  ROUTINE                                MEAN       MEDIAN        SD   % of mea
 ?  Caution This run generated 27 warnings
       
         """
-    }
+    
 
 
 @pytest.fixture(scope="module")
@@ -218,12 +216,16 @@ def test_um_metric_names():
 
 def test_um7_version_parsing(um7_raw_profiling_data):
     parser = UMProfilingParser()
-    assert parser.get_um_version(um7_raw_profiling_data) == "7.3", "Incorrect parsing for UM version"
+    expected_version = "7.3"
+    version = parser.get_um_version(um7_raw_profiling_data)
+    assert version == expected_version, f"Incorrect parsing for UM version. Found {version} instead of the correct {expected_version}"
 
 
 def test_um13_version_parsing(um13_raw_profiling_data):
     parser = UMProfilingParser()
-    assert parser.get_um_version(um13_raw_profiling_data) == "13.1", "Incorrect parsing for UM version"
+    expected_version = "13.1"
+    version = parser.get_um_version(um13_raw_profiling_data)
+    assert version == expected_version, f"Incorrect parsing for UM version. Found {version} instead of the correct {expected_version}"
 
 
 def test_um7_parsing(um7_raw_profiling_data, um7_parsed_profile_data):

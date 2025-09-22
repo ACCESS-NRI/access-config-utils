@@ -74,9 +74,9 @@ class UMProfilingParser(ProfilingParser):
         '7.3'
 
         """
-        version_p = re.compile(r"\s*Based upon UM release vn(?P<version>[\d\.]+)\s*", re.MULTILINE)
+        version_p = re.compile(r"^\**\s*Based upon UM release vn(?P<version>[\d\.]+)\s+\**$", re.MULTILINE)
         version_m = version_p.search(stream)
-        if not version_m:
+        if version_m:
             return version_m.group("version")
 
         # This works for UM7.3 (possibly 7.x)
@@ -86,12 +86,12 @@ class UMProfilingParser(ProfilingParser):
             ver = version_m.group("version")
             if len(ver) == 3:
                 # Convert to a more standard format
-                ver = f"{ver[0]}.{ver[1:]}"
+                ver = f"{ver[0]}.{ver[2:]}"
             return ver
 
         return None
 
-    def _match_um_header(stream: str, raw_headers: str) -> re.Match:
+    def _match_um_header(self, stream: str, raw_headers: str) -> re.Match:
         header = r"MPP : Inclusive timer summary\s+WALLCLOCK  TIMES\s*" + r"\s*".join(raw_headers) + r"\s*"
         header_pattern = re.compile(header, re.MULTILINE)
         return header_pattern.search(stream)
@@ -151,7 +151,7 @@ class UMProfilingParser(ProfilingParser):
             # UM version was not there in the input stream - let's try to check if there are any of the known matching
             # headers
             for um_ver_test, raw_headers in raw_headers_dict.items():
-                header_match = _match_um_header(stream, raw_headers)
+                header_match = self._match_um_header(stream, raw_headers)
                 if header_match:
                     um_version = um_ver_test
                     break
@@ -159,7 +159,7 @@ class UMProfilingParser(ProfilingParser):
         logger.debug("Detected UM version: %s", um_version)
         if um_version not in raw_headers_dict.keys():
             raise ValueError(
-                f"Could not determine UM version from input stream. Valid versions are {raw_headers_dict.keys()}"
+                f"Could not determine UM version from input stream. Valid versions are {list(raw_headers_dict.keys())}"
             )
 
         raw_headers = raw_headers_dict[um_version]
@@ -171,7 +171,7 @@ class UMProfilingParser(ProfilingParser):
             f"Number of parsed metrics={len(metrics)}, metric names = {metrics}.\n\nPlease file a bug-report with this log message\n"
         )
 
-        header_match = _match_um_header(stream, raw_headers)
+        header_match = self._match_um_header(stream, raw_headers)
         if not header_match:
             logger.debug("Header pattern: %s", header)
             logger.debug("Input string: %s", stream)
