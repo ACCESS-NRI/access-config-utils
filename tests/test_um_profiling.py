@@ -10,17 +10,6 @@ from access.parsers.um_profiling import UMProfilingParser
 def um7_raw_profiling_data():
     """Fixture with raw UM7.x profiling data"""
     return r"""
- FIXED LENGTH HEADER
- -------------------
- Dump format version    20
- UM Version No         703
- Atmospheric data
- Charney-Phillips on radius levels
- Over global domain
-*
- 23 AP1 Energy Correct.  ****      0.41      0.00      0.41      0.00    1.00
- 24 AS18 Assimilation    ****      0.01      0.00      0.02      0.00    0.88
-
  MPP Timing information :
                    240  processors in configuration                     16  x
                     15
@@ -77,28 +66,29 @@ def um7_raw_profiling_data():
 
 
 @pytest.fixture(scope="module")
-def um7_malformed_profiling_data_missing_footer():
+def um7_malformed_profiling_data_missing_header():
+    """Fixture that is missing ``` WALLCLOCK  TIMES``` in the header. There is also
+    malformed data - asterisks instead
+    """
     return r"""
-     UM Version No         703
  MPP : Inclusive timer summary
 
- WALLCLOCK  TIMES
     ROUTINE                   MEAN   MEDIAN       SD   % of mean      MAX   (PE)      MIN   (PE)
-  1 AS3 Atmos_Phys2        1308.30   ******      0.02       0.00%  1308.33 ( 118)  1308.26 ( 221)
+  1 AS3 Atmos_Phys2        1308.30  1308.30     0.02       0.00%  1308.33 ( 118)  1308.26 ( 221)
   2 AP2 Boundary Layer      956.50   956.14     3.26       0.34%   981.28 ( 136)   953.28 (  43)
 
+ CPU TIMES (sorted by wallclock times)
     """
 
 
 @pytest.fixture(scope="module")
-def um7_malformed_profiling_data_missing_header():
+def um7_malformed_profiling_data_missing_footer():
     return r"""
-     UM Version No         703
  MPP : Inclusive timer summary
 
-    ROUTINE                   MEAN   MEDIAN       SD   % of mean      MAX   (PE)      MIN   (PE)
-  1 AS3 Atmos_Phys2        1308.30   ******      0.02       0.00%  1308.33 ( 118)  1308.26 ( 221)
-  2 AP2 Boundary Layer      956.50   956.14     3.26       0.34%   981.28 ( 136)   953.28 (  43)
+ WALLCLOCK  TIMES
+     ROUTINE                   MEAN   MEDIAN       SD   % of mean      MAX   (PE)      MIN   (PE)
+  1 AS3 Atmos_Phys2        1308.30   1308.30      0.02       0.00%  1308.33 ( 118)  1308.26 ( 221)
 
     """
 
@@ -111,6 +101,87 @@ def um7_malformed_profiling_data_missing_profiling_section():
 
  WALLCLOCK  TIMES
     ROUTINE                   MEAN   MEDIAN       SD   % of mean      MAX   (PE)      MIN   (PE)
+
+ CPU TIMES (sorted by wallclock times)
+    """
+
+
+@pytest.fixture(scope="module")
+def um7_malformed_data_extra_final_column():
+    """Fixture with extra column at the end"""
+
+    return r"""
+ MPP : Inclusive timer summary
+
+ WALLCLOCK  TIMES
+     ROUTINE                   MEAN   MEDIAN       SD   % of mean      MAX   (PE)      MIN   (PE)  UNEXPECTED_COLUMN
+  1 AS3 Atmos_Phys2        1308.30   1308.30     0.02       0.00%  1308.33 ( 118)  1308.26 ( 221)   2378
+
+ CPU TIMES (sorted by wallclock times)
+    """
+
+
+@pytest.fixture(scope="module")
+def um7_malformed_data_extra_middle_column():
+    """Fixture with extra column in the middle"""
+
+    return r"""
+ MPP : Inclusive timer summary
+
+ WALLCLOCK  TIMES
+     ROUTINE                   MEAN   MEDIAN       SD   % of mean      MAX   (PE)  UNEXPECTED_COLUMN    MIN   (PE)  
+  1 AS3 Atmos_Phys2        1308.30   1308.30      0.02       0.00%  1308.33 ( 118)    2378           1308.26 ( 221)
+
+ CPU TIMES (sorted by wallclock times)
+    """
+
+
+@pytest.fixture(scope="module")
+def um7_malformed_data_extra_front_column_with_float_data():
+    """Fixture with extra column in the middle"""
+
+    return r"""
+ MPP : Inclusive timer summary
+
+ WALLCLOCK  TIMES
+UNEXPECTED_COLUMN     ROUTINE                   MEAN   MEDIAN       SD   % of mean      MAX   (PE)    MIN     (PE)  
+ 2378.23             1 AS3 Atmos_Phys2        1308.30   1308.30      0.02    0.00%    1308.33 ( 118)  1308.26 ( 221)
+
+ CPU TIMES (sorted by wallclock times)
+    """
+
+
+@pytest.fixture(scope="module")
+def um7_malformed_data_extra_front_column_with_integer_data():
+    """Fixture with extra column in the middle"""
+
+    return r"""
+ MPP : Inclusive timer summary
+
+ WALLCLOCK  TIMES
+UNEXPECTED_COLUMN     ROUTINE                 MEAN   MEDIAN       SD   % of mean      MAX   (PE)    MIN     (PE)  
+ 2378             1 AS3 Atmos_Phys2        1308.30  1308.30     0.02       0.00%  1308.33 ( 118)  1308.26 ( 221)
+ 1232             2 AP2 Boundary Layer      956.50   956.14     3.26       0.34%   981.28 ( 136)   953.28 (  43)
+ 12343            3 AS5-8 Updates           884.63   885.53     2.89       0.33%   889.49 (  48)   879.37 ( 212)
+ 12223            4 AS2 S-L Advection       746.73   746.73     0.01       0.00%   746.74 (  47)   746.71 ( 181)
+ 947586           5 AS1 Atmos_Phys1         561.27   562.54    10.63       1.89%   580.32 (  42)   538.58 ( 212)
+ 87462            6 AP2 Convection          493.73   493.82     0.18       0.04%   493.93 (  76)   493.34 (  20)
+
+ CPU TIMES (sorted by wallclock times)
+    """
+
+
+@pytest.fixture(scope="module")
+def um7_malformed_data_extra_front_column_with_string_data():
+    """Fixture with extra column in the middle"""
+
+    return r"""
+ MPP : Inclusive timer summary
+
+ WALLCLOCK  TIMES
+UNEXPECTED_COLUMN     ROUTINE                   MEAN   MEDIAN       SD   % of mean      MAX   (PE)    MIN     (PE)  
+ ***             1 AS3 Atmos_Phys2        1308.30   1308.30      0.02    0.00%    1308.33 ( 118)  1308.26 ( 221)
+
  CPU TIMES (sorted by wallclock times)
     """
 
@@ -135,19 +206,6 @@ def um13_raw_profiling_data():
     """Fixture with raw UM13.x profiling data."""
 
     return r"""
- *******************************************************************************
- **************** End of UM RUN Job : 07:34:50 on 27/08/2025 *****************
- **************** Based upon UM release vn13.1             *****************
- *******************************************************************************
-
- ******************************************
-
-END OF RUN - TIMER OUTPUT
-Timer information is for whole run
-PE 0 Elapsed CPU Time:           1300.190 seconds
-PE 0 Elapsed Wallclock Time:     1318.208 seconds
-Total Elapsed CPU Time:           758274.502 seconds
-*
 MPP Timing information :
 576 processors in atmosphere configuration 24 x 24
 Number of OMP threads : 1
@@ -171,46 +229,6 @@ N  ROUTINE                                MEAN       MEDIAN        SD   % of mea
 04 AS S-L Advect (AA)                   180.78       181.46      1.69       0.93%       183.21 (104)       175.02 (  0)
 05 AS UKCA_MAIN1                        173.51       174.45      4.61       2.65%       180.25 (244)       159.06 ( 27)
 06 AS Atmos_Phys2 (AP2)                 144.45       144.38      2.70       1.87%       150.25 (390)       138.30 (160)
-07 AP1 Radiation (AP1R)                 110.65       110.63      3.30       2.98%       119.59 (296)       103.61 (523)
-08 AS Solver                             95.52        95.64      0.90       0.94%        96.80 (  1)        89.48 (339)
-09 UKCA AEROSOL MODEL                    70.00        70.01      0.65       0.93%        72.04 (116)        68.18 (574)
-10 AP1R LW Rad                           62.11        62.09      3.30       5.32%        71.05 (296)        55.06 (523)
-11 AP1 Microphys (AP1M)                  43.50        44.95     11.48      26.38%        68.95 (471)        15.59 (336)
-12 COSP                                  65.17        65.31      1.43       2.20%        68.81 ( 90)        60.28 (360)
-13 AP2 Convection                        45.68        47.32     11.78      25.80%        67.54 (238)        28.01 (474)
-14 AP1M LS Rain                          37.55        38.99     11.47      30.55%        62.99 (471)         9.67 (336)
-15 AS CORRECT_TRACERS                    56.52        57.21      1.57       2.78%        58.65 (496)        52.58 ( 14)
-16 AA SL_Tracer                          48.02        47.90      0.72       1.50%        50.86 (560)        46.04 (319)
-17 AS Stochastic_Phys                    43.20        44.93      4.34      10.05%        46.93 (531)        31.67 (  0)
-18 AA SL_Full_Wind                       25.28        24.16      2.15       8.52%        30.94 (555)        23.61 (336)
-19 AP2 Boundary Layer                    24.78        24.02      2.39       9.63%        30.11 (390)        19.70 (160)
-20 AP1R SW Rad                           23.79        24.28      1.83       7.67%        26.91 (243)        18.23 (563)
-21 AP2 Implicit BL                       20.10        19.46      2.37      11.81%        25.12 (390)        14.84 (160)
-22 AS End TStep Diags                    23.47        23.36      0.34       1.46%        24.11 (482)        22.93 (279)
-23 AA SL_Moisture                        20.66        20.61      0.38       1.82%        21.75 (100)        19.72 (  0)
-24 UKCA CHEMISTRY MODEL                  17.97        17.89      0.66       3.65%        21.06 (574)        16.62 ( 29)
-25 AS STASH                              17.32        17.31      0.21       1.22%        18.44 ( 90)        16.75 ( 32)
-26 INITIAL                               12.21        12.20      0.08       0.69%        12.25 (121)        10.25 (  0)
-27 DUMPCTL                                9.30         9.30      0.04       0.43%         9.30 (366)         8.34 (  0)
-28 AP1 G-wave drag                        6.49         6.51      0.97      14.92%         9.36 (552)         5.02 (222)
-29 TIMER                                  7.70         7.85      0.88      11.46%         9.44 ( 76)         5.94 ( 34)
-30 AS CORRECT_MOISTURE                    6.66         6.66      0.02       0.28%         6.75 ( 33)         6.57 (432)
-31 AS CONVERT                             0.01         0.00      0.25     ******%         5.98 (  0)         0.00 (  1)
-32 AA SL_Rho                              0.01         0.00      0.24     ******%         5.75 (  0)         0.00 (  1)
-33 AP2 Explicit BL                        0.01         0.00      0.16     ******%         3.78 (  0)         0.00 (  1)
-34 AA SL_Thermo                           0.01         0.00      0.13     ******%         3.23 (  0)         0.00 (  1)
-35 AP1M LS Cloud                          0.00         0.00      0.04     ******%         1.01 (  0)         0.00 (  1)
-36 AS DIAGNOSTICS                         0.00         0.00      0.04     ******%         1.01 (  0)         0.00 (  1)
-37 AS Diffusion                           0.00         0.00      0.02     ******%         0.41 (  0)         0.00 (  1)
-38 AS Aerosol Modelling                   0.00         0.00      0.01     ******%         0.29 (  0)         0.00 (  1)
-39 AS Assimilation                        0.00         0.00      0.01     ******%         0.19 (  0)         0.00 (  1)
-40 AP1 NI_methox                          0.00         0.00      0.01     ******%         0.13 (  0)         0.00 (  1)
-41 AS Energy mass                         0.00         0.00      0.01     ******%         0.13 (  0)         0.00 (  1)
-42 AP1 Conv Eng Corr                      0.00         0.00      0.00     ******%         0.11 (  0)         0.00 (  1)
-43 AP1 Energy Correct.                    0.00         0.00      0.00     ******%         0.10 (  0)         0.00 (  1)
-44 AP2 Conv Eng Corr                      0.00         0.00      0.00     ******%         0.10 (  0)         0.00 (  1)
-45 AS IAU                                 0.00         0.00      0.00     ******%         0.09 (  0)         0.00 (  1)
-46 Init_Atm_Step (FS)                     0.00         0.00      0.00     ******%         0.00 (  0)         0.00 (  1)
 
 ?  Caution This run generated 27 warnings
 
@@ -266,24 +284,6 @@ def test_um_metric_names():
     assert parser.metrics == ["tavg", "tmed", "tstd", "tmax", "pemax", "tmin", "pemin"]
 
 
-def test_um7_version_parsing(um7_raw_profiling_data):
-    parser = UMProfilingParser()
-    expected_version = "7.3"
-    version = parser.get_um_version(um7_raw_profiling_data)
-    assert (
-        version == expected_version
-    ), f"Incorrect parsing for UM version. Found {version} instead of the correct {expected_version}"
-
-
-def test_um13_version_parsing(um13_raw_profiling_data):
-    parser = UMProfilingParser()
-    expected_version = "13.1"
-    version = parser.get_um_version(um13_raw_profiling_data)
-    assert (
-        version == expected_version
-    ), f"Incorrect parsing for UM version. Found {version} instead of the correct {expected_version}"
-
-
 def test_um7_parsing(um7_raw_profiling_data, um7_parsed_profile_data):
     parser = UMProfilingParser()
     stats = parser.read(um7_raw_profiling_data)
@@ -297,22 +297,6 @@ def test_um7_parsing(um7_raw_profiling_data, um7_parsed_profile_data):
         for idx, region in enumerate(stats["region"]):
             assert (
                 stats[metric][idx] == um7_parsed_profile_data[metric][idx]
-            ), f"Incorrect {metric} for region {region} (index: {idx})."
-
-
-def test_um13_parsing(um13_raw_profiling_data, um13_parsed_profile_data):
-    parser = UMProfilingParser()
-    stats = parser.read(um13_raw_profiling_data)
-
-    # Might also be worthwhile to check that the 'region' key exists first
-    assert len(stats["region"]) == len(
-        um13_parsed_profile_data["region"]
-    ), f"Number of matched regions should be *exactly* {len(um13_parsed_profile_data['region'])}"
-
-    for metric in parser.metrics:
-        for idx, region in enumerate(stats["region"]):
-            assert (
-                stats[metric][idx] == um13_parsed_profile_data[metric][idx]
             ), f"Incorrect {metric} for region {region} (index: {idx})."
 
 
@@ -334,7 +318,66 @@ def test_um7_parser_missing_section(um7_malformed_profiling_data_missing_profili
         parser.read(um7_malformed_profiling_data_missing_profiling_section)
 
 
+def test_um7_parser_extra_final_column(um7_malformed_data_extra_final_column):
+    parser = UMProfilingParser()
+    with pytest.raises(AssertionError):
+        parser.read(um7_malformed_data_extra_final_column)
+
+
+def test_um7_parser_extra_middle_column(um7_malformed_data_extra_middle_column):
+    parser = UMProfilingParser()
+    with pytest.raises(ValueError):
+        parser.read(um7_malformed_data_extra_middle_column)
+
+
+def test_um7_parser_extra_front_column_float(um7_malformed_data_extra_front_column_with_float_data):
+    parser = UMProfilingParser()
+    with pytest.raises(AssertionError):
+        parser.read(um7_malformed_data_extra_front_column_with_float_data)
+
+
+def test_um7_parser_extra_front_column_integer(
+    um7_malformed_data_extra_front_column_with_integer_data, um7_parsed_profile_data
+):
+    parser = UMProfilingParser()
+    stats = parser.read(um7_malformed_data_extra_front_column_with_integer_data)
+
+    # Might also be worthwhile to check that the 'region' key exists first
+    assert len(stats["region"]) == len(
+        um7_parsed_profile_data["region"]
+    ), f"Number of matched regions should be *exactly* {len(um7_parsed_profile_data['region'])}"
+
+    for metric in parser.metrics:
+        for idx, region in enumerate(stats["region"]):
+            assert (
+                stats[metric][idx] == um7_parsed_profile_data[metric][idx]
+            ), f"Incorrect {metric} for region {region} (index: {idx})."
+
+
+def test_um7_parser_extra_front_column_string(um7_malformed_data_extra_front_column_with_string_data):
+    parser = UMProfilingParser()
+    with pytest.raises(AssertionError):
+        parser.read(um7_malformed_data_extra_front_column_with_string_data)
+
+
 def test_um7_parser_malformed_columns(um7_malformed_profiling_data_bad_columndata):
     parser = UMProfilingParser()
     with pytest.raises(AssertionError):
         parser.read(um7_malformed_profiling_data_bad_columndata)
+
+
+# UM13 parsing tests below
+def test_um13_parsing(um13_raw_profiling_data, um13_parsed_profile_data):
+    parser = UMProfilingParser()
+    stats = parser.read(um13_raw_profiling_data)
+
+    # Might also be worthwhile to check that the 'region' key exists first
+    assert len(stats["region"]) == len(
+        um13_parsed_profile_data["region"]
+    ), f"Number of matched regions should be *exactly* {len(um13_parsed_profile_data['region'])}"
+
+    for metric in parser.metrics:
+        for idx, region in enumerate(stats["region"]):
+            assert (
+                stats[metric][idx] == um13_parsed_profile_data[metric][idx]
+            ), f"Incorrect {metric} for region {region} (index: {idx})."

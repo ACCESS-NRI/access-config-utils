@@ -57,45 +57,6 @@ class UMProfilingParser(ProfilingParser):
     def metrics(self) -> list:
         return self._metrics
 
-    def get_um_version(self, stream: str) -> str:
-        """Extract UM version from the input stream.
-
-        Args:
-            stream (str): input string to parse.
-        Returns:
-            str: A standardised UM version string.
-
-        >>> data='**************** Based upon UM release vn13.1             *****************'
-        >>> get_um_version(data)
-        '13.1'
-
-        >>> data='UM Version No         703'
-        >>> get_um_version(data)
-        '7.3'
-
-        """
-        version_p = re.compile(r"Based upon UM release vn(?P<version>[\d\.]+)")
-        version_m = version_p.search(stream)
-        if version_m:
-            return version_m.group("version")
-
-        # This works for UM7.3 (possibly 7.x)
-        version_p = re.compile(r"UM Version No\s*(?P<version>[\d\.]+)")
-        version_m = version_p.search(stream)
-        if version_m:
-            ver = version_m.group("version")
-            if len(ver) == 3:
-                # Convert to a more standard format
-                ver = f"{ver[0]}.{ver[2:]}"
-            return ver
-
-        return None
-
-    def _match_um_header(self, stream: str, raw_headers: str) -> (str, re.Match):
-        header = r"MPP : Inclusive timer summary\s+WALLCLOCK  TIMES\s*" + r"\s*".join(raw_headers) + r"\s*"
-        header_pattern = re.compile(header, re.MULTILINE)
-        return header, header_pattern.search(stream)
-
     def read(self, stream: str) -> dict:
         """Parse UM profiling data from a string.
 
@@ -112,6 +73,7 @@ class UMProfilingParser(ProfilingParser):
                         UM column name      Standard column name
                         ==================  ==================
                         N                   ignored
+                        ROUTINE             region
                         MEAN                tavg
                         MEDIAN              tmed
                         SD                  tstd
@@ -131,45 +93,32 @@ class UMProfilingParser(ProfilingParser):
                     ``region``, and then extract that index from *each* of the 'metric'
                     lists.
 
+                    Any number of column headers can be present at the beginning, i.e., before
+                    ``ROUTINE`` (including ``N`` for UM v13+) and will be ignored when the
+                    header is being parsed. Such columns must contain integer values for the
+                    profiling information parsing to work, otherwise (e.g., new columns with float
+                    data), an ``AssertionError`` is raised.
+
         Raises:
             ValueError: If the UM version number can not be found in the input string data.
-            ValueError: If a match for any of header, footer or section is not found.
+            ValueError: If a match for any of header, footer or section (i.e., empty section)
+                        is not found.
             AssertionError: If the expected format is not found in *all* of the lines within the
                             profiling section.
         """
 
         # First create the local variable with the metrics list
         metrics = self.metrics
+        raw_headers = ["ROUTINE", "MEAN", "MEDIAN", "SD", r"\% of mean", "MAX", r"\(PE\)", "MIN", r"\(PE\)"]
 
-        raw_headers_dict = {
-            "7": ["ROUTINE", "MEAN", "MEDIAN", "SD", r"\% of mean", "MAX", r"\(PE\)", "MIN", r"\(PE\)"],
-            "13": ["N", "ROUTINE", "MEAN", "MEDIAN", "SD", r"\% of mean", "MAX", r"\(PE\)", "MIN", r"\(PE\)"],
-        }
-
-        # Need to check UM version to determine the correct headers
-        um_version = self.get_um_version(stream)
-        if not um_version:
-            logger.debug("Could not determine UM version from input stream.")
-            logger.debug("Input stream: %s", stream)
-            # UM version was not there in the input stream - let's try to check if
-            # there are any of the known matching headers
-            for test_um_ver, raw_headers in raw_headers_dict.items():
-                _, h_match = self._match_um_header(stream, raw_headers)
-                if h_match:
-                    um_version = test_um_ver
-                    break
-
-        logger.debug("Detected UM version: %s", um_version)
-        um_version_major = um_version.split(".")[0]
-        if um_version_major not in raw_headers_dict.keys():
-            raise ValueError(
-                f"Full UM version = {um_version} detected. UM major version = "
-                f"{um_version_major} is invalid. Valid versions are "
-                f"{list(raw_headers_dict.keys())}"
-            )
-        raw_headers = raw_headers_dict[um_version_major]
-
-        header, header_match = self._match_um_header(stream, raw_headers)
+        header = r"MPP : Inclusive timer summary\s+WALLCLOCK  TIMES\s*"
+        # UM 13 has an extra header 'N' for the numeric row index (that UM7 does not)
+        # Writing the pattern this way avoids having to code in UM version dependent patterns
+        header += r"\S*\s+"
+        # Then skip over white-space-separated header names.
+        header += r"\s*".join(raw_headers) + r"\s*"
+        header_pattern = re.compile(header, re.MULTILINE)
+        header_match = header_pattern.search(stream)
         if not header_match:
             logger.debug("Header pattern: %s", header)
             logger.debug("Input string: %s", stream)
@@ -185,7 +134,7 @@ class UMProfilingParser(ProfilingParser):
             raise ValueError("No matching footer found.")
         logger.debug("Found footer: %s", footer_match.group(0))
 
-        # Match *everything* between the header and footer
+        # Match *everything* between the header and footer (the match could be 0 characters)
         profiling_section_p = re.compile(header + r"(.*)" + footer, re.MULTILINE | re.DOTALL)
         profiling_section = profiling_section_p.search(stream)
 
@@ -195,7 +144,7 @@ class UMProfilingParser(ProfilingParser):
         # This is regex dark arts - seems to work, I roughly understood when I
         # was refining this named capture group, but I might not be able to in
         # the future. Made heavy use of the regex debugger at regex101.com :) - MS 19/9/2025
-        profile_line = r"^\s*\d+\s+(?P<region>[a-zA-Z:()_/\-*&0-9\s\.]+(?<!\s))"
+        profile_line = r"^\s*[\d\s]+\s+(?P<region>[a-zA-Z][a-zA-Z:()_/\-*&0-9\s\.]+(?<!\s))"
         for metric in metrics:
             logger.debug(f"Adding {metric=}")
             if metric in ["pemax", "pemin"]:
