@@ -72,12 +72,12 @@ class UMProfilingParser(ProfilingParser):
                         ==================  ==================
                         UM column name      Standard column name
                         ==================  ==================
-                        N                   ignored
+                        N                   - (ignored)
                         ROUTINE             region
                         MEAN                tavg
                         MEDIAN              tmed
                         SD                  tstd
-                        % of mean           ignored
+                        % of mean           - (ignored)
                         MAX                 tmax
                         (PE)                pemax
                         MIN                 tmin
