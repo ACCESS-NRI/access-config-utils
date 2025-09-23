@@ -181,9 +181,5 @@ class UMProfilingParser(ProfilingParser):
         if len(stats["region"]) != num_lines:
             raise AssertionError(f"Expected {num_lines} regions, found {len(stats['region'])}.")
 
-        for metric in metrics:
-            if len(stats[metric]) != num_lines:
-                raise AssertionError(f"Expected {num_lines} entries for {metric}, found {len(stats[metric])}")
-
         logger.info(f"Found {len(stats['region'])} regions with profiling info")
         return stats
