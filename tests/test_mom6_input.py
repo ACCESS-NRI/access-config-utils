@@ -4,7 +4,7 @@
 import pytest
 from lark.exceptions import UnexpectedCharacters, UnexpectedEOF
 
-from access.parsers.mom6_input import MOM6InputParser
+from access.config.mom6_input import MOM6InputParser
 
 
 @pytest.fixture(scope="module")

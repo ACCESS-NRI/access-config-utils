@@ -3,7 +3,7 @@
 
 import pytest
 
-from access.parsers.yaml_config import YAMLParser
+from access.config.yaml_config import YAMLParser
 
 
 @pytest.fixture(scope="module")

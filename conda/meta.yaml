@@ -4,7 +4,7 @@
 {% set project = pyproj.get('project') %}
 
 package:
-    name: access-parsers
+    name: access-config-utils
     version: "{{ version }}"
 
 build:
@@ -33,10 +33,10 @@ requirements:
 
 test:
     imports:
-        - access.parsers
+        - access.config
 
 about:
-    home: https://github.com/ACCESS-NRI/access-parsers/
+    home: https://github.com/ACCESS-NRI/access-config-utils/
     license: Apache Software
     license_family: APACHE
-    summary: "Various functions to read and write configuration files for the models developed at ACCESS-NRI."
+    summary: "Utilities to work with configurations for the ACCESS climate models."

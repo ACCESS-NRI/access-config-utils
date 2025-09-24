@@ -10,7 +10,7 @@ env:
 jobs:
   pypi-build:
     name: Build package for PyPI
-    if: github.repository == 'ACCESS-NRI/access-parsers'  # exclude forks
+    if: github.repository == 'ACCESS-NRI/access-config-utils'  # exclude forks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +46,7 @@ jobs:
 
   conda:
     name: Build with conda and upload
-    if: github.repository == 'ACCESS-NRI/access-parsers'  # exclude forks
+    if: github.repository == 'ACCESS-NRI/access-config-utils'  # exclude forks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source

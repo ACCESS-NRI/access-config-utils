@@ -74,7 +74,7 @@ For example, the keys are case-sensitive, which is not the case in Fortran namel
 of values is also not the same as in Fortran namelists.
 """
 
-from access.parsers.config import ConfigParser
+from access.config.parser import ConfigParser
 
 
 class NUOPCParser(ConfigParser):
