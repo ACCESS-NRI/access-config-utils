@@ -16,7 +16,7 @@ We have also found MOM6 parameter files with C-style comments in files used by C
 are actually not part of the specifications.
 """
 
-from access.parsers.config import ConfigParser
+from access.config.parser import ConfigParser
 
 
 class MOM6InputParser(ConfigParser):

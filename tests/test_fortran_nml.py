@@ -4,7 +4,7 @@
 import pytest
 from lark.exceptions import UnexpectedCharacters, UnexpectedEOF
 
-from access.parsers.fortran_nml import FortranNMLParser
+from access.config.fortran_nml import FortranNMLParser
 
 
 @pytest.fixture(scope="module")

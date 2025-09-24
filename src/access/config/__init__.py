@@ -11,13 +11,11 @@ except PackageNotFoundError:
     # package is not installed
     pass
 
-from .config import ConfigParser
-from .fortran_nml import FortranNMLParser
-from .mom6_input import MOM6InputParser
-from .yaml_config import YAMLParser
-from .nuopc_config import NUOPCParser
-from .profiling import ProfilingParser
-from .fms_profiling import FMSProfilingParser
+from access.config.parser import ConfigParser
+from access.config.fortran_nml import FortranNMLParser
+from access.config.mom6_input import MOM6InputParser
+from access.config.yaml_config import YAMLParser
+from access.config.nuopc_config import NUOPCParser
 
 __all__ = [
     "ConfigParser",
@@ -25,6 +23,4 @@ __all__ = [
     "MOM6InputParser",
     "YAMLParser",
     "NUOPCParser",
-    "ProfilingParser",
-    "FMSProfilingParser",
 ]

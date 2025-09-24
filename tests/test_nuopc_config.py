@@ -5,7 +5,7 @@ import pytest
 from lark.exceptions import UnexpectedCharacters, UnexpectedEOF
 from pathlib import Path
 
-from access.parsers.nuopc_config import NUOPCParser
+from access.config.nuopc_config import NUOPCParser
 
 
 @pytest.fixture(scope="module")

@@ -7,7 +7,7 @@ Fortran namelists allow format-free I/O of variables by key-value assignements. 
 languages, but became part of the standard in Fortran 90.
 """
 
-from access.parsers.config import ConfigParser
+from access.config.parser import ConfigParser
 
 
 class FortranNMLParser(ConfigParser):

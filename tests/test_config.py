@@ -4,7 +4,7 @@
 import pytest
 from pathlib import Path
 
-from access.parsers.config import ConfigParser
+from access.config.parser import ConfigParser
 
 grammar = """
     // Made-up grammar taylored to test the different building blocks
