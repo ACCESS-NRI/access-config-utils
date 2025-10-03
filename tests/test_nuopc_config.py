@@ -1,9 +1,10 @@
 # Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
+
 import pytest
 from lark.exceptions import UnexpectedCharacters, UnexpectedEOF
-from pathlib import Path
 
 from access.config.nuopc_config import NUOPCParser
 
@@ -17,8 +18,8 @@ def parser():
 @pytest.fixture(scope="module")
 def nuopc_config():
     """Fixture returning a dict holding the parsed content of a NUOPC config file."""
-    return dict(
-        DRIVER_attributes={
+    return {
+        "DRIVER_attributes": {
             "Verbosity": "off",
             "cime_model": "cesm",
             "logFilePostFix": Path(".log"),
@@ -29,15 +30,15 @@ def nuopc_config():
             "wv_sat_table_spacing": 1.0,
             "wv_sat_transition_start": 20.0,
         },
-        COMPONENTS=["atm", "ocn"],
-        TEST="On",
-        ALLCOMP_attributes={
+        "COMPONENTS": ["atm", "ocn"],
+        "TEST": "On",
+        "ALLCOMP_attributes": {
             "ATM_model": "datm",
             "GLC_model": "sglc",
             "OCN_model": "mom",
             "ocn2glc_levels": [1, 10, 19, 26, 30, 33, 35],
         },
-    )
+    }
 
 
 @pytest.fixture(scope="module")
