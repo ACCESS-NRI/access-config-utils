@@ -1,21 +1,19 @@
 """
-access-parsers package.
+access-config-utils package.
 """
 
-__version__ = "0.1.0"
-from importlib.metadata import version, PackageNotFoundError
+from contextlib import suppress
+from importlib.metadata import PackageNotFoundError, version
 
-try:
-    __version__ = version("access-parsers")
-except PackageNotFoundError:
-    # package is not installed
-    pass
+__version__ = "unknown"
+with suppress(PackageNotFoundError):
+    __version__ = version("access-config-utils")
 
-from access.config.parser import ConfigParser
 from access.config.fortran_nml import FortranNMLParser
 from access.config.mom6_input import MOM6InputParser
-from access.config.yaml_config import YAMLParser
 from access.config.nuopc_config import NUOPCParser
+from access.config.parser import ConfigParser
+from access.config.yaml_config import YAMLParser
 
 __all__ = [
     "ConfigParser",

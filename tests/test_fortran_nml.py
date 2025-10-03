@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-from lark.exceptions import UnexpectedCharacters, UnexpectedEOF
+from lark.exceptions import UnexpectedEOF
 
 from access.config.fortran_nml import FortranNMLParser
 

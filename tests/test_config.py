@@ -1,8 +1,9 @@
 # Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from access.config.parser import ConfigParser
 
@@ -232,8 +233,8 @@ def test_config_type_path(parser):
 def test_config_type_null(parser):
     """Test transformation and sanity checks of null values"""
     config = parser.parse("a= b=")
-    assert config["a"] == None
-    assert config["b"] == None
+    assert config["a"] is None
+    assert config["b"] is None
     assert str(config) == "a=b="
 
     config["b"] = None

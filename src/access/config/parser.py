@@ -11,9 +11,9 @@ common grammar, in the config.lark file.
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, Tuple, List
+from typing import Any
 
-from lark import Lark, Tree, Token, Visitor
+from lark import Lark, Token, Tree, Visitor
 from lark.reconstruct import Reconstructor
 from lark.visitors import Interpreter
 
@@ -52,8 +52,8 @@ _is_same_type = {
 expected type."""
 
 _value_transformers = {
-    "logical": lambda token: True if str(token).lower() == ".true." else False,
-    "bool": lambda token: True if str(token) == "True" else False,
+    "logical": lambda token: str(token).lower() == ".true.",
+    "bool": lambda token: str(token) == "True",
     "integer": lambda token: int(token),
     "float": lambda token: float(token),
     "double": lambda token: float(token.replace("D", "E").replace("d", "e")),
@@ -160,8 +160,8 @@ class Config(dict):
         if key not in self:
             raise (KeyError(f"Key doesn't exist: {key}"))
 
-        if self[key] == None:
-            if value == None:
+        if self[key] is None:
+            if value is None:
                 return
             else:
                 raise TypeError(f"Trying to change the type of variable '{key}'")
@@ -241,7 +241,8 @@ class ConfigParser(ABC):
 
     Because the resulting parse trees are all processed using the ConfigToDict Interpreter, all grammars must follow
     the same structure and use the same names for the relevant rules:
-      - Key-value assignment rules must be named (or have an alias with that name): "key_value", "key_list" and "key_block".
+      - Key-value assignment rules must be named (or have an alias with that name): "key_value", "key_list" and
+        "key_block".
       - Only rules from the "config.lark" file should be used when defining the supported scalar values in the
         assignment rules.
       - The rule defining what a key is must be named "key". Note that the "config.lark" file contains a "key" rule
@@ -313,12 +314,11 @@ class ConfigToDict(Interpreter):
     _case_sensitive_keys: bool  # Are keys case-sensitive?
 
     def __init__(self, reconstructor: Reconstructor, case_sensitive_keys: bool) -> None:
-
         self._reconstructor = reconstructor
         self._case_sensitive_keys = case_sensitive_keys
         super().__init__()
 
-    def visit(self, tree: Tree) -> Tuple[Dict[str, Any], Dict[str, Tree]]:
+    def visit(self, tree: Tree) -> tuple[dict[str, Any], dict[str, Tree]]:
         """Visit the entire tree and return two dictionaries: one holding the parsed items and the other one holding,
         for each parsed item, a reference to the corresponding tree branch.
 
@@ -358,7 +358,7 @@ class ConfigToDict(Interpreter):
         else:
             return key.upper()
 
-    def _transform_values(self, children: List[Tree]) -> Tuple[List[Any], List[Tree]]:
+    def _transform_values(self, children: list[Tree]) -> tuple[list[Any], list[Tree]]:
         """Given the children of a "key_value" or a "key_list" rule, extract and transform the corresponding values.
 
         Args:
@@ -372,13 +372,13 @@ class ConfigToDict(Interpreter):
             Tuple[List[Any], List[Tree]]: List of transformed values, list of tree branches storing the corresponding
                 values.
         """
-        refs = [child for child in children if child.data in _value_transformers.keys()]
+        refs = [child for child in children if child.data in _value_transformers]
         if len(refs) == 0:
             raise ValueError("No values found in Tree")
         values = [_value_transformers[child.data](child.children[0]) for child in refs]
         return values, refs
 
-    def _transform_value(self, children: List[Tree]) -> Tuple[Any, Tree]:
+    def _transform_value(self, children: list[Tree]) -> tuple[Any, Tree]:
         """Given the children of a "key_value" rule, extract and transform the corresponding value.
 
         Args:

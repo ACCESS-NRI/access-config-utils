@@ -24,8 +24,7 @@ build-backend = "setuptools.build_meta"
 
 [project.optional-dependencies]
 devel = [
-    "flake8",
-    "black",
+    "ruff",
     "pre-commit",
 ]
 test = [
@@ -40,8 +39,8 @@ testpaths = ["tests"]
 [tool.coverage.run]
 omit = ["src/access/config/__init__.py"]
 
-[tool.black]
+[tool.ruff]
 line-length = 120
 
-[tool.flake8]
-max-line-length = 120
+[tool.ruff.lint]
+select = ["E", "F", "B", "C4", "SIM", "PTH", "UP", "I", "N", "C901"]
