@@ -31,32 +31,32 @@ def _generate_esm1p6_layout_from_core_counts(
     ----------
 
     min_atm_ncores : int, required
-        Minimum number of ATM cores to consider when generating layouts. 
+        Minimum number of ATM cores to consider when generating layouts.
         Must be at least 2 and less than or equal to max_atm_ncores.
 
     max_atm_ncores : int, required
-        Maximum number of ATM cores to consider when generating layouts. 
+        Maximum number of ATM cores to consider when generating layouts.
         Must be at least 2 and greater than or equal to min_atm_ncores.
 
     ncores_for_atm_and_ocn : int, required
-        Total number of cores available for ATM and MOM. 
+        Total number of cores available for ATM and MOM.
         Must be at least 3 (2 for atm and 1 for mom).
 
     ice_ncores : int, required
         Number of cores allocated to ICE. Must be at least 1.
 
     min_ncores_needed : int, required
-        Minimum number of cores that must be used by ATM, MOM and ICE combined. 
+        Minimum number of cores that must be used by ATM, MOM and ICE combined.
         Must be at least 3 + ice_ncores (2 for ATM, 1 for MOM and ``ice_ncores`` for ice).
         Layouts using fewer cores will be discarded.
 
     atm_ncore_delta : int, optional, default=2
-        Step size to use when iterating between min_atm_ncores and max_atm_ncores. 
+        Step size to use when iterating between min_atm_ncores and max_atm_ncores.
         Must be a non-zero and positive integer.
 
     abs_maxdiff_nx_ny : int, optional, default=4
-        Absolute max. of the difference between nx and ny (in the solved layout) to consider 
-        when generating layouts. Must be a non-negative integer. 
+        Absolute max. of the difference between nx and ny (in the solved layout) to consider
+        when generating layouts. Must be a non-negative integer.
 
         Setting to 0 will return only square layouts. Applies to both ATM and MOM layouts.
 
@@ -70,7 +70,7 @@ def _generate_esm1p6_layout_from_core_counts(
         If True, only consider layouts with ATM ncores >= MOM ncores.
 
     mom_ncores_over_atm_ncores_range : tuple of float, optional, default=(0.75, 1.25)
-        A tuple of two floats representing the minimum and maximum fractions of MOM ncores 
+        A tuple of two floats representing the minimum and maximum fractions of MOM ncores
         over ATM ncores to consider when generating layouts.
     """
 
@@ -81,13 +81,13 @@ def _generate_esm1p6_layout_from_core_counts(
 
     if atm_ncore_delta <= 0:
         raise ValueError(
-            "Stepsize in core counts to cover min. and max. ATM ncores must be a positive integer. "\
+            "Stepsize in core counts to cover min. and max. ATM ncores must be a positive integer. "
             f"Got {atm_ncore_delta} instead"
         )
 
     if ncores_for_atm_and_ocn < min_atm_and_mom_ncores:
         raise ValueError(
-            "Number of cores available for ATM and OCN must be at least {min_atm_and_mom_ncores} "\
+            "Number of cores available for ATM and OCN must be at least {min_atm_and_mom_ncores} "
             f"(2 for atm and 1 for mom). Got {ncores_for_atm_and_ocn} instead"
         )
 
@@ -96,15 +96,15 @@ def _generate_esm1p6_layout_from_core_counts(
 
     if min_ncores_needed > (ncores_for_atm_and_ocn + ice_ncores):
         raise ValueError(
-            f"Min. number of cores needed ({min_ncores_needed}) cannot be greater than the total "\
+            f"Min. number of cores needed ({min_ncores_needed}) cannot be greater than the total "
             f"number of available cores ({ncores_for_atm_and_ocn + ice_ncores})"
         )
 
     if min_ncores_needed < ncores_for_atm_and_ocn:
         logger.warning(
-            f"Min. total cores required for a valid config ({min_ncores_needed}) should be greater "\
+            f"Min. total cores required for a valid config ({min_ncores_needed}) should be greater "
             f"than the number of ATM + OCN cores ({ncores_for_atm_and_ocn}). "
-            f"Currently, any config that satisfies the ATM + OCN core requirements will also satisfy "\
+            f"Currently, any config that satisfies the ATM + OCN core requirements will also satisfy "
             "the requirement for the min. total cores"
         )
 
@@ -120,10 +120,10 @@ def _generate_esm1p6_layout_from_core_counts(
     layout_tuple = return_layout_tuple()
     all_layouts = []
     logger.debug(
-        f"Generating layouts with {min_atm_ncores=}, {max_atm_ncores=}, {atm_ncore_delta=}, "\
-        f"{ncores_for_atm_and_ocn=}, {ice_ncores=}, {min_ncores_needed=}, "\
-        f"{mom_ncores_over_atm_ncores_range=}, {abs_maxdiff_nx_ny=}, "\
-        f"{prefer_atm_nx_greater_than_ny=}, {prefer_mom_nx_greater_than_ny=}, "\
+        f"Generating layouts with {min_atm_ncores=}, {max_atm_ncores=}, {atm_ncore_delta=}, "
+        f"{ncores_for_atm_and_ocn=}, {ice_ncores=}, {min_ncores_needed=}, "
+        f"{mom_ncores_over_atm_ncores_range=}, {abs_maxdiff_nx_ny=}, "
+        f"{prefer_atm_nx_greater_than_ny=}, {prefer_mom_nx_greater_than_ny=}, "
         f"{prefer_atm_ncores_greater_than_mom_ncores=}"
     )
     for atm_ncores in range(min_atm_ncores, max_atm_ncores + 1, atm_ncore_delta):
@@ -160,14 +160,14 @@ def _generate_esm1p6_layout_from_core_counts(
                 mom_ncores = mom_nx * mom_ny
                 if mom_ncores < min_mom_ncores or mom_ncores > max_mom_ncores:
                     logger.debug(
-                        f"Skipping mom layout {mom_nx}x{mom_ny} with {mom_ncores} ncores "\
+                        f"Skipping mom layout {mom_nx}x{mom_ny} with {mom_ncores} ncores "
                         f"not in the range [{min_mom_ncores}, {max_mom_ncores}]"
                     )
                     continue
 
                 if prefer_atm_ncores_greater_than_mom_ncores and (atm_nx * atm_ny < mom_ncores):
                     logger.debug(
-                        f"Skipping mom layout since mom ncores = {mom_nx}x{mom_ny} is not less "\
+                        f"Skipping mom layout since mom ncores = {mom_nx}x{mom_ny} is not less "
                         f"than atm ncores = {atm_nx * atm_ny}"
                     )
                     continue
@@ -175,7 +175,7 @@ def _generate_esm1p6_layout_from_core_counts(
                 ncores_used = mom_nx * mom_ny + atm_nx * atm_ny + ice_ncores
                 if ncores_used < min_ncores_needed:
                     logger.debug(
-                        f"Skipping layout atm {atm_nx}x{atm_ny} mom {mom_nx}x{mom_ny} ice {ice_ncores}, "\
+                        f"Skipping layout atm {atm_nx}x{atm_ny} mom {mom_nx}x{mom_ny} ice {ice_ncores}, "
                         f"with {ncores_used=} is less than {min_ncores_needed=}"
                     )
                     continue
@@ -300,51 +300,51 @@ def generate_esm1p6_core_layouts_from_node_count(
     if tol_around_ctrl_ratio is not None:
         if tol_around_ctrl_ratio < 0.0:
             raise ValueError(
-                f"The tolerance fraction for setting the MOM to ATM core ratio to the control ratio must "\
+                f"The tolerance fraction for setting the MOM to ATM core ratio to the control ratio must "
                 f"be in >= 0.0. Got {tol_around_ctrl_ratio} instead"
             )
     else:  # tol_around_ctrl_ratio is None -> use mom_ncores_over_atm_ncores_range
         if not isinstance(mom_ncores_over_atm_ncores_range, tuple) or len(mom_ncores_over_atm_ncores_range) != 2:
             raise ValueError(
-                f"The min. and max. fraction of MOM ncores over ATM ncores must be a tuple of two floats. "\
+                f"The min. and max. fraction of MOM ncores over ATM ncores must be a tuple of two floats. "
                 f"Got {mom_ncores_over_atm_ncores_range} instead"
             )
 
         min_frac_mom_ncores_over_atm_ncores, max_frac_mom_ncores_over_atm_ncores = mom_ncores_over_atm_ncores_range
         if not min_frac_mom_ncores_over_atm_ncores or not max_frac_mom_ncores_over_atm_ncores:
             raise ValueError(
-                f"The min. and max. fraction of MOM ncores over ATM ncores must be a valid float. Got "\
+                f"The min. and max. fraction of MOM ncores over ATM ncores must be a valid float. Got "
                 f"min={min_frac_mom_ncores_over_atm_ncores} and max={max_frac_mom_ncores_over_atm_ncores} instead"
             )
 
         if min_frac_mom_ncores_over_atm_ncores <= 0:
             raise ValueError(
-                "The minimum fraction of MOM ncores over ATM ncores must be greater than 0. "\
+                "The minimum fraction of MOM ncores over ATM ncores must be greater than 0. "
                 f"Got {min_frac_mom_ncores_over_atm_ncores} instead"
             )
 
         if max_frac_mom_ncores_over_atm_ncores <= 0:
             raise ValueError(
-                f"The maximum fraction of MOM ncores over ATM ncores must be greater than 0. "\
+                f"The maximum fraction of MOM ncores over ATM ncores must be greater than 0. "
                 f"Got {max_frac_mom_ncores_over_atm_ncores} instead"
             )
 
         if min_frac_mom_ncores_over_atm_ncores > max_frac_mom_ncores_over_atm_ncores:
             raise ValueError(
                 f"Invalid MOM ncores over ATM ncores fractions - min. must be <= max."
-                f" Got min={min_frac_mom_ncores_over_atm_ncores} and "\
+                f" Got min={min_frac_mom_ncores_over_atm_ncores} and "
                 f"max={max_frac_mom_ncores_over_atm_ncores} instead"
             )
 
     if atm_ncore_delta <= 0:
         raise ValueError(
-            f"The stepsize in core counts to take between the min. and max. ATM ncores must "\
+            f"The stepsize in core counts to take between the min. and max. ATM ncores must "
             f"be a positive integer. Got {atm_ncore_delta} instead"
         )
 
     if abs_maxdiff_nx_ny < 0:
         raise ValueError(
-            "The absolute max. diff. between nx and ny (in the solved layout) must be a non-zero integer. "\
+            "The absolute max. diff. between nx and ny (in the solved layout) must be a non-zero integer. "
             f"Got {abs_maxdiff_nx_ny} instead"
         )
 
