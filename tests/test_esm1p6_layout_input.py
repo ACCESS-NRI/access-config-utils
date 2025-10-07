@@ -4,8 +4,8 @@
 import pytest
 
 from access.config.esm1p6_layout_input import (
-    generate_esm1p6_core_layouts_from_node_count,
     _generate_esm1p6_layout_from_core_counts,
+    generate_esm1p6_core_layouts_from_node_count,
     generate_esm1p6_perturb_block,
     return_layout_tuple,
 )
