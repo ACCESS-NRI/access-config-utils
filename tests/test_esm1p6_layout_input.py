@@ -262,6 +262,33 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout):
 
 
 def test_generate_esm1p6_perturb_block(esm1p6_ctrl_layout):
+    # Test that the validation works
+    with pytest.raises(ValueError):
+        generate_esm1p6_perturb_block(num_nodes=None, layouts=esm1p6_ctrl_layout, branch_name_prefix="test_block")
+    with pytest.raises(ValueError):
+        generate_esm1p6_perturb_block(num_nodes=-1, layouts=esm1p6_ctrl_layout, branch_name_prefix="test_block")
+
+    with pytest.raises(ValueError):
+        generate_esm1p6_perturb_block(num_nodes=4, layouts=esm1p6_ctrl_layout, branch_name_prefix=None)
+
+    # Test with invalid layout
+    with pytest.raises(ValueError):
+        generate_esm1p6_perturb_block(num_nodes=4, layouts=None, branch_name_prefix="test_block")
+
+    # Test with empty layout
+    with pytest.raises(ValueError):
+        generate_esm1p6_perturb_block(num_nodes=4, layouts=[[]], branch_name_prefix="test_block")
+
+    # Test that the validation works for layouts with missing fields
+    with pytest.raises(ValueError):
+        missing_ice_ncores_layout = [[416, 16, 13, 14, 14]]
+        generate_esm1p6_perturb_block(num_nodes=4, layouts=missing_ice_ncores_layout, branch_name_prefix="test_block")
+
+    with pytest.raises(ValueError):
+        generate_esm1p6_perturb_block(
+            num_nodes=4, layouts=esm1p6_ctrl_layout, branch_name_prefix="test_block", start_blocknum=-1
+        )
+
     # Test with valid parameters
     branch_name_prefix = "test_block"
     perturb_block, _ = generate_esm1p6_perturb_block(
