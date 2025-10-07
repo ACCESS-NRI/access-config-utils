@@ -1,4 +1,3 @@
-import sys
 from typing import NamedTuple
 
 
@@ -19,7 +18,7 @@ def return_layout_tuple() -> NamedTuple:
     layout_tuple = NamedTuple(
         "layout_tuple",
         [
-            ("ncores_used", int), # This can be derived from the other fields -> perhaps remove it? MS: 3rd Oct, 2025
+            ("ncores_used", int),  # This can be derived from the other fields -> perhaps remove it? MS: 3rd Oct, 2025
             ("atm_nx", int),
             ("atm_ny", int),
             ("mom_nx", int),
@@ -30,9 +29,7 @@ def return_layout_tuple() -> NamedTuple:
     return layout_tuple
 
 
-def convert_num_nodes_to_ncores(
-    num_nodes: (int | float), queue: str = "normalsr"
-) -> int:
+def convert_num_nodes_to_ncores(num_nodes: (int | float), queue: str = "normalsr") -> int:
     """
     Convert number of nodes to number of cores based on queue properties.
 
@@ -59,9 +56,7 @@ def convert_num_nodes_to_ncores(
         "normal": {"ncores_per_node": 48},
     }
     if queue not in list(queue_properties.keys()):
-        raise ValueError(
-            f"Queue = {queue} not allowed. Allowed values are {list(queue_properties.keys())}"
-        )
+        raise ValueError(f"Queue = {queue} not allowed. Allowed values are {list(queue_properties.keys())}")
 
     if not isinstance(num_nodes, (int, float)) or num_nodes <= 0:
         raise ValueError("Number of nodes must be a positive number (integer or float).")
@@ -71,7 +66,7 @@ def convert_num_nodes_to_ncores(
 
 def find_layouts_with_maxncore(
     maxncore: int,
-    *, # keyword-only arguments follow
+    *,  # keyword-only arguments follow
     abs_maxdiff_nx_ny: int = 4,
     even_nx: bool = False,
     prefer_nx_greater_than_ny: bool = False,
@@ -95,12 +90,12 @@ def find_layouts_with_maxncore(
         If True, only layouts with even nx are returned. Default is False.
 
     prefer_nx_greater_than_ny : bool, optional
-        If True, only layouts with nx >= ny are returned. Default is False. 
+        If True, only layouts with nx >= ny are returned. Default is False.
 
     Returns
     -------
     list of tuples
-        List of (nx, ny) tuples representing the unique layouts found. 
+        List of (nx, ny) tuples representing the unique layouts found.
         If no layouts are found, an empty list is returned.
 
     Raises
@@ -113,7 +108,9 @@ def find_layouts_with_maxncore(
     if maxncore < 1:
         raise ValueError(f"Max. number of cores to use must be a positive integer. Got {maxncore} instead")
     if abs_maxdiff_nx_ny < 0:
-        raise ValueError(f"The max. absolute difference between nx and ny in the layout must be a non-negative integer. Got {abs_maxdiff_nx_ny} instead")
+        raise ValueError(
+            f"The max. absolute difference between nx and ny in the layout must be a non-negative integer. Got {abs_maxdiff_nx_ny} instead"
+        )
 
     if maxncore < 2 and even_nx:
         return []
@@ -136,5 +133,3 @@ def find_layouts_with_maxncore(
         layouts.append((nx, ny))
 
     return layouts
-
-
