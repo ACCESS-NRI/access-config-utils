@@ -15,7 +15,8 @@ def return_layout_tuple() -> NamedTuple:
         - mom_ny (int): Number of cores in the y-direction for the ocean model.
         - ice_ncores (int): Number of cores used for the ice model.
     """
-    layout_tuple = NamedTuple(
+    # The noqa comment is to suppress the "convert to class" warning from ruff/flake8
+    layout_tuple = NamedTuple( #noqa: UP014
         "layout_tuple",
         [
             ("ncores_used", int),  # This can be derived from the other fields -> perhaps remove it? MS: 3rd Oct, 2025

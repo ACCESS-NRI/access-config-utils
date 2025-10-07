@@ -10,7 +10,10 @@ from access.config.layout_config import (
 logger = logging.getLogger(__name__)
 
 
-def _generate_esm1p6_layout_from_core_counts(
+# The noqa comment is to suppress the complexity warning from ruff/flake8
+# The complexity of this function is high due to the nested loops and multiple conditionals. Some day
+# I or someone else will refactor it to reduce the complexity. - MS 7th Oct, 2025
+def _generate_esm1p6_layout_from_core_counts( # noqa: C901
     min_atm_ncores: int,
     max_atm_ncores: int,
     ncores_for_atm_and_ocn: int,
@@ -199,7 +202,10 @@ def _generate_esm1p6_layout_from_core_counts(
     return all_layouts
 
 
-def generate_esm1p6_core_layouts_from_node_count(
+# The noqa comment is to suppress the complexity warning from ruff/flake8
+# The complexity of this function is high due to the nested loops and multiple conditionals. Some day
+# I or someone else will refactor it to reduce the complexity. - MS 7th Oct, 2025
+def generate_esm1p6_core_layouts_from_node_count( # noqa: C901
     num_nodes_list: float,
     *,
     queue: str = "normalsr",
@@ -613,7 +619,8 @@ def example_esmp16_layouts():
     logging.basicConfig(level=logging.DEBUG)
     logger = logging.getLogger(__name__)
 
-    scaling_config_tup = NamedTuple(
+    # The noqa comment is to suppress the "convert to class" warning from ruff/flake8
+    scaling_config_tup = NamedTuple( #noqa: UP014
         "scaling_config_tup",
         [
             ("num_nodes", float),
