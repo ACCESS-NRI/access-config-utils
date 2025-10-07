@@ -86,6 +86,15 @@ def test_generate_esm1p6_layout_from_core_counts(layout_tuple):
             mom_ncores_over_atm_ncores_range=(1.1, 0.9),
         )
 
+    with pytest.raises(ValueError):
+        layouts = _generate_esm1p6_layout_from_core_counts(
+            min_atm_ncores=96,
+            max_atm_ncores=120,
+            ice_ncores=6,
+            ncores_for_atm_and_ocn=208 - 2 * 6,
+            min_ncores_needed=208,
+        )
+
     # Test with a valid core count
     core_count = 208
     max_atm_ncores = 120
@@ -126,6 +135,27 @@ def test_generate_esm1p6_layout_from_core_counts(layout_tuple):
     assert all(x in layouts_without_min_ncores for x in layouts), (
         "All layouts from the first call should be in the second call"
     )
+
+    # Test that the continue statement in the loop works by setting abs_maxdiff_nx_ny to 2
+    min_atm_ncores = 190
+    max_atm_ncores = 210
+    ice_ncores = 12
+    ncores_for_atm_and_ocn = 416 - ice_ncores
+    min_ncores_needed = 416
+    abs_maxdiff_nx_ny = 0
+    layouts = _generate_esm1p6_layout_from_core_counts(
+        max_atm_ncores=max_atm_ncores,
+        min_atm_ncores=min_atm_ncores,
+        ice_ncores=ice_ncores,
+        ncores_for_atm_and_ocn=ncores_for_atm_and_ocn,
+        min_ncores_needed=min_ncores_needed,
+        abs_maxdiff_nx_ny=0,
+    )
+    assert all(
+        abs(layout.atm_nx - layout.atm_ny) <= abs_maxdiff_nx_ny
+        and abs(layout.mom_nx - layout.mom_ny) <= abs_maxdiff_nx_ny
+        for layout in layouts
+    ), f"Some layouts have abs(atm_nx - atm_ny) > {abs_maxdiff_nx_ny} or abs(mom_nx - mom_ny) > {abs_maxdiff_nx_ny}"
 
     # Test with zero cores
     core_count = 0

@@ -557,9 +557,6 @@ def generate_esm1p6_perturb_block(
     if any(len(x) != 6 for x in layouts):
         raise ValueError(f"Invalid layouts provided. Layouts = {layouts}, {len(layouts[0])=} instead of 6")
 
-    if any(x.ncores_used > convert_num_nodes_to_ncores(num_nodes, queue=queue) for x in layouts):
-        raise ValueError("One or more layouts require more cores than available")
-
     if not start_blocknum or start_blocknum < 1:
         raise ValueError("start_blocknum must be a positive integer greater than 0")
 
