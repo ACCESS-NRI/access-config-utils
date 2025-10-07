@@ -109,7 +109,8 @@ def find_layouts_with_maxncore(
         raise ValueError(f"Max. number of cores to use must be a positive integer. Got {maxncore} instead")
     if abs_maxdiff_nx_ny < 0:
         raise ValueError(
-            f"The max. absolute difference between nx and ny in the layout must be a non-negative integer. Got {abs_maxdiff_nx_ny} instead"
+            "The max. absolute difference between nx and ny in the layout "
+            f" must be a non-negative integer. Got {abs_maxdiff_nx_ny} instead"
         )
 
     if maxncore < 2 and even_nx:

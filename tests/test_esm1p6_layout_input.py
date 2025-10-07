@@ -102,10 +102,12 @@ def test_generate_esm1p6_layout_from_core_counts(layout_tuple):
         min_ncores_needed=min_ncores_needed,
     )
     assert all(layout.ncores_used >= min_ncores_needed for layout in layouts), (
-        f"Some layouts have ncores_used < min_ncores_needed. Min ncores needed: {min_ncores_needed}, Min ncores used: {min([x.ncores_used for x in layouts])}"
+        f"Some layouts have ncores_used < min_ncores_needed. Min ncores needed: {min_ncores_needed}, "
+        f"Min ncores used: {min([x.ncores_used for x in layouts])}"
     )
     assert all(layout.ncores_used <= (ncores_for_atm_and_ocn + layout.ice_ncores) for layout in layouts), (
-        f"Some layouts have ncores_used > ncores_for_atm_and_ocn + ice_ncores. Max ncores for atm and ocn: {ncores_for_atm_and_ocn}, Max ncores used: {max([x.ncores_used for x in layouts])}"
+        f"Some layouts have ncores_used > ncores_for_atm_and_ocn + ice_ncores. Max ncores for "
+        f"atm and ocn: {ncores_for_atm_and_ocn}, Max ncores used: {max([x.ncores_used for x in layouts])}"
     )
 
     # Test that setting min_ncores_needed less than ncores_for_atm_and_ocn produces larger number of layouts
@@ -118,7 +120,8 @@ def test_generate_esm1p6_layout_from_core_counts(layout_tuple):
     )
 
     assert len(layouts_without_min_ncores) >= len(layouts), (
-        f"Expected more layouts when min_ncores_needed is less than ncores_for_atm_and_ocn. Got {len(layouts_without_min_ncores)} vs {len(layouts)}"
+        f"Expected more layouts when min_ncores_needed is less than "
+        f"ncores_for_atm_and_ocn. Got {len(layouts_without_min_ncores)} vs {len(layouts)}"
     )
     assert all(x in layouts_without_min_ncores for x in layouts), (
         "All layouts from the first call should be in the second call"
@@ -137,7 +140,8 @@ def test_generate_esm1p6_layout_from_core_counts(layout_tuple):
 
     # Test that the layouts are returned with ncores_used <= ncores_for_atm_and_ocn
     assert all(x.ncores_used <= ncores_for_atm_and_ocn for x in layouts), (
-        f"Some layouts have ncores_used > ncores_for_atm_and_ocn. Max. ncores used : {max([x.ncores_used for x in layouts])}"
+        f"Some layouts have ncores_used > ncores_for_atm_and_ocn. "
+        f"Max. ncores used : {max([x.ncores_used for x in layouts])}"
     )
 
     # Test that the cores_used are sorted in descending order
@@ -192,6 +196,11 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout):
     with pytest.raises(ValueError):
         layouts = generate_esm1p6_core_layouts_from_node_count([4, "abcd"])
 
+    # Test with negative nodes
+    node_count = -3
+    with pytest.raises(ValueError):
+        generate_esm1p6_core_layouts_from_node_count(node_count)
+
     # Test that with a very low node count, no layouts are returned (i.e. empty list of an empty list)
     layouts = generate_esm1p6_core_layouts_from_node_count([0.2], max_wasted_ncores_frac=0.2)
     assert layouts != [[]], f"Expected layouts to be returned even with small node fraction. Got layouts = {layouts}"
@@ -232,11 +241,10 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout):
     assert layouts != [[]], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
 
     # Test that allocating remaining cores to ICE works
-    node_count, queue = 4, "normalsr"
     from access.config.layout_config import convert_num_nodes_to_ncores
 
+    node_count, queue = 4, "normalsr"
     totncores = convert_num_nodes_to_ncores(node_count, queue=queue)
-    assert totncores == node_count * 104, f"Expected total cores to be {node_count * 104}. Got {totncores}"
     mom_ncores_over_atm_ncores_range = (0.8, 1.2)
     layouts = generate_esm1p6_core_layouts_from_node_count(
         node_count,
@@ -245,17 +253,12 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout):
         queue=queue,
     )
     assert layouts != [[]], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
-    assert all(l.ice_ncores >= esm1p6_ctrl_layout.ice_ncores for l in layouts[0]), (
-        f"Expected ice_ncores to be >= {esm1p6_ctrl_layout.ice_ncores}. Got {[l.ice_ncores for l in layouts[0]]}"
+    assert all(layout.ice_ncores >= esm1p6_ctrl_layout.ice_ncores for layout in layouts[0]), (
+        f"Expected ice_ncores to be >= {esm1p6_ctrl_layout.ice_ncores}. Got layout = {layouts[0]}"
     )
-    assert all(l.ncores_used == totncores for l in layouts[0]), (
-        f"Expected ncores used to be *exactly* equal to {node_count * 104}. Got {[l.ncores_used for l in layouts[0]]}"
+    assert all(layout.ncores_used == totncores for layout in layouts[0]), (
+        f"Expected ncores used to be *exactly* equal to {totncores}. Got layout = {layouts[0]}"
     )
-
-    # Test with negative nodes
-    node_count = -3
-    with pytest.raises(ValueError):
-        generate_esm1p6_core_layouts_from_node_count(node_count)
 
 
 def test_generate_esm1p6_perturb_block(esm1p6_ctrl_layout):
