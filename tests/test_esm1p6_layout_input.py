@@ -95,6 +95,15 @@ def test_generate_esm1p6_layout_from_core_counts(layout_tuple):
             min_ncores_needed=208,
         )
 
+    with pytest.raises(ValueError):
+        layouts = _generate_esm1p6_layout_from_core_counts(
+            min_atm_ncores=2,
+            max_atm_ncores=2,
+            ice_ncores=6,
+            ncores_for_atm_and_ocn=2,
+            min_ncores_needed=1,
+        )
+
     # Test with a valid core count
     core_count = 208
     max_atm_ncores = 120
