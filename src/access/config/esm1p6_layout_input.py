@@ -1,9 +1,9 @@
 import logging
 
 from access.config.layout_config import (
+    LayoutTuple,
     convert_num_nodes_to_ncores,
     find_layouts_with_maxncore,
-    return_layout_tuple,
 )
 
 logger = logging.getLogger(__name__)
@@ -119,7 +119,6 @@ def _generate_esm1p6_layout_from_core_counts(  # noqa: C901
             f"Invalid MOM ncores over ATM ncores fractions. Got {mom_ncores_over_atm_ncores_range} instead"
         )
 
-    layout_tuple = return_layout_tuple()
     all_layouts = []
     logger.debug(
         f"Generating layouts with {min_atm_ncores=}, {max_atm_ncores=}, {atm_ncore_delta=}, "
@@ -185,7 +184,7 @@ def _generate_esm1p6_layout_from_core_counts(  # noqa: C901
                 logger.debug(
                     f"Adding layout atm {atm_nx}x{atm_ny} mom {mom_nx}x{mom_ny} ice {ice_ncores} with {ncores_used=}"
                 )
-                layout.append(layout_tuple(ncores_used, atm_nx, atm_ny, mom_nx, mom_ny, ice_ncores))
+                layout.append(LayoutTuple(atm_nx, atm_ny, mom_nx, mom_ny, ice_ncores))
 
             # create a set of layouts to avoid duplicates
             all_layouts.extend(set(layout))
@@ -273,12 +272,12 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
     list
         A list of lists of layout_tuples. Each inner list corresponds to the layouts for the respective
         number of nodes in ``num_nodes_list``. Each layout_tuple has the following fields:
-        - ncores_used : int
         - atm_nx : int
         - atm_ny : int
         - mom_nx : int
         - mom_ny : int
         - ice_ncores : int
+        - ncores_used : int (computed as atm_nx * atm_ny + mom_nx * mom_ny + ice_ncores)
 
         An empty list is returned for a given number of nodes if no valid layouts could be generated.
 
@@ -385,8 +384,6 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
             f" of the control ratio={ctrl_ratio_mom_over_atm:0.3g}"
         )
 
-    # create the named tuple for holding the layouts
-    layout_tuple = return_layout_tuple()
     final_layouts = []
     for num_nodes in num_nodes_list:
         # cast num_nodes to int if it is an integer value
@@ -462,28 +459,40 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
             min_ncores_needed=min_ncores_needed,
         )
 
-        if allocate_unused_cores_to_ice and layout:
+        if allocate_unused_cores_to_ice:
             # update the ice_ncores in each layout to include any unused cores
-            updated_layouts = [
-                layout_tuple(
-                    totncores,
+            # This will recreate the existing layout if the total cores used
+            # is equal to the total available cores
+
+            # This works even if layout == [] (i.e., no layouts found). In that case,
+            # layout will remain an empty list
+            layout = [
+                LayoutTuple(
                     x.atm_nx,
                     x.atm_ny,
                     x.mom_nx,
                     x.mom_ny,
                     x.ice_ncores + (totncores - x.ncores_used),
                 )
+                if x
+                else None
                 for x in layout
+                # ruff insists that this line by line breaking up is the correct formatting
+                # even though IMO that's less readable - MS 14th Oct, 2025
             ]
-            layout = list(set(updated_layouts))
-            # sort the layouts by ncores_used (descending, fewer wasted cores first), and then
-            # the sum of the absolute differences between nx and ny for atm and mom (ascending, i.e.,
-            # more square layouts first)
-            layout = sorted(layout, key=lambda x: (-x.ncores_used, abs(x.atm_nx - x.atm_ny) + abs(x.mom_nx - x.mom_ny)))
 
-        final_layouts.append(layout)
+        layout = list(set(layout))  # remove duplicates
+
+        # sort the layouts by ncores_used (descending, fewer wasted cores first), and then
+        # the sum of the absolute differences between nx and ny for atm and mom (ascending, i.e.,
+        # more square layouts first)
+        # Still works even if layout == [] (i.e., no layouts found)
+        layout = sorted(layout, key=lambda x: (-x.ncores_used, abs(x.atm_nx - x.atm_ny) + abs(x.mom_nx - x.mom_ny)))
+
+        final_layouts.append(layout)  # can be an empty list if no layouts found
 
     logger.info(f"Generated a total of {len(final_layouts)} layouts for {num_nodes_list} nodes")
+
     return final_layouts
 
 
@@ -513,6 +522,7 @@ def generate_esm1p6_perturb_block(
         - mom_nx : int
         - mom_ny : int
         - ice_ncores : int
+        - ncores_used : int (computed as atm_nx * atm_ny + mom_nx * mom_ny + ice_ncores)
 
         The layouts will be used in the order they appear in the list.
 
@@ -538,7 +548,7 @@ def generate_esm1p6_perturb_block(
     """
 
     if num_nodes is None:
-        raise ValueError("num_nodes must be provided.}")
+        raise ValueError("Number of nodes must be provided.")
 
     if not isinstance(num_nodes, (int, float)) or num_nodes <= 0:
         raise ValueError(
@@ -546,7 +556,7 @@ def generate_esm1p6_perturb_block(
         )
 
     if branch_name_prefix is None:
-        raise ValueError("branch_name_prefix must be provided")
+        raise ValueError("The prefix for the branch name must be provided")
 
     if not layouts:
         raise ValueError("No layouts provided")
@@ -554,8 +564,10 @@ def generate_esm1p6_perturb_block(
     if not isinstance(layouts, list):
         layouts = [layouts]
 
-    if any(len(x) != 6 for x in layouts):
-        raise ValueError(f"Invalid layouts provided. Layouts = {layouts}, {len(layouts[0])=} instead of 6")
+    if any(len(x) != 5 for x in layouts):
+        raise ValueError(f"Invalid layouts provided. Layouts = {layouts}, {len(layouts[0])=} instead of 5")
+    if not all(isinstance(x, LayoutTuple) for x in layouts):
+        raise ValueError(f"Invalid layouts provided. Layouts = {layouts} must all be of type LayoutTuple")
 
     if not start_blocknum or start_blocknum < 1:
         raise ValueError("start_blocknum must be a positive integer greater than 0")
@@ -596,6 +608,7 @@ def generate_esm1p6_perturb_block(
 
     ice/cice_in.nml:
           domain_nml:
+            nprocs:
                 - {ice_ncores}
     """
         blocknum += 1

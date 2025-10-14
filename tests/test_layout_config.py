@@ -3,12 +3,12 @@
 
 import pytest
 
-from access.config.layout_config import convert_num_nodes_to_ncores, find_layouts_with_maxncore, return_layout_tuple
+from access.config.layout_config import LayoutTuple, convert_num_nodes_to_ncores, find_layouts_with_maxncore
 
 
 @pytest.fixture(scope="module")
 def layout_tuple():
-    return return_layout_tuple()
+    return LayoutTuple
 
 
 def test_layout_tuple(layout_tuple):
@@ -16,8 +16,12 @@ def test_layout_tuple(layout_tuple):
     atm_nx, atm_ny = 6, 4
     mom_nx, mom_ny = 5, 4
     ice_ncores = 2
-    ncores_used = atm_nx * atm_ny * mom_nx * mom_ny * ice_ncores
-    layout = layout_tuple(ncores_used, atm_nx, atm_ny, mom_nx, mom_ny, ice_ncores)
+    ncores_used = atm_nx * atm_ny + mom_nx * mom_ny + ice_ncores
+    # With the class setup, ncores_used is a property, so we don't pass it in the constructor
+    with pytest.raises(TypeError):
+        layout = layout_tuple(ncores_used, atm_nx, atm_ny, mom_nx, mom_ny, ice_ncores)
+
+    layout = layout_tuple(atm_nx=atm_nx, atm_ny=atm_ny, mom_nx=mom_nx, mom_ny=mom_ny, ice_ncores=ice_ncores)
     assert isinstance(layout.ncores_used, int), f"Expected int, got {type(layout.ncores_used)}"
     assert isinstance(layout.atm_nx, int), f"Expected int, got {type(layout.atm_nx)}"
     assert isinstance(layout.atm_ny, int), f"Expected int, got {type(layout.atm_ny)}"

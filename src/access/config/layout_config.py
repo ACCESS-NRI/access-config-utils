@@ -1,33 +1,29 @@
 from typing import NamedTuple
 
 
-def return_layout_tuple() -> NamedTuple:
+class LayoutTuple(NamedTuple):
     """
-    Define a named tuple to hold layout information.
+    Defines a class with a namedtuple to hold layout information.
     Returns
     -------
-    NamedTuple
-        A named tuple with fields:
-        - ncores_used (int): Total number of cores used.
+    object
         - atm_nx (int): Number of cores in the x-direction for the atmosphere model.
         - atm_ny (int): Number of cores in the y-direction for the atmosphere model.
         - mom_nx (int): Number of cores in the x-direction for the ocean model.
         - mom_ny (int): Number of cores in the y-direction for the ocean model.
         - ice_ncores (int): Number of cores used for the ice model.
+        - ncores_used (int): Total number of cores used. Computed property.
     """
-    # The noqa comment is to suppress the "convert to class" warning from ruff/flake8
-    layout_tuple = NamedTuple(  # noqa: UP014
-        "layout_tuple",
-        [
-            ("ncores_used", int),  # This can be derived from the other fields -> perhaps remove it? MS: 3rd Oct, 2025
-            ("atm_nx", int),
-            ("atm_ny", int),
-            ("mom_nx", int),
-            ("mom_ny", int),
-            ("ice_ncores", int),
-        ],
-    )
-    return layout_tuple
+
+    atm_nx: int
+    atm_ny: int
+    mom_nx: int
+    mom_ny: int
+    ice_ncores: int
+
+    @property
+    def ncores_used(self) -> int:
+        return self.atm_nx * self.atm_ny + self.mom_nx * self.mom_ny + self.ice_ncores
 
 
 def convert_num_nodes_to_ncores(num_nodes: (int | float), queue: str = "normalsr") -> int:

@@ -7,19 +7,18 @@ from access.config.esm1p6_layout_input import (
     _generate_esm1p6_layout_from_core_counts,
     generate_esm1p6_core_layouts_from_node_count,
     generate_esm1p6_perturb_block,
-    return_layout_tuple,
 )
+from access.config.layout_config import LayoutTuple
 
 
 @pytest.fixture(scope="module")
 def layout_tuple():
-    return return_layout_tuple()
+    return LayoutTuple
 
 
 @pytest.fixture(scope="module")
-def esm1p6_ctrl_layout():
-    layout_tuple = return_layout_tuple()
-    return layout_tuple(ncores_used=416, atm_nx=16, atm_ny=13, mom_nx=14, mom_ny=14, ice_ncores=12)  # Example layout
+def esm1p6_ctrl_layout(layout_tuple):
+    return layout_tuple(atm_nx=16, atm_ny=13, mom_nx=14, mom_ny=14, ice_ncores=12)  # Example layout
 
 
 def test_generate_esm1p6_layout_from_core_counts(layout_tuple):
@@ -274,6 +273,11 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout):
         node_count, mom_ncores_over_atm_ncores_range=mom_ncores_over_atm_ncores_range
     )
     assert layouts != [[]], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
+
+    # Test that the layouts are all unique
+    node_count = 4
+    layouts = generate_esm1p6_core_layouts_from_node_count(node_count)[0]
+    assert len(layouts) == len(set(layouts)), f"Got duplicate elements in layouts. {layouts = }"
 
     # Test that allocating remaining cores to ICE works
     from access.config.layout_config import convert_num_nodes_to_ncores
