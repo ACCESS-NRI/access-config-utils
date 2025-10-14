@@ -19,7 +19,7 @@ def _generate_esm1p6_layout_from_core_counts(  # noqa: C901
     ice_ncores: int,
     min_ncores_needed: int,
     *,
-    atm_ncore_delta: int = 2,
+    atm_ncore_stepsize: int = 2,
     abs_maxdiff_nx_ny: int = 4,
     prefer_atm_nx_greater_than_ny: bool = True,
     prefer_mom_nx_greater_than_ny: bool = True,
@@ -52,7 +52,7 @@ def _generate_esm1p6_layout_from_core_counts(  # noqa: C901
         Must be at least 3 + ice_ncores (2 for ATM, 1 for MOM and ``ice_ncores`` for ice).
         Layouts using fewer cores will be discarded.
 
-    atm_ncore_delta : int, optional, default=2
+    atm_ncore_stepsize : int, optional, default=2
         Step size to use when iterating between min_atm_ncores and max_atm_ncores.
         Must be a non-zero and positive integer.
 
@@ -81,10 +81,10 @@ def _generate_esm1p6_layout_from_core_counts(  # noqa: C901
     if min_atm_ncores < 2 or max_atm_ncores < 2 or min_atm_ncores > max_atm_ncores:
         raise ValueError(f"Invalid ATM ncores range. Got ({min_atm_ncores}, {max_atm_ncores}) instead")
 
-    if atm_ncore_delta <= 0:
+    if atm_ncore_stepsize <= 0:
         raise ValueError(
             "Stepsize in core counts to cover min. and max. ATM ncores must be a positive integer. "
-            f"Got {atm_ncore_delta} instead"
+            f"Got {atm_ncore_stepsize} instead"
         )
 
     if ncores_for_atm_and_ocn < min_atm_and_mom_ncores:
@@ -121,13 +121,13 @@ def _generate_esm1p6_layout_from_core_counts(  # noqa: C901
 
     all_layouts = []
     logger.debug(
-        f"Generating layouts with {min_atm_ncores=}, {max_atm_ncores=}, {atm_ncore_delta=}, "
+        f"Generating layouts with {min_atm_ncores=}, {max_atm_ncores=}, {atm_ncore_stepsize=}, "
         f"{ncores_for_atm_and_ocn=}, {ice_ncores=}, {min_ncores_needed=}, "
         f"{mom_ncores_over_atm_ncores_range=}, {abs_maxdiff_nx_ny=}, "
         f"{prefer_atm_nx_greater_than_ny=}, {prefer_mom_nx_greater_than_ny=}, "
         f"{prefer_atm_ncores_greater_than_mom_ncores=}"
     )
-    for atm_ncores in range(min_atm_ncores, max_atm_ncores + 1, atm_ncore_delta):
+    for atm_ncores in range(min_atm_ncores, max_atm_ncores + 1, atm_ncore_stepsize):
         logger.debug(f"Trying atm_ncores = {atm_ncores}")
         atm_layout = find_layouts_with_maxncore(
             atm_ncores,
@@ -208,7 +208,7 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
     *,
     queue: str = "normalsr",
     tol_around_ctrl_ratio: float = None,
-    atm_ncore_delta: int = 2,
+    atm_ncore_stepsize: int = 2,
     prefer_atm_nx_greater_than_ny: bool = True,
     prefer_mom_nx_greater_than_ny: bool = True,
     prefer_atm_ncores_greater_than_mom_ncores: bool = True,
@@ -235,6 +235,12 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
         If not set, the min and max fractions of MOM ncores over ATM ncores are used from the
         ``mom_ncores_over_atm_ncores_range`` parameter.
 
+        When set to 0.0, the ratio of MOM ncores to ATM ncores needs to *exactly* match the
+        ratio in the control layout. This is guaranteed to at least generate the control
+        layout for the control num_nodes, but may not generate any layouts for other node counts.
+
+        *Note*: This parameter takes precedence over ``mom_ncores_over_atm_ncores_range`` if both are set.
+
     mom_ncores_over_atm_ncores_range : tuple of float, optional, default=(0.75, 1.25)
         A tuple of two floats representing the minimum and maximum fractions of MOM ncores over ATM
         ncores to consider when generating layouts. Must be greater than 0.0, and the second
@@ -243,9 +249,9 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
 
         *Note*: This parameter is ignored if ``tol_around_ctrl_ratio`` is set.
 
-    atm_ncore_delta : int, optional, default=100
-        Number of steps to take between the min. and max. ATM ncores when generating layouts.
-        Must be a positive integer.
+    atm_ncore_stepsize : int, optional, default=2
+        The step size to cover the range of allowed number of atmosphere model cores. Default is 2.
+        Must be a non-zero and positive integer.
 
     prefer_atm_nx_greater_than_ny : bool, optional, default=True
         If True, only consider ATM layouts with nx >= ny.
@@ -340,10 +346,10 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
                 f"max={max_frac_mom_ncores_over_atm_ncores} instead"
             )
 
-    if atm_ncore_delta <= 0:
+    if atm_ncore_stepsize <= 0:
         raise ValueError(
             f"The stepsize in core counts to take between the min. and max. ATM ncores must "
-            f"be a positive integer. Got {atm_ncore_delta} instead"
+            f"be a positive integer. Got {atm_ncore_stepsize} instead"
         )
 
     if abs_maxdiff_nx_ny < 0:
@@ -443,12 +449,12 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
         if prefer_atm_ncores_greater_than_mom_ncores:
             mom_ncores_over_atm_ncores_range = (mom_ncores_over_atm_ncores_range[0], 1.0)
 
-        logger.debug(f"ATM ncores range, steps = ({min_atm_ncores}, {max_atm_ncores}, {atm_ncore_delta})")
+        logger.debug(f"ATM ncores range, stepsize = ({min_atm_ncores}, {max_atm_ncores}, {atm_ncore_stepsize})")
         logger.debug(f"MOM ncores range = ({ncores_left - max_atm_ncores}, {ncores_left - min_atm_ncores})")
         layout = _generate_esm1p6_layout_from_core_counts(
             min_atm_ncores=min_atm_ncores,
             max_atm_ncores=max_atm_ncores,
-            atm_ncore_delta=atm_ncore_delta,
+            atm_ncore_stepsize=atm_ncore_stepsize,
             prefer_atm_nx_greater_than_ny=prefer_atm_nx_greater_than_ny,
             prefer_mom_nx_greater_than_ny=prefer_mom_nx_greater_than_ny,
             prefer_atm_ncores_greater_than_mom_ncores=prefer_atm_ncores_greater_than_mom_ncores,

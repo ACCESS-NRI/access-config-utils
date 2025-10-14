@@ -43,7 +43,7 @@ def test_generate_esm1p6_layout_from_core_counts(layout_tuple):
         layouts = _generate_esm1p6_layout_from_core_counts(
             min_atm_ncores=96,
             max_atm_ncores=120,
-            atm_ncore_delta=0,
+            atm_ncore_stepsize=0,
             ice_ncores=6,
             ncores_for_atm_and_ocn=208 - 6,
             min_ncores_needed=0,
@@ -215,9 +215,9 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout):
         layouts = generate_esm1p6_core_layouts_from_node_count(4, mom_ncores_over_atm_ncores_range=(-0.8, 1.0))
 
     with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(4, atm_ncore_delta=0)
+        layouts = generate_esm1p6_core_layouts_from_node_count(4, atm_ncore_stepsize=0)
     with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(4, atm_ncore_delta=-1)
+        layouts = generate_esm1p6_core_layouts_from_node_count(4, atm_ncore_stepsize=-1)
 
     with pytest.raises(ValueError):
         layouts = generate_esm1p6_core_layouts_from_node_count(4, abs_maxdiff_nx_ny=-1)
