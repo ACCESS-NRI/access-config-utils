@@ -88,7 +88,7 @@ class LayoutSearchConfig:
         tol_around_ctrl_ratio=None,
         atm_ncore_stepsize=2,
         abs_maxdiff_nx_ny=4,
-        max_wasted_ncores_frac=0.01,
+        max_wasted_ncores_frac=0.02,
         prefer_atm_nx_greater_than_ny: bool = True,
         prefer_mom_nx_greater_than_ny: bool = True,
         prefer_atm_ncores_greater_than_mom_ncores: bool = True,
