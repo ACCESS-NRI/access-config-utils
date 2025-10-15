@@ -4,6 +4,7 @@
 import pytest
 
 from access.config.esm1p6_layout_input import (
+    LayoutSearchConfig,
     _generate_esm1p6_layout_from_core_counts,
     generate_esm1p6_core_layouts_from_node_count,
     generate_esm1p6_perturb_block,
@@ -21,7 +22,119 @@ def esm1p6_ctrl_layout(layout_tuple):
     return layout_tuple(atm_nx=16, atm_ny=13, mom_nx=14, mom_ny=14, ice_ncores=12)  # Example layout
 
 
-def test_generate_esm1p6_layout_from_core_counts(layout_tuple):
+@pytest.fixture(scope="module")
+def layout_search_config():
+    return LayoutSearchConfig
+
+
+def test_layout_search_config(layout_search_config):
+    # # Test valid initialization
+    config = layout_search_config()
+    assert config is not None, "Config should not be None"
+    assert isinstance(config, LayoutSearchConfig), f"Expected LayoutSearchConfig, got {type(config)}"
+    assert config.frac_mom_ncores_over_atm_ncores[0] == 0.75, (
+        f"Expected 0.75, got {config.frac_mom_ncores_over_atm_ncores[0]}"
+    )
+    assert config.frac_mom_ncores_over_atm_ncores[1] == 1.25, (
+        f"Expected 1.25, got {config.frac_mom_ncores_over_atm_ncores[1]}"
+    )
+    assert config.tol_around_ctrl_ratio is None, f"Expected None, got {config.tol_around_ctrl_ratio}"
+    assert config.atm_ncore_stepsize == 2, f"Expected 2, got {config.atm_ncore_stepsize}"
+    assert config.abs_maxdiff_nx_ny == 4, f"Expected 4, got {config.abs_maxdiff_nx_ny}"
+    assert config.max_wasted_ncores_frac == 0.01, f"Expected 0.01, got {config.max_wasted_ncores_frac}"
+    assert config.allocate_unused_cores_to_ice is False, f"Expected False, got {config.allocate_unused_cores_to_ice}"
+
+    # Test invalid min/max frac
+    with pytest.raises(ValueError):
+        layout_search_config(frac_mom_ncores_over_atm_ncores=(-0.5, 1.25))
+    with pytest.raises(ValueError):
+        layout_search_config(frac_mom_ncores_over_atm_ncores=(0.75, -1.0))
+    with pytest.raises(ValueError):
+        layout_search_config(frac_mom_ncores_over_atm_ncores=(1.5, 1.0))
+    with pytest.raises(TypeError):
+        layout_search_config(frac_mom_ncores_over_atm_ncores="low")
+    with pytest.raises(TypeError):
+        layout_search_config(frac_mom_ncores_over_atm_ncores=(0.1, 0.2, "string"))
+    with pytest.raises(TypeError):
+        layout_search_config(frac_mom_ncores_over_atm_ncores=("low", "hi"))
+
+    # Test invalid tol_around_ctrl_ratio
+    with pytest.raises(ValueError):
+        layout_search_config(tol_around_ctrl_ratio=-0.1)
+    with pytest.raises(ValueError):
+        layout_search_config(tol_around_ctrl_ratio=1.5)
+    with pytest.raises(TypeError):
+        layout_search_config(tol_around_ctrl_ratio="medium")
+
+    # Test invalid atm_ncore_stepsize
+    with pytest.raises(TypeError):
+        layout_search_config(atm_ncore_stepsize=2.5)
+    with pytest.raises(ValueError):
+        layout_search_config(atm_ncore_stepsize=0)
+
+    # Test that when tol_around_ctrl_ratio is set, max_frac and min_frac are set to None
+    config = layout_search_config(
+        tol_around_ctrl_ratio=0.1,
+        frac_mom_ncores_over_atm_ncores=(0.5, 1.0),
+    )
+    assert config.tol_around_ctrl_ratio == 0.1, f"Expected 0.1, got {config.tol_around_ctrl_ratio}"
+    assert config.frac_mom_ncores_over_atm_ncores == (0.8480769230769231, 1.0), (
+        f"Expected (0.8480769230769231, 1.0), got {config.frac_mom_ncores_over_atm_ncores}"
+    )
+
+    # Test that ValueError is raised if both tol_around_ctrl_ratio and frac_mom_ncores_over_atm_ncores are None
+    with pytest.raises(ValueError):
+        layout_search_config(
+            tol_around_ctrl_ratio=None,
+            frac_mom_ncores_over_atm_ncores=None,
+        )
+
+    # Test that setting the min. and max. frac. directly works
+    config = layout_search_config(frac_mom_ncores_over_atm_ncores=(0.5, 1.5))
+    assert config.frac_mom_ncores_over_atm_ncores == (0.5, 1.5), (
+        f"Expected (0.5, 1.5), got {config.frac_mom_ncores_over_atm_ncores}"
+    )
+    assert config.tol_around_ctrl_ratio is None, f"Expected None, got {config.tol_around_ctrl_ratio}"
+
+    # Test the invalid abs_maxdiff_nx_ny
+    with pytest.raises(ValueError):
+        layout_search_config(abs_maxdiff_nx_ny=-1)
+    with pytest.raises(TypeError):
+        layout_search_config(abs_maxdiff_nx_ny=2.5)
+
+    # Test the invalid max_wasted_ncores_frac
+    with pytest.raises(ValueError):
+        layout_search_config(max_wasted_ncores_frac=-0.1)
+    with pytest.raises(ValueError):
+        layout_search_config(max_wasted_ncores_frac=1.5)
+    with pytest.raises(TypeError):
+        layout_search_config(max_wasted_ncores_frac="low")
+
+    config = layout_search_config(max_wasted_ncores_frac=0.5)
+    assert config.max_wasted_ncores_frac == 0.5, f"Expected 0.5, got {config.max_wasted_ncores_frac}"
+
+    # Test that the boolean attributes are set correctly
+    bool_attr_names = [
+        "prefer_atm_nx_greater_than_ny",
+        "prefer_mom_nx_greater_than_ny",
+        "prefer_atm_ncores_greater_than_mom_ncores",
+        "allocate_unused_cores_to_ice",
+    ]
+    for attr_name in bool_attr_names:
+        with pytest.raises(TypeError):
+            layout_search_config(**{attr_name: "yes"})
+
+        with pytest.raises(TypeError):
+            layout_search_config(**{attr_name: 2.5})
+
+        config = layout_search_config(**{attr_name: True})
+        assert getattr(config, attr_name) is True, f"Expected True, got {getattr(config, attr_name)}"
+
+        config = layout_search_config(**{attr_name: False})
+        assert getattr(config, attr_name) is False, f"Expected False, got {getattr(config, attr_name)}"
+
+
+def test_generate_esm1p6_layout_from_core_counts(layout_tuple, layout_search_config):
     # Test the the validation works
     with pytest.raises(ValueError):
         layouts = _generate_esm1p6_layout_from_core_counts(
@@ -43,46 +156,9 @@ def test_generate_esm1p6_layout_from_core_counts(layout_tuple):
         layouts = _generate_esm1p6_layout_from_core_counts(
             min_atm_ncores=96,
             max_atm_ncores=120,
-            atm_ncore_stepsize=0,
-            ice_ncores=6,
-            ncores_for_atm_and_ocn=208 - 6,
-            min_ncores_needed=0,
-        )
-    with pytest.raises(ValueError):
-        layouts = _generate_esm1p6_layout_from_core_counts(
-            min_atm_ncores=96,
-            max_atm_ncores=120,
             ice_ncores=0,
             ncores_for_atm_and_ocn=208 - 6,
             min_ncores_needed=0,
-        )
-
-    with pytest.raises(ValueError):
-        layouts = _generate_esm1p6_layout_from_core_counts(
-            min_atm_ncores=96,
-            max_atm_ncores=120,
-            ice_ncores=6,
-            ncores_for_atm_and_ocn=208 - 6,
-            min_ncores_needed=0,
-            mom_ncores_over_atm_ncores_range=(-1.0, 1.0),
-        )
-    with pytest.raises(ValueError):
-        layouts = _generate_esm1p6_layout_from_core_counts(
-            min_atm_ncores=96,
-            max_atm_ncores=120,
-            ice_ncores=6,
-            ncores_for_atm_and_ocn=208 - 6,
-            min_ncores_needed=0,
-            mom_ncores_over_atm_ncores_range=(1.0, -1.0),
-        )
-    with pytest.raises(ValueError):
-        layouts = _generate_esm1p6_layout_from_core_counts(
-            min_atm_ncores=96,
-            max_atm_ncores=120,
-            ice_ncores=6,
-            ncores_for_atm_and_ocn=208 - 6,
-            min_ncores_needed=0,
-            mom_ncores_over_atm_ncores_range=(1.1, 0.9),
         )
 
     with pytest.raises(ValueError):
@@ -157,7 +233,9 @@ def test_generate_esm1p6_layout_from_core_counts(layout_tuple):
         ice_ncores=ice_ncores,
         ncores_for_atm_and_ocn=ncores_for_atm_and_ocn,
         min_ncores_needed=min_ncores_needed,
-        abs_maxdiff_nx_ny=abs_maxdiff_nx_ny,
+        layout_search_config=layout_search_config(
+            abs_maxdiff_nx_ny=abs_maxdiff_nx_ny,
+        ),
     )
     assert layouts == [], f"Expected *no* layouts to be returned. Got layouts = {layouts}"
 
@@ -184,50 +262,9 @@ def test_generate_esm1p6_layout_from_core_counts(layout_tuple):
     )
 
 
-def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout):
-    # Test the the validation works
-    with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(4, tol_around_ctrl_ratio=-0.1)
-
-    with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(
-            4, tol_around_ctrl_ratio=None, mom_ncores_over_atm_ncores_range=None
-        )
-
-    with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(4, tol_around_ctrl_ratio=-0.1)
-
-    with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(4, mom_ncores_over_atm_ncores_range=(None,))
-    with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(4, mom_ncores_over_atm_ncores_range=None)
-    with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(4, mom_ncores_over_atm_ncores_range=(None, None))
-    with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(4, mom_ncores_over_atm_ncores_range=(1.0, None))
-    with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(4, mom_ncores_over_atm_ncores_range=(None, 1.0))
-    with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(4, mom_ncores_over_atm_ncores_range=(1.2, 0.8))
-    with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(4, mom_ncores_over_atm_ncores_range=(0.8, -1.0))
-    with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(4, mom_ncores_over_atm_ncores_range=(-0.8, 1.0))
-
-    with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(4, atm_ncore_stepsize=0)
-    with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(4, atm_ncore_stepsize=-1)
-
-    with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(4, abs_maxdiff_nx_ny=-1)
-
-    with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(4, max_wasted_ncores_frac=-0.1)
-    with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(4, max_wasted_ncores_frac=1.01)
-
-    with pytest.raises(ValueError):
+def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout, layout_search_config):
+    # Test that the validation works
+    with pytest.raises(TypeError):
         layouts = generate_esm1p6_core_layouts_from_node_count([4, "abcd"])
 
     # Test with negative nodes
@@ -236,22 +273,31 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout):
         generate_esm1p6_core_layouts_from_node_count(node_count)
 
     # Test that with a very low node count, no layouts are returned (i.e. empty list of an empty list)
-    layouts = generate_esm1p6_core_layouts_from_node_count([0.2], max_wasted_ncores_frac=0.2)
+    layouts = generate_esm1p6_core_layouts_from_node_count(
+        [0.2], layout_search_config=layout_search_config(max_wasted_ncores_frac=0.2)
+    )
     assert layouts != [[]], f"Expected layouts to be returned even with small node fraction. Got layouts = {layouts}"
 
-    layouts = generate_esm1p6_core_layouts_from_node_count([0.001], max_wasted_ncores_frac=0.5)
+    # Test that no layouts are returned with nearly zero nodes
+    layouts = generate_esm1p6_core_layouts_from_node_count(
+        [0.001], layout_search_config=layout_search_config(max_wasted_ncores_frac=0.5)
+    )
     assert layouts == [[]], f"Expected no layouts to be returned for nearly zero nodes. Got layouts = {layouts}"
 
     # Test with a valid node count that should return the control layout
     node_count = 4
-    layouts = generate_esm1p6_core_layouts_from_node_count(node_count, tol_around_ctrl_ratio=0.0)[0]
+    layouts = generate_esm1p6_core_layouts_from_node_count(
+        node_count, layout_search_config=layout_search_config(tol_around_ctrl_ratio=0.0)
+    )[0]
     assert len(layouts) == 1, f"Expected *exactly* one layout to be returned. Got layouts = {layouts}"
     layouts = layouts[0]
     assert esm1p6_ctrl_layout == layouts, f"Control config layout={esm1p6_ctrl_layout} not found in solved {layouts}"
 
     # Test with a valid node count as a float that should return the control layout
     node_count = 4.0
-    layouts = generate_esm1p6_core_layouts_from_node_count(node_count, tol_around_ctrl_ratio=0.0)[0]
+    layouts = generate_esm1p6_core_layouts_from_node_count(
+        node_count, layout_search_config=layout_search_config(tol_around_ctrl_ratio=0.0)
+    )[0]
     assert len(layouts) == 1, f"Expected *exactly* one layout to be returned. Got layouts = {layouts}"
     layouts = layouts[0]
     assert esm1p6_ctrl_layout == layouts, f"Control config layout={esm1p6_ctrl_layout} not found in solved {layouts}"
@@ -266,11 +312,12 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout):
     layouts = generate_esm1p6_core_layouts_from_node_count(node_count)
     assert layouts != [[]], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
 
-    # Test that specifying mom_ncores_over_atm_ncores_range works
+    # Test that specifying frac_mom_ncores_over_atm_ncores works
     node_count = 4
-    mom_ncores_over_atm_ncores_range = (0.8, 1.2)
+    frac_mom_ncores_over_atm_ncores = (0.8, 1.2)
     layouts = generate_esm1p6_core_layouts_from_node_count(
-        node_count, mom_ncores_over_atm_ncores_range=mom_ncores_over_atm_ncores_range
+        node_count,
+        layout_search_config=layout_search_config(frac_mom_ncores_over_atm_ncores=frac_mom_ncores_over_atm_ncores),
     )
     assert layouts != [[]], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
 
@@ -284,12 +331,13 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout):
 
     node_count, queue = 4, "normalsr"
     totncores = convert_num_nodes_to_ncores(node_count, queue=queue)
-    mom_ncores_over_atm_ncores_range = (0.8, 1.2)
+    frac_mom_ncores_over_atm_ncores = (0.8, 1.2)
     layouts = generate_esm1p6_core_layouts_from_node_count(
         node_count,
-        mom_ncores_over_atm_ncores_range=mom_ncores_over_atm_ncores_range,
-        allocate_unused_cores_to_ice=True,
         queue=queue,
+        layout_search_config=layout_search_config(
+            frac_mom_ncores_over_atm_ncores=frac_mom_ncores_over_atm_ncores, allocate_unused_cores_to_ice=True
+        ),
     )
     assert layouts != [[]], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
     assert all(layout.ice_ncores >= esm1p6_ctrl_layout.ice_ncores for layout in layouts[0]), (

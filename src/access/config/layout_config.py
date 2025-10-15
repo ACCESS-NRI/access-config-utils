@@ -1,4 +1,7 @@
+import logging
 from typing import NamedTuple
+
+logger = logging.getLogger(__name__)
 
 
 class LayoutTuple(NamedTuple):
@@ -24,6 +27,50 @@ class LayoutTuple(NamedTuple):
     @property
     def ncores_used(self) -> int:
         return self.atm_nx * self.atm_ny + self.mom_nx * self.mom_ny + self.ice_ncores
+
+
+def get_ctrl_layout(model: str = "ESM 1.6 PI config") -> {}:
+    """
+    Get the control layout used in the current PI configuration.
+
+    Parameters
+    ----------
+    model : str, optional
+        Model name. Currently, only "ESM 1.6 PI config" is supported
+
+    Returns
+    -------
+    dict
+        A dictionary containing the control layout for ESM1.6 PI configuration:
+        - layout (LayoutTuple): Named tuple with layout information.
+        - queue (str): Queue name = "normalsr"
+        - totncores (int): Total number of cores available = 416
+        - num_nodes (int): Number of nodes used = 4
+
+    LayoutTuple
+        A named tuple containing the control layout information:
+        - atm_nx (int): Number of cores in the x-direction for the atmosphere model = 16.
+        - atm_ny (int): Number of cores in the y-direction for the atmosphere model = 13.
+        - mom_nx (int): Number of cores in the x-direction for the ocean model = 14.
+        - mom_ny (int): Number of cores in the y-direction for the ocean model = 14.
+        - ice_ncores (int): Number of cores used for the ice model = 12.
+        - ncores_used (int): Total number of cores used.
+          Computed property := (atm_nx * atm_ny + mom_nx * mom_ny + ice_ncores) = 416 (i.e., same as ``totncores``).
+
+    """
+    if not isinstance(model, str):
+        raise TypeError(f"Model name must be a string. Got {type(model)} instead")
+
+    valid_models = ["ESM 1.6 PI config"]
+    if model not in valid_models:
+        raise ValueError(f"Model = {model} not allowed. Allowed values are {valid_models}")
+
+    ctrl_layout_config = {}
+    ctrl_layout_config["layout"] = LayoutTuple(atm_nx=16, atm_ny=13, mom_nx=14, mom_ny=14, ice_ncores=12)
+    ctrl_layout_config["queue"] = "normalsr"
+    ctrl_layout_config["totncores"] = 416
+    ctrl_layout_config["num_nodes"] = 4
+    return ctrl_layout_config
 
 
 def convert_num_nodes_to_ncores(num_nodes: (int | float), queue: str = "normalsr") -> int:

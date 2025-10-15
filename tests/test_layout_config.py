@@ -3,7 +3,12 @@
 
 import pytest
 
-from access.config.layout_config import LayoutTuple, convert_num_nodes_to_ncores, find_layouts_with_maxncore
+from access.config.layout_config import (
+    LayoutTuple,
+    convert_num_nodes_to_ncores,
+    find_layouts_with_maxncore,
+    get_ctrl_layout,
+)
 
 
 @pytest.fixture(scope="module")
@@ -22,6 +27,7 @@ def test_layout_tuple(layout_tuple):
         layout = layout_tuple(ncores_used, atm_nx, atm_ny, mom_nx, mom_ny, ice_ncores)
 
     layout = layout_tuple(atm_nx=atm_nx, atm_ny=atm_ny, mom_nx=mom_nx, mom_ny=mom_ny, ice_ncores=ice_ncores)
+    assert isinstance(layout, LayoutTuple), f"Expected {LayoutTuple}, got {type(layout)}"
     assert isinstance(layout.ncores_used, int), f"Expected int, got {type(layout.ncores_used)}"
     assert isinstance(layout.atm_nx, int), f"Expected int, got {type(layout.atm_nx)}"
     assert isinstance(layout.atm_ny, int), f"Expected int, got {type(layout.atm_ny)}"
@@ -95,6 +101,30 @@ def test_find_layouts_with_maxncore():
         find_layouts_with_maxncore(-16, prefer_nx_greater_than_ny=True)
     with pytest.raises(ValueError):
         find_layouts_with_maxncore(-16, even_nx=True, prefer_nx_greater_than_ny=True)
+
+
+def test_get_ctrl_layout():
+    with pytest.raises(TypeError):
+        get_ctrl_layout(-1)
+
+    with pytest.raises(ValueError):
+        get_ctrl_layout("ESM1.6")
+
+    ctrl_layout_config = get_ctrl_layout()
+    assert isinstance(ctrl_layout_config, dict), f"Expected dict, got {type(ctrl_layout_config)}"
+    assert isinstance(ctrl_layout_config["layout"], LayoutTuple), (
+        f"Expected {LayoutTuple}, got {type(ctrl_layout_config['layout'])}"
+    )
+    assert ctrl_layout_config["layout"].atm_nx == 16, f"Expected atm_nx=16, got {ctrl_layout_config['layout'].atm_nx}"
+    assert ctrl_layout_config["layout"].atm_ny == 13, f"Expected atm_ny=13, got {ctrl_layout_config['layout'].atm_ny}"
+    assert ctrl_layout_config["layout"].mom_nx == 14, f"Expected mom_nx=14, got {ctrl_layout_config['layout'].mom_nx}"
+    assert ctrl_layout_config["layout"].mom_ny == 14, f"Expected mom_ny=14, got {ctrl_layout_config['layout'].mom_ny}"
+    assert ctrl_layout_config["layout"].ice_ncores == 12, (
+        f"Expected ice_ncores=12, got {ctrl_layout_config['layout'].ice_ncores}"
+    )
+    assert ctrl_layout_config["totncores"] == 416, f"Expected totncores=416, got {ctrl_layout_config['totncores']}"
+    assert ctrl_layout_config["queue"] == "normalsr", f"Expected queue='normalsr', got {ctrl_layout_config['queue']}"
+    assert ctrl_layout_config["num_nodes"] == 4, f"Expected num_nodes=4, got {ctrl_layout_config['num_nodes']}"
 
 
 def test_convert_num_nodes_to_ncores():
