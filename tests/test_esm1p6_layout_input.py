@@ -41,7 +41,7 @@ def test_layout_search_config(layout_search_config):
     assert config.tol_around_ctrl_ratio is None, f"Expected None, got {config.tol_around_ctrl_ratio}"
     assert config.atm_ncore_stepsize == 2, f"Expected 2, got {config.atm_ncore_stepsize}"
     assert config.abs_maxdiff_nx_ny == 4, f"Expected 4, got {config.abs_maxdiff_nx_ny}"
-    assert config.max_wasted_ncores_frac == 0.01, f"Expected 0.01, got {config.max_wasted_ncores_frac}"
+    assert config.max_wasted_ncores_frac == 0.02, f"Expected 0.02, got {config.max_wasted_ncores_frac}"
     assert config.allocate_unused_cores_to_ice is False, f"Expected False, got {config.allocate_unused_cores_to_ice}"
 
     # Test invalid min/max frac
