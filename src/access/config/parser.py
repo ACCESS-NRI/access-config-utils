@@ -176,7 +176,7 @@ class Config(dict):
             if len(tree) != len(value):
                 raise ValueError(f"Trying to change the length of list '{key}'")
 
-            for branch, v in zip(tree, value):
+            for branch, v in zip(tree, value, strict=True):
                 _update_node_value(branch, v)
 
         else:
