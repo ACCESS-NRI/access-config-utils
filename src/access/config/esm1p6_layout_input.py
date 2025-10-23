@@ -642,11 +642,13 @@ def generate_esm1p6_perturb_block(
               - {mom_ncores} # ncores for ocean
           - ncpus: # ice
               - {ice_ncores} # ncores for ice
+            exe:
+              - cice_access-esm1.6_360x300_{ice_ncores}x1_{ice_ncores}p.exe
 
     atmosphere/um_env.yaml:
-      UM_ATM_NPROCX: {atm_nx}
-      UM_ATM_NPROCY: {atm_ny}
-      UM_NPES: {atm_ncores}
+      UM_ATM_NPROCX: "{atm_nx}"
+      UM_ATM_NPROCY: "{atm_ny}"
+      UM_NPES: "{atm_ncores}"
 
     ocean/input.nml:
         ocean_model_nml:
