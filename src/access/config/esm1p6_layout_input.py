@@ -228,6 +228,48 @@ class LayoutSearchConfig:
         self.frac_mom_ncores_over_atm_ncores = (min_frac, max_frac)
 
 
+def set_ice_ncores(min_ice_ncores: int, max_ice_ncores: int, blocksize: int = 360, smallest_factor: bool = True) -> int:
+    """
+    Sets the number of cores for ICE such that it divides the given blocksize, and is the largest
+    possible value within the given min and max range.
+
+    Parameters
+    ----------
+    min_ice_ncores : int, required
+        Minimum number of ICE cores to consider. Must be at least 1 and less than or equal to max_ice_ncores.
+
+    max_ice_ncores : int, required
+        Maximum number of ICE cores to consider. Must be at least 1 and greater than or equal to min_ice_ncores.
+
+    blocksize : int, optional, default=360 (the blocksize used in the released ESM 1.6 PI config)
+        Blocksize to use for determining the ICE core layout. Must be at least 1.
+
+    smallest_factor : bool, optional, default=True
+        If True, the smallest factor of the blocksize that is within the min and max ICE ncores will be used.
+        If False, the largest factor will be used.
+
+    """
+    if min_ice_ncores < 1 or max_ice_ncores < 1 or max_ice_ncores < min_ice_ncores:
+        raise ValueError("Invalid min/max ice ncores. Expected both to be >= 1 and max >= min.")
+
+    if blocksize < 1 or blocksize < min_ice_ncores:
+        raise ValueError(
+            "Blocksize must be at least 1 and greater than or equal to min. "
+            f"ice ncores = {min_ice_ncores}. Got {blocksize} instead."
+        )
+
+    factors = [f for f in range(min_ice_ncores, max_ice_ncores + 1) if blocksize % f == 0]
+    if not factors:
+        raise ValueError(
+            f"No valid cores found for ice ncores in the range ({min_ice_ncores}, {max_ice_ncores}). "
+            "Please increase the min. and max. range of ICE ncores to use"
+        )
+    logger.debug(f"Factors of blocksize {blocksize} in the range ({min_ice_ncores}, {max_ice_ncores}): {factors}")
+    ice_ncores = min(factors) if smallest_factor else max(factors)
+    logger.debug(f"Selected ice ncores = {ice_ncores}")
+    return ice_ncores
+
+
 # The noqa comment is to suppress the complexity warning from ruff/flake8
 # The complexity of this function is high due to the nested loops and multiple conditionals. Some day
 # I or someone else will refactor it to reduce the complexity. - MS 7th Oct, 2025
@@ -480,7 +522,9 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
             continue
 
         logger.debug(f"Generating layouts for {num_nodes = } nodes")
-        ice_ncores = max(1, int(ctrl_ice_ncores / ctrl_totncores * totncores))
+        target_ice_ncores = max(1, int(ctrl_ice_ncores / ctrl_totncores * totncores))
+        # Allow a 20% increase in ice ncores over the target to find a suitable factor of blocksize (360 for ESM1.6)
+        ice_ncores = set_ice_ncores(min_ice_ncores=target_ice_ncores, max_ice_ncores=int(target_ice_ncores * 1.2))
 
         ncores_left = totncores - ice_ncores
         max_wasted_ncores = int(totncores * layout_search_config.max_wasted_ncores_frac)
@@ -519,7 +563,11 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
                     x.atm_ny,
                     x.mom_nx,
                     x.mom_ny,
-                    x.ice_ncores + (totncores - x.ncores_used),
+                    set_ice_ncores(
+                        min_ice_ncores=x.ice_ncores,
+                        max_ice_ncores=x.ice_ncores + (totncores - x.ncores_used),
+                        smallest_factor=False,
+                    ),
                 )
                 if x
                 else None
