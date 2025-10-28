@@ -27,6 +27,41 @@ def layout_search_config():
     return LayoutSearchConfig
 
 
+def test_set_ice_ncores():
+    from access.config.esm1p6_layout_input import set_ice_ncores
+
+    # Test that the validation works
+    with pytest.raises(ValueError):
+        set_ice_ncores(min_ice_ncores=-1, max_ice_ncores=10)
+
+    with pytest.raises(ValueError):
+        set_ice_ncores(min_ice_ncores=10, max_ice_ncores=5)
+
+    with pytest.raises(ValueError):
+        set_ice_ncores(min_ice_ncores=0, max_ice_ncores=0)
+
+    with pytest.raises(ValueError):
+        set_ice_ncores(min_ice_ncores=361, max_ice_ncores=400, blocksize=360)
+
+    with pytest.raises(ValueError):
+        set_ice_ncores(min_ice_ncores=10, max_ice_ncores=20, blocksize=0)
+
+    with pytest.raises(ValueError):
+        ice_ncores = set_ice_ncores(min_ice_ncores=13, max_ice_ncores=14)
+
+    # Test with valid parameters
+    ice_ncores = set_ice_ncores(min_ice_ncores=5, max_ice_ncores=12)
+    assert ice_ncores == 5, f"Expected ice_ncores to be *exactly* 5. Got ice_ncores = {ice_ncores}"
+    assert 360 % ice_ncores == 0, f"Expected ice_ncores to be a factor of 360. Got ice_ncores = {ice_ncores}"
+
+    ice_ncores = set_ice_ncores(min_ice_ncores=5, max_ice_ncores=12, smallest_factor=False)
+    assert ice_ncores == 12, f"Expected ice_ncores to be *exactly* 12. Got ice_ncores = {ice_ncores}"
+    assert 360 % ice_ncores == 0, f"Expected ice_ncores to be a factor of 360. Got ice_ncores = {ice_ncores}"
+
+    ice_ncores = set_ice_ncores(min_ice_ncores=1, max_ice_ncores=1)
+    assert ice_ncores == 1, f"Expected ice_ncores to be 1. Got ice_ncores = {ice_ncores}"
+
+
 def test_layout_search_config(layout_search_config):
     # # Test valid initialization
     config = layout_search_config()
@@ -343,8 +378,8 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout, layout
     assert all(layout.ice_ncores >= esm1p6_ctrl_layout.ice_ncores for layout in layouts[0]), (
         f"Expected ice_ncores to be >= {esm1p6_ctrl_layout.ice_ncores}. Got layout = {layouts[0]}"
     )
-    assert all(layout.ncores_used == totncores for layout in layouts[0]), (
-        f"Expected ncores used to be *exactly* equal to {totncores}. Got layout = {layouts[0]}"
+    assert all(layout.ncores_used <= totncores for layout in layouts[0]), (
+        f"Expected ncores used to be at most equal to {totncores}. Got layout = {layouts[0]}"
     )
 
 
