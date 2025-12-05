@@ -597,8 +597,8 @@ def generate_esm1p6_perturb_block(
     branch_name_prefix: str,
     *,
     queue: str = "normalsr",
-    start_blocknum: int = 1,
-) -> str:
+    start_seqnum: int = 1,
+) -> tuple[dict, int]:
     """
 
     Generates a block for "perturbation" experiments in the ESM 1.6 PI config.
@@ -632,8 +632,8 @@ def generate_esm1p6_perturb_block(
 
     Returns
     -------
-    str
-        A string representing the generated block.
+    dict
+        A dict representing the generated block.
 
     Raises
     ------
@@ -664,12 +664,12 @@ def generate_esm1p6_perturb_block(
     if not all(isinstance(x, LayoutTuple) for x in layouts):
         raise ValueError(f"Invalid layouts provided. Layouts = {layouts} must all be of type LayoutTuple")
 
-    if not start_blocknum or start_blocknum < 1:
-        raise ValueError("start_blocknum must be a positive integer greater than 0")
+    if not start_seqnum or start_seqnum < 1:
+        raise ValueError("start_seqnum must be a positive integer greater than 0")
 
     totncores = convert_num_nodes_to_ncores(num_nodes, queue=queue)
-    blocknum = start_blocknum
-    block = ""
+    seqnum = start_seqnum
+    block = {}
     for layout in layouts:
         atm_nx, atm_ny = layout.atm_nx, layout.atm_ny
         mom_nx, mom_ny = layout.mom_nx, layout.mom_ny
@@ -678,36 +678,36 @@ def generate_esm1p6_perturb_block(
         mom_ncores = mom_nx * mom_ny
         branch_name = f"{branch_name_prefix}_atm_{atm_nx}x{atm_ny}_mom_{mom_nx}x{mom_ny}_ice_{ice_ncores}x1"
         ncores_used = atm_ncores + mom_ncores + ice_ncores
-        block += f"""
-  Scaling_numnodes_{num_nodes}_totncores_{totncores}_ncores_used_{ncores_used}_seqnum_{blocknum}:
-    branches:
-      - {branch_name}
-    config.yaml:
-      submodels:
-        - - ncpus: # atmosphere
-              - {atm_ncores} # ncores for atmosphere
-          - ncpus: # ocean
-              - {mom_ncores} # ncores for ocean
-          - ncpus: # ice
-              - {ice_ncores} # ncores for ice
-            exe:
-              - cice_access-esm1.6_360x300_{ice_ncores}x1_{ice_ncores}p.exe
+        block[f"Scaling_numnodes_{num_nodes}_totncores_{totncores}_ncores_used_{ncores_used}_seqnum_{seqnum}"] = {
+                "branches": [branch_name],
+                "config.yaml": {
+                    "submodels": [
+                        [
+                            {"ncpus": atm_ncores},  # ncores for atmosphere
+                            {"ncpus": mom_ncores},  # ncores for ocean
+                            {
+                                "ncpus": ice_ncores,  # ncores for ice
+                                "exe": [f"cice_access-esm1.6_360x300_{ice_ncores}x1_{ice_ncores}p.exe"],
+                            },
+                        ]
+                    ]
+                },
+                "atmosphere/um_env.yaml": {
+                    "UM_ATM_NPROCX": str(atm_nx),
+                    "UM_ATM_NPROCY": str(atm_ny),
+                    "UM_NPES": str(atm_ncores),
+                },
+                "ocean/input.nml": {
+                    "ocean_model_nml": {
+                        "layout": [f"{mom_nx},{mom_ny}"],
+                    }
+                },
+                "ice/cice_in.nml": {
+                    "domain_nml": {
+                        "nprocs": [f"{ice_ncores}"],
+                    }
+                },
+            }
+        seqnum += 1
 
-    atmosphere/um_env.yaml:
-      UM_ATM_NPROCX: "{atm_nx}"
-      UM_ATM_NPROCY: "{atm_ny}"
-      UM_NPES: "{atm_ncores}"
-
-    ocean/input.nml:
-        ocean_model_nml:
-            layout:
-                - {mom_nx},{mom_ny}
-
-    ice/cice_in.nml:
-          domain_nml:
-            nprocs:
-                - {ice_ncores}
-    """
-        blocknum += 1
-
-    return block, blocknum
+    return block, seqnum

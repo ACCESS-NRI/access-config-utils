@@ -408,7 +408,7 @@ def test_generate_esm1p6_perturb_block(esm1p6_ctrl_layout):
 
     with pytest.raises(ValueError):
         generate_esm1p6_perturb_block(
-            num_nodes=4, layouts=esm1p6_ctrl_layout, branch_name_prefix="test_block", start_blocknum=-1
+            num_nodes=4, layouts=esm1p6_ctrl_layout, branch_name_prefix="test_block", start_seqnum=-1
         )
 
     # Test with valid parameters
@@ -416,7 +416,7 @@ def test_generate_esm1p6_perturb_block(esm1p6_ctrl_layout):
     perturb_block, _ = generate_esm1p6_perturb_block(
         num_nodes=4, layouts=esm1p6_ctrl_layout, branch_name_prefix=branch_name_prefix
     )
-    assert isinstance(perturb_block, str), f"Expected perturb block to be a string, but got: {type(perturb_block)}"
-    assert branch_name_prefix in perturb_block, (
+    assert isinstance(perturb_block, dict), f"Expected perturb block to be a string, but got: {type(perturb_block)}"
+    assert branch_name_prefix in perturb_block["Scaling_numnodes_4_totncores_416_ncores_used_416_seqnum_1"]["branches"][0], (
         f"Expected branch name prefix '{branch_name_prefix}' to be in perturb block, but got: {perturb_block}"
     )
