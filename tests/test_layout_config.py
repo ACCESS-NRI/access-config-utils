@@ -5,7 +5,6 @@ import pytest
 
 from access.config.layout_config import (
     LayoutTuple,
-    convert_num_nodes_to_ncores,
     find_layouts_with_maxncore,
     get_ctrl_layout,
 )
@@ -125,35 +124,3 @@ def test_get_ctrl_layout():
     assert ctrl_layout_config["totncores"] == 416, f"Expected totncores=416, got {ctrl_layout_config['totncores']}"
     assert ctrl_layout_config["queue"] == "normalsr", f"Expected queue='normalsr', got {ctrl_layout_config['queue']}"
     assert ctrl_layout_config["num_nodes"] == 4, f"Expected num_nodes=4, got {ctrl_layout_config['num_nodes']}"
-
-
-def test_convert_num_nodes_to_ncores():
-    with pytest.raises(ValueError):
-        convert_num_nodes_to_ncores(2.5, queue="broadwell")
-    with pytest.raises(ValueError):
-        convert_num_nodes_to_ncores(2.5, queue="unknown_queue")
-
-    assert convert_num_nodes_to_ncores(2, queue="normalsr") == 208, (
-        f"Expected 208, got {convert_num_nodes_to_ncores(2, queue='normalsr')}"
-    )
-    assert convert_num_nodes_to_ncores(2.0, queue="normalsr") == 208, (
-        f"Expected 208, got {convert_num_nodes_to_ncores(2.0, queue='normalsr')}"
-    )
-    assert convert_num_nodes_to_ncores(1, queue="normalsr") == 104, (
-        f"Expected 104, got {convert_num_nodes_to_ncores(1, queue='normalsr')}"
-    )
-    assert convert_num_nodes_to_ncores(1.0, queue="normalsr") == 104, (
-        f"Expected 104, got {convert_num_nodes_to_ncores(1.0, queue='normalsr')}"
-    )
-    assert convert_num_nodes_to_ncores(0.5) == 52, f"Expected 52, got {convert_num_nodes_to_ncores(0.5)}"
-    assert convert_num_nodes_to_ncores(0.5, queue="normal") == 24, (
-        f"Expected 24, got {convert_num_nodes_to_ncores(0.5, queue='normal')}"
-    )
-    assert convert_num_nodes_to_ncores(3, queue="normal") == 144, (
-        f"Expected 144, got {convert_num_nodes_to_ncores(3, queue='normal')}"
-    )
-    assert convert_num_nodes_to_ncores(3.0, queue="normal") == 144, (
-        f"Expected 144, got {convert_num_nodes_to_ncores(3.0, queue='normal')}"
-    )
-    with pytest.raises(ValueError):
-        convert_num_nodes_to_ncores([2])

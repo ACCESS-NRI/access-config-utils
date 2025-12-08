@@ -73,41 +73,6 @@ def get_ctrl_layout(model: str = "ESM 1.6 PI config") -> {}:
     return ctrl_layout_config
 
 
-def convert_num_nodes_to_ncores(num_nodes: (int | float), queue: str = "normalsr") -> int:
-    """
-    Convert number of nodes to number of cores based on queue properties.
-
-    Parameters
-    ----------
-    num_nodes : int or float, required
-        Number of nodes to convert. Must be a positive number.
-    queue : str, optional
-        Queue name. Allowed values are "normalsr" and "normal".
-        Default is "normalsr".
-    Returns
-    -------
-    int
-        Total number of cores corresponding to the given number of nodes.
-
-    Raises
-    ------
-    ValueError
-        If the queue name is not recognized or if num_nodes is not a positive number.
-
-    """
-    queue_properties = {
-        "normalsr": {"ncores_per_node": 104},
-        "normal": {"ncores_per_node": 48},
-    }
-    if queue not in list(queue_properties.keys()):
-        raise ValueError(f"Queue = {queue} not allowed. Allowed values are {list(queue_properties.keys())}")
-
-    if not isinstance(num_nodes, (int, float)) or num_nodes <= 0:
-        raise ValueError("Number of nodes must be a positive number (integer or float).")
-
-    return int(num_nodes * queue_properties[queue]["ncores_per_node"])
-
-
 def find_layouts_with_maxncore(
     maxncore: int,
     *,  # keyword-only arguments follow

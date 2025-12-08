@@ -2,7 +2,6 @@ import logging
 
 from access.config.layout_config import (
     LayoutTuple,
-    convert_num_nodes_to_ncores,
     find_layouts_with_maxncore,
     get_ctrl_layout,
 )
@@ -434,8 +433,8 @@ def _generate_esm1p6_layout_from_core_counts(  # noqa: C901
 # I or someone else will refactor it to reduce the complexity. - MS 7th Oct, 2025
 def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
     num_nodes_list: float,
+    cores_per_node: int,
     *,
-    queue: str = "normalsr",
     layout_search_config: LayoutSearchConfig = None,
 ) -> list:
     """
@@ -447,8 +446,8 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
     num_nodes_list : scalar or a list of integer/floats, required
         A positive number or a list of positive numbers representing the number of nodes to use.
 
-    queue : str, optional, default="normalsr"
-        Queue name on ``gadi``. Allowed values are "normalsr" and "normal".
+    cores_per_node : int, required
+        Number of cores available per node. Must be a positive integer.
 
     layout_search_config : LayoutSearchConfig, optional, default=None
         An instance of the LayoutSearchConfig class containing configuration parameters for layout generation.
@@ -498,6 +497,9 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
     if any(n <= 0 for n in num_nodes_list):
         raise ValueError(f"Number of nodes must be > 0. Got {num_nodes_list} instead")
 
+    if not isinstance(cores_per_node, int) or cores_per_node <= 0:
+        raise ValueError(f"Cores per node must be a positive integer. Got {cores_per_node} instead")
+
     if layout_search_config is not None:
         layout_search_config.validate()  # check that the provided config is valid
     else:
@@ -513,7 +515,7 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
 
     final_layouts = []
     for num_nodes in num_nodes_list:
-        totncores = convert_num_nodes_to_ncores(num_nodes, queue=queue)
+        totncores = int(num_nodes * cores_per_node)
         if totncores < min_cores_required:
             logger.warning(
                 f"Total ncores = {totncores} is less than the min. ncores required = {min_cores_required}. Skipping"
@@ -591,14 +593,7 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
     return final_layouts
 
 
-def generate_esm1p6_perturb_block(
-    num_nodes: (float | int),
-    layouts: list,
-    branch_name_prefix: str,
-    *,
-    queue: str = "normalsr",
-    start_seqnum: int = 1,
-) -> tuple[dict, int]:
+def generate_esm1p6_perturb_block(layout: LayoutTuple, branch_name_prefix: str) -> dict:
     """
 
     Generates a block for "perturbation" experiments in the ESM 1.6 PI config.
@@ -624,12 +619,6 @@ def generate_esm1p6_perturb_block(
     branch_name_prefix : str, required
         Prefix to use for the branch names in the generated block.
 
-    queue : str, optional, default="normalsr"
-        Queue name on ``gadi``. Allowed values are "normalsr" and "normal".
-
-    start_blocknum : int, optional, default=1
-        The starting block number to use in the generated block. Must be a positive integer greater than 0.
-
     Returns
     -------
     dict
@@ -641,73 +630,50 @@ def generate_esm1p6_perturb_block(
         If any of the input parameters are invalid.
 
     """
-
-    if num_nodes is None:
-        raise ValueError("Number of nodes must be provided.")
-
-    if not isinstance(num_nodes, (int, float)) or num_nodes <= 0:
-        raise ValueError(
-            f"Number of nodes must be a positive number or a list of positive numbers. Got {num_nodes} instead"
-        )
+    if not layout:
+        raise ValueError("No layout provided")
 
     if branch_name_prefix is None:
         raise ValueError("The prefix for the branch name must be provided")
 
-    if not layouts:
-        raise ValueError("No layouts provided")
+    if not isinstance(layout, LayoutTuple):
+        raise ValueError(f"Invalid layout provided. Layout = {layout} must be of type LayoutTuple")
 
-    if not isinstance(layouts, list):
-        layouts = [layouts]
-
-    if any(len(x) != 5 for x in layouts):
-        raise ValueError(f"Invalid layouts provided. Layouts = {layouts}, {len(layouts[0])=} instead of 5")
-    if not all(isinstance(x, LayoutTuple) for x in layouts):
-        raise ValueError(f"Invalid layouts provided. Layouts = {layouts} must all be of type LayoutTuple")
-
-    if not start_seqnum or start_seqnum < 1:
-        raise ValueError("start_seqnum must be a positive integer greater than 0")
-
-    totncores = convert_num_nodes_to_ncores(num_nodes, queue=queue)
-    seqnum = start_seqnum
-    block = {}
-    for layout in layouts:
-        atm_nx, atm_ny = layout.atm_nx, layout.atm_ny
-        mom_nx, mom_ny = layout.mom_nx, layout.mom_ny
-        ice_ncores = layout.ice_ncores
-        atm_ncores = atm_nx * atm_ny
-        mom_ncores = mom_nx * mom_ny
-        branch_name = f"{branch_name_prefix}_atm_{atm_nx}x{atm_ny}_mom_{mom_nx}x{mom_ny}_ice_{ice_ncores}x1"
-        ncores_used = atm_ncores + mom_ncores + ice_ncores
-        block[f"Scaling_numnodes_{num_nodes}_totncores_{totncores}_ncores_used_{ncores_used}_seqnum_{seqnum}"] = {
-                "branches": [branch_name],
-                "config.yaml": {
-                    "submodels": [
-                        [
-                            {"ncpus": atm_ncores},  # ncores for atmosphere
-                            {"ncpus": mom_ncores},  # ncores for ocean
-                            {
-                                "ncpus": ice_ncores,  # ncores for ice
-                                "exe": [f"cice_access-esm1.6_360x300_{ice_ncores}x1_{ice_ncores}p.exe"],
-                            },
-                        ]
-                    ]
-                },
-                "atmosphere/um_env.yaml": {
-                    "UM_ATM_NPROCX": str(atm_nx),
-                    "UM_ATM_NPROCY": str(atm_ny),
-                    "UM_NPES": str(atm_ncores),
-                },
-                "ocean/input.nml": {
-                    "ocean_model_nml": {
-                        "layout": [f"{mom_nx},{mom_ny}"],
-                    }
-                },
-                "ice/cice_in.nml": {
-                    "domain_nml": {
-                        "nprocs": [f"{ice_ncores}"],
-                    }
-                },
+    atm_nx, atm_ny = layout.atm_nx, layout.atm_ny
+    mom_nx, mom_ny = layout.mom_nx, layout.mom_ny
+    ice_ncores = layout.ice_ncores
+    atm_ncores = atm_nx * atm_ny
+    mom_ncores = mom_nx * mom_ny
+    branch_name = f"{branch_name_prefix}_atm_{atm_nx}x{atm_ny}_mom_{mom_nx}x{mom_ny}_ice_{ice_ncores}x1"
+    block = {
+        "branches": [branch_name],
+        "config.yaml": {
+            "submodels": [
+                [
+                    {"ncpus": atm_ncores},  # ncores for atmosphere
+                    {"ncpus": mom_ncores},  # ncores for ocean
+                    {
+                        "ncpus": ice_ncores,  # ncores for ice
+                        "exe": [f"cice_access-esm1.6_360x300_{ice_ncores}x1_{ice_ncores}p.exe"],
+                    },
+                ]
+            ]
+        },
+        "atmosphere/um_env.yaml": {
+            "UM_ATM_NPROCX": str(atm_nx),
+            "UM_ATM_NPROCY": str(atm_ny),
+            "UM_NPES": str(atm_ncores),
+        },
+        "ocean/input.nml": {
+            "ocean_model_nml": {
+                "layout": [f"{mom_nx},{mom_ny}"],
             }
-        seqnum += 1
+        },
+        "ice/cice_in.nml": {
+            "domain_nml": {
+                "nprocs": [f"{ice_ncores}"],
+            }
+        },
+    }
 
-    return block, seqnum
+    return block
