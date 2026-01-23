@@ -11,13 +11,14 @@ Note:
     `experiment-generator` yaml input file for ACCESS-OM3 configurations.
 """
 
-from dataclasses import dataclass
-from typing import Iterable
 import io
 import math
+from collections.abc import Iterable
+from dataclasses import dataclass
+
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedSeq
-from ruamel.yaml.scalarstring import DoubleQuotedScalarString as DQ
+from ruamel.yaml.scalarstring import DoubleQuotedScalarString
 
 ryaml = YAML()
 ryaml.indent(mapping=2, sequence=4, offset=2)
@@ -391,7 +392,7 @@ def generate_experiment_generator_yaml_input(
     block_name: str,
     platform: QueueConfig,
     pool_order: list[str] | None = None,
-    submodels: list[str] = ["ocn", "atm", "cpl", "ice", "rof"],
+    submodels: list[str] | None = None,
     queue: str = "normalsr",
     start_block_id: int = 1,
     petlist_submodel: str | None = None,
@@ -444,6 +445,10 @@ def generate_experiment_generator_yaml_input(
     # for pelayout_attributes
     pelayout: dict[str, list] = {}
 
+    # submodels
+    if submodels is None:
+        submodels = ["ocn", "atm", "cpl", "ice", "rof"]
+
     for sub in submodels:
         pool = pool_map[sub]
         pelayout[f"{sub}_ntasks"] = flow_seq([layout.pool_ntasks[pool] for layout in all_layouts])
@@ -455,7 +460,7 @@ def generate_experiment_generator_yaml_input(
 
     pet_pool = pool_map[petlist_submodel]
     pet_rootpes = [layout.pool_rootpe[pet_pool] for layout in all_layouts]
-    petlist = flow_seq([DQ(f"0 {pe}") for pe in pet_rootpes])
+    petlist = flow_seq([DoubleQuotedScalarString(f"0 {pe}") for pe in pet_rootpes])
 
     # yaml output
     yaml_output = {
