@@ -102,8 +102,6 @@ class ACCESSOM3LayoutGenerator:
         min_blocks: dict[str, int] | None = None,
         pool_order: list[str] | None = None,
         blocks_per_node: int | list[int] | None = None,
-        allow_partial_1st_node: bool = False,
-        min_total_blocks_1st_node: int = 2,
     ) -> dict[int, list[ConfigLayout]]:
         """Generates all valid layouts for each node count.
 
@@ -115,9 +113,6 @@ class ACCESSOM3LayoutGenerator:
             min_blocks (dict[str, int] | None): Minimum required blocks for each pool.
             pool_order (list[str] | None): Optional order of pools.
             blocks_per_node (int | list[int] | None): Block constraints per node.
-            if node == 1 and allow_partial_1st_node: bool:
-                - Whether to allow partial node usage for the first node count.
-                - min_total_blocks_1st_node: int: Minimum total blocks for one node when partial usage is allowed.
 
         Returns:
             dict[int, list[ConfigLayout]]: A dictionary mapping node counts to lists of valid ConfigLayout instances.
@@ -160,12 +155,7 @@ class ACCESSOM3LayoutGenerator:
 
             layouts: list[ConfigLayout] = []
 
-            # allow partial first node
-            if node == 1 and allow_partial_1st_node:
-                # For node 1, allow any total blocks from min_total_blocks_1st_node to full node
-                total_blocks = range(min_total_blocks_1st_node, blocks_per_node + 1)
-            else:
-                total_blocks = [node * blocks_per_node]
+            total_blocks = [node * blocks_per_node]
 
             for total_block in total_blocks:
                 for alloc_blocks in self._enumerate_block_allocations(total_block, list(pools), min_blocks):
@@ -601,9 +591,6 @@ if __name__ == "__main__":
         *([{"ocn": 2.0}] * (n - 1)),
     ]
 
-    allow_partial_1st_node = False  # allow partial first node only
-    min_total_blocks_1st_node = 4  # min total blocks for one node
-
     # generate layouts for each node count
     layouts_by_nodes = layout_generator.generator(
         nodes=nodes,
@@ -612,8 +599,6 @@ if __name__ == "__main__":
         min_ratio_to_baseline=min_ratio_to_baseline,
         pool_order=pool_order,
         blocks_per_node=blocks_per_node,
-        allow_partial_1st_node=allow_partial_1st_node,
-        min_total_blocks_1st_node=min_total_blocks_1st_node,
     )
 
     # for perturbation block generation
