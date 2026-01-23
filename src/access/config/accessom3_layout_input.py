@@ -34,16 +34,15 @@ def flow_seq(lst: list) -> CommentedSeq:
 
 @dataclass
 class QueueConfig:
-    """Configuration for different job queues.
-    """
+    """Configuration for different job queues."""
+
     queue: str
     nodesize: int
     nodemem: int
 
     @classmethod
     def from_queue(cls, queue: str) -> "QueueConfig":
-        """Creates a QueueConfig instance based on the queue name.
-        """
+        """Creates a QueueConfig instance based on the queue name."""
         mapping: dict[str, tuple(int, int)] = {
             "normalsr": (104, 512),
             "normal": (48, 256),
@@ -62,6 +61,7 @@ class ConfigLayout:
         pool_ntasks (dict[str, int]): Number of tasks per pool.
         pool_rootpe (dict[str, int]): Root PE for each pool.
     """
+
     ncpus: int
     pool_ntasks: dict[str, int]
     pool_rootpe: dict[str, int]
@@ -69,6 +69,7 @@ class ConfigLayout:
 
 class ACCESSOM3LayoutGenerator:
     """Generates ACCESS-OM3 configuration layouts from pool mappings and constraints."""
+
     def __init__(
         self,
         platform: QueueConfig,
@@ -150,8 +151,9 @@ class ACCESSOM3LayoutGenerator:
             blocks_per_node = blocks_per_node_list[i]
 
             if self.cpus_per_node % blocks_per_node != 0:
-                raise ValueError(f"cpus_per_node {self.cpus_per_node} must be divisible by"
-                                 f" blocks_per_node {blocks_per_node}.")
+                raise ValueError(
+                    f"cpus_per_node {self.cpus_per_node} must be divisible by blocks_per_node {blocks_per_node}."
+                )
 
             # re-compute block size for each node count
             block_size = self.cpus_per_node // blocks_per_node
@@ -163,14 +165,14 @@ class ACCESSOM3LayoutGenerator:
                 # For node 1, allow any total blocks from min_total_blocks_1st_node to full node
                 total_blocks = range(min_total_blocks_1st_node, blocks_per_node + 1)
             else:
-                total_blocks = [node*blocks_per_node]
+                total_blocks = [node * blocks_per_node]
 
             for total_block in total_blocks:
                 for alloc_blocks in self._enumerate_block_allocations(total_block, list(pools), min_blocks):
                     if not self._pass_ratio_constraints(
                         alloc_blocks,
                         max_ratio_to_baseline=max_ratio_list[i],
-                        min_ratio_to_baseline=min_ratio_list[i]
+                        min_ratio_to_baseline=min_ratio_list[i],
                     ):
                         continue
 
@@ -180,10 +182,11 @@ class ACCESSOM3LayoutGenerator:
                     # assign rootpes
                     pool_rootpe = self._assign_rootpes(pools, pool_ntasks)
 
-                    layouts.append(ConfigLayout(
-                        ncpus=sum(pool_ntasks.values()),
-                        pool_ntasks=pool_ntasks,
-                        pool_rootpe=pool_rootpe,
+                    layouts.append(
+                        ConfigLayout(
+                            ncpus=sum(pool_ntasks.values()),
+                            pool_ntasks=pool_ntasks,
+                            pool_rootpe=pool_rootpe,
                         )
                     )
 
@@ -304,14 +307,14 @@ class ACCESSOM3LayoutGenerator:
         for pool, max_ratio in max_ratio_to_baseline.items():
             if pool == self.baseline_pool or pool not in alloc:
                 continue
-            if alloc[pool] / base > max_ratio+self.eps:
+            if alloc[pool] / base > max_ratio + self.eps:
                 return False
 
         # For min ratio
         for pool, min_ratio in min_ratio_to_baseline.items():
             if pool == self.baseline_pool or pool not in alloc:
                 continue
-            if alloc[pool] / base < min_ratio-self.eps:
+            if alloc[pool] / base < min_ratio - self.eps:
                 return False
 
         return True
@@ -361,13 +364,13 @@ class ACCESSOM3LayoutGenerator:
                 return
 
             pool = pools[i]
-            rest_min = sum(mins[p] for p in pools[i+1:])
+            rest_min = sum(mins[p] for p in pools[i + 1 :])
             low = mins[pool]  # minimum blocks for this pool
             high = remaining - rest_min  # maximum blocks for this pool
 
             for blocks in range(low, high + 1):
                 current_alloc[pool] = blocks
-                yield from allocate_blocks(i+1, remaining-blocks, current_alloc)
+                yield from allocate_blocks(i + 1, remaining - blocks, current_alloc)
             current_alloc.pop(pool, None)
 
         yield from allocate_blocks(0, total_blocks, {})
@@ -434,7 +437,9 @@ def generate_experiment_generator_yaml_input(
 
     # mem and walltime
     if mem is None:
-        mem = flow_seq([f"{math.ceil(layout.ncpus / platform.nodesize) * platform.nodemem}GB" for layout in all_layouts])
+        mem = flow_seq(
+            [f"{math.ceil(layout.ncpus / platform.nodesize) * platform.nodemem}GB" for layout in all_layouts]
+        )
     if walltime is None:
         walltime = ["05:00:00"]
 
@@ -475,7 +480,7 @@ def generate_experiment_generator_yaml_input(
             block_name: {
                 "branches": branches,
                 "MOM_input": {
-                    "AUTO_MASKTABLE": flow_seq(["REMOVE"] + ["PRESERVE"] * (n_layouts-1)),
+                    "AUTO_MASKTABLE": flow_seq(["REMOVE"] + ["PRESERVE"] * (n_layouts - 1)),
                 },
                 "ice_in": {
                     "domain_nml": {"max_blocks": -1},
@@ -505,7 +510,7 @@ def generate_experiment_generator_yaml_input(
                         "stop_n": stop_n,
                         "stop_option": stop_option,
                     },
-                }
+                },
             }
         },
     }
@@ -568,7 +573,7 @@ if __name__ == "__main__":
         "shared",
         "ocn",
         # "wav"
-        ]
+    ]
 
     platform = QueueConfig.from_queue("normalsr")
     blocks_per_node = 8  # divided into 8 blocks of 13 cpus each (int or list[int])
@@ -588,7 +593,7 @@ if __name__ == "__main__":
 
     max_ratio_to_baseline = [
         {"ocn": 8.0},  # for 1 node
-        *([{"ocn": 6.0}]*(n-1)),  # for other nodes
+        *([{"ocn": 6.0}] * (n - 1)),  # for other nodes
     ]
 
     min_ratio_to_baseline = [
