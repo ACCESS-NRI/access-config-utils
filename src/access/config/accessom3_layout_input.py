@@ -46,7 +46,13 @@ class QueueConfig:
         """Creates a QueueConfig instance based on the queue name."""
         mapping: dict[str, tuple(int, int)] = {
             "normalsr": (104, 512),
-            "normal": (48, 256),
+            "normalsr": (104, 512), # Sapphire Rapids 
+            "expresssr": (104, 512), # Sapphire Rapids (express)
+            "normal": (48, 192), # Cascade lake
+            "express": (48, 192), # Cascade lake (express)
+            "normalbw": (28, 128), # broadwell
+            "expressbw": (28, 128), # broadwell (express)
+            "normalsl": (32, 192), # Skylake
         }
         if queue not in mapping:
             raise ValueError(f"Unknown queue name: {queue}")
