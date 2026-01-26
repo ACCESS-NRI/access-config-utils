@@ -45,7 +45,6 @@ class QueueConfig:
     def from_queue(cls, queue: str) -> "QueueConfig":
         """Creates a QueueConfig instance based on the queue name."""
         mapping: dict[str, tuple(int, int)] = {
-            "normalsr": (104, 512),
             "normalsr": (104, 512),  # Sapphire Rapids
             "expresssr": (104, 512),  # Sapphire Rapids (express)
             "normal": (48, 192),  # Cascade lake
