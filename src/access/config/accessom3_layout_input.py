@@ -46,13 +46,13 @@ class QueueConfig:
         """Creates a QueueConfig instance based on the queue name."""
         mapping: dict[str, tuple(int, int)] = {
             "normalsr": (104, 512),
-            "normalsr": (104, 512), # Sapphire Rapids 
-            "expresssr": (104, 512), # Sapphire Rapids (express)
-            "normal": (48, 192), # Cascade lake
-            "express": (48, 192), # Cascade lake (express)
-            "normalbw": (28, 128), # broadwell
-            "expressbw": (28, 128), # broadwell (express)
-            "normalsl": (32, 192), # Skylake
+            "normalsr": (104, 512),  # Sapphire Rapids
+            "expresssr": (104, 512),  # Sapphire Rapids (express)
+            "normal": (48, 192),  # Cascade lake
+            "express": (48, 192),  # Cascade lake (express)
+            "normalbw": (28, 128),  # broadwell
+            "expressbw": (28, 128),  # broadwell (express)
+            "normalsl": (32, 192),  # Skylake
         }
         if queue not in mapping:
             raise ValueError(f"Unknown queue name: {queue}")
@@ -92,7 +92,9 @@ class ACCESSOM3LayoutGenerator:
             eps (float): Small tolerance to avoid floating point issues.
         """
         if queue_config.nodesize % blocks_per_node != 0:
-            raise ValueError(f"nodesize {queue_config.nodesize} must be divisible by blocks_per_node {blocks_per_node}.")
+            raise ValueError(
+                f"nodesize {queue_config.nodesize} must be divisible by blocks_per_node {blocks_per_node}."
+            )
 
         self.queue_config = queue_config
         self.cpus_per_node = queue_config.nodesize
@@ -439,7 +441,10 @@ def generate_experiment_generator_yaml_input(
             mem = "REMOVED"
         else:
             mem = flow_seq(
-                [f"{math.ceil(layout.ncpus / queue_config.nodesize) * queue_config.nodemem}GB" for layout in all_layouts]
+                [
+                    f"{math.ceil(layout.ncpus / queue_config.nodesize) * queue_config.nodemem}GB"
+                    for layout in all_layouts
+                ]
             )
     if walltime is None:
         walltime = ["05:00:00"]
