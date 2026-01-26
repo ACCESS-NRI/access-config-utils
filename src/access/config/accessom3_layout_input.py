@@ -79,23 +79,23 @@ class ACCESSOM3LayoutGenerator:
 
     def __init__(
         self,
-        platform: QueueConfig,
+        queue_config: QueueConfig,
         blocks_per_node: int = 8,
         baseline_pool: str = "shared",
         eps: float = 1e-6,
     ) -> None:
         """
         Parameters:
-            platform (QueueConfig): Configuration for the job queue.
+            queue_config (QueueConfig): Configuration for the job queue.
             blocks_per_node (int): Number of allocation blocks per node, eg 8 blocks of 13 cpus for 104 cpus/node.
             baseline_pool (str): Baseline pool for ratio constraints (usually "shared").
             eps (float): Small tolerance to avoid floating point issues.
         """
-        if platform.nodesize % blocks_per_node != 0:
-            raise ValueError(f"nodesize {platform.nodesize} must be divisible by blocks_per_node {blocks_per_node}.")
+        if queue_config.nodesize % blocks_per_node != 0:
+            raise ValueError(f"nodesize {queue_config.nodesize} must be divisible by blocks_per_node {blocks_per_node}.")
 
-        self.platform = platform
-        self.cpus_per_node = platform.nodesize
+        self.queue_config = queue_config
+        self.cpus_per_node = queue_config.nodesize
         self.blocks_per_node = blocks_per_node
         self.baseline_pool = baseline_pool
         self.eps = eps
@@ -396,10 +396,9 @@ def generate_experiment_generator_yaml_input(
     pool_map: dict[str, str],
     branch_name_prefix: str,
     block_name: str,
-    platform: QueueConfig,
+    queue_config: QueueConfig,
     pool_order: list[str] | None = None,
     submodels: list[str] | None = None,
-    queue: str = "normalsr",
     start_block_id: int = 1,
     petlist_submodel: str | None = None,
     include_rootpe: bool = True,
@@ -434,9 +433,14 @@ def generate_experiment_generator_yaml_input(
 
     # mem and walltime
     if mem is None:
-        mem = flow_seq(
-            [f"{math.ceil(layout.ncpus / platform.nodesize) * platform.nodemem}GB" for layout in all_layouts]
-        )
+        if queue_config is None:
+            # REMOVED is a special keyword in experiment-generator to remove mem keyword
+            # Then let the scheduler decide the memory allocation based on queue type.
+            mem = "REMOVED"
+        else:
+            mem = flow_seq(
+                [f"{math.ceil(layout.ncpus / queue_config.nodesize) * queue_config.nodemem}GB" for layout in all_layouts]
+            )
     if walltime is None:
         walltime = ["05:00:00"]
 
@@ -444,7 +448,7 @@ def generate_experiment_generator_yaml_input(
         layouts_by_nodes=layouts_by_nodes,
         pool_map=pool_map,
         branch_name_prefix=branch_name_prefix,
-        queue=platform.queue,
+        queue_config=queue_config,
         pool_order=pool_order,
     )
 
@@ -467,6 +471,8 @@ def generate_experiment_generator_yaml_input(
     pet_pool = pool_map[petlist_submodel]
     pet_rootpes = [layout.pool_rootpe[pet_pool] for layout in all_layouts]
     petlist = flow_seq([DoubleQuotedScalarString(f"0 {pe}") for pe in pet_rootpes])
+
+    print(f"Generated {n_layouts} layouts for perturbation block '{block_name}'!")
 
     # yaml output
     yaml_output = {
@@ -497,10 +503,10 @@ def generate_experiment_generator_yaml_input(
                     "mem": mem,
                     "walltime": walltime,
                     "metadata": {"enable": True},
-                    "queue": platform.queue,
+                    "queue": queue_config.queue,
                     "platform": {
-                        "nodesize": platform.nodesize,
-                        "nodemem": platform.nodemem,
+                        "nodesize": queue_config.nodesize,
+                        "nodemem": queue_config.nodemem,
                     },
                 },
                 "nuopc.runconfig": {
@@ -526,7 +532,7 @@ def _make_branch_names(
     layouts_by_nodes: dict[int, list],
     pool_map: dict[str, str],
     branch_name_prefix: str,
-    queue: str,
+    queue_config: QueueConfig,
     pool_order: list[str] | None = None,
 ):
     """Generates branch names for each layout.
@@ -540,21 +546,18 @@ def _make_branch_names(
         pools = [pool for pool in pool_order if pool in pools]
 
     branches = []
-    idx = 1  # node index
 
     for node in sorted(layouts_by_nodes):
         for layout in layouts_by_nodes[node]:
             tmp = [
                 branch_name_prefix,
-                f"idx_{idx}",
                 f"node_{node}",
-                f"queue_{queue}",
+                f"queue_{queue_config.queue}",
             ]
             for pool in pools:
                 ntasks = layout.pool_ntasks.get(pool, 0)
                 tmp.append(f"{pool}_{ntasks}")
             branches.append("_".join(tmp))
-            idx += 1
 
     return branches
 
@@ -576,7 +579,7 @@ if __name__ == "__main__":
         # "wav"
     ]
 
-    platform = QueueConfig.from_queue("normalsr")
+    queue_config = QueueConfig.from_queue("normalsr")
     blocks_per_node = 8  # divided into 8 blocks of 13 cpus each (int or list[int])
     baseline_pool = "shared"  # usually "shared"
     eps = 1e-6  # floating point tolerance
@@ -586,7 +589,7 @@ if __name__ == "__main__":
     n = len(nodes)
 
     layout_generator = ACCESSOM3LayoutGenerator(
-        platform=platform,
+        queue_config=queue_config,
         blocks_per_node=blocks_per_node,
         baseline_pool=baseline_pool,
         eps=eps,
@@ -631,7 +634,7 @@ if __name__ == "__main__":
         pool_order=pool_order,
         branch_name_prefix=branch_name_prefix,
         block_name=experiment_generator_block_name,
-        platform=platform,
+        queue_config=queue_config,
         petlist_submodel=petlist_submodel,
         include_rootpe=include_rootpe,
         model_type=model_type,
