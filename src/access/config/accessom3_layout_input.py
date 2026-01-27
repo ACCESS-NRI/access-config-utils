@@ -486,7 +486,11 @@ def generate_experiment_generator_yaml_input(
         "test_path": test_path,
         "repository_directory": repository_directory,
         "control_branch_name": control_branch_name,
-        "Control_Experiment": None,
+        "Control_Experiment": {
+            "config.yaml": {
+                "metadata": {"enable": True},
+            },
+        },
         "Perturbation_Experiment": {
             block_name: {
                 "branches": branches,
