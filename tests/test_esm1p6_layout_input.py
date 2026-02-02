@@ -300,7 +300,7 @@ def test_generate_esm1p6_layout_from_core_counts(layout_tuple, layout_search_con
 def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout, layout_search_config):
     # Test that the validation works
     with pytest.raises(TypeError):
-        layouts = generate_esm1p6_core_layouts_from_node_count([4, "abcd"], cores_per_node=104)
+        layouts = generate_esm1p6_core_layouts_from_node_count("abcd", cores_per_node=104)
 
     # Test with negative nodes
     node_count = -3
@@ -313,21 +313,21 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout, layout
 
     # Test that with a very low node count, no layouts are returned (i.e. empty list of an empty list)
     layouts = generate_esm1p6_core_layouts_from_node_count(
-        [0.2], cores_per_node=104, layout_search_config=layout_search_config(max_wasted_ncores_frac=0.2)
+        0.2, cores_per_node=104, layout_search_config=layout_search_config(max_wasted_ncores_frac=0.2)
     )
-    assert layouts != [[]], f"Expected layouts to be returned even with small node fraction. Got layouts = {layouts}"
+    assert layouts != [], f"Expected layouts to be returned even with small node fraction. Got layouts = {layouts}"
 
     # Test that no layouts are returned with nearly zero nodes
     layouts = generate_esm1p6_core_layouts_from_node_count(
-        [0.001], cores_per_node=104, layout_search_config=layout_search_config(max_wasted_ncores_frac=0.5)
+        0.001, cores_per_node=104, layout_search_config=layout_search_config(max_wasted_ncores_frac=0.5)
     )
-    assert layouts == [[]], f"Expected no layouts to be returned for nearly zero nodes. Got layouts = {layouts}"
+    assert layouts == [], f"Expected no layouts to be returned for nearly zero nodes. Got layouts = {layouts}"
 
     # Test with a valid node count that should return the control layout
     node_count = 4
     layouts = generate_esm1p6_core_layouts_from_node_count(
         node_count, cores_per_node=104, layout_search_config=layout_search_config(tol_around_ctrl_ratio=0.0)
-    )[0]
+    )
     assert len(layouts) == 1, f"Expected *exactly* one layout to be returned. Got layouts = {layouts}"
     layouts = layouts[0]
     assert esm1p6_ctrl_layout == layouts, f"Control config layout={esm1p6_ctrl_layout} not found in solved {layouts}"
@@ -336,7 +336,7 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout, layout
     node_count = 4.0
     layouts = generate_esm1p6_core_layouts_from_node_count(
         node_count, cores_per_node=104, layout_search_config=layout_search_config(tol_around_ctrl_ratio=0.0)
-    )[0]
+    )
     assert len(layouts) == 1, f"Expected *exactly* one layout to be returned. Got layouts = {layouts}"
     layouts = layouts[0]
     assert esm1p6_ctrl_layout == layouts, f"Control config layout={esm1p6_ctrl_layout} not found in solved {layouts}"
@@ -349,7 +349,7 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout, layout
     # Test with non-integer nodes
     node_count = 2.5
     layouts = generate_esm1p6_core_layouts_from_node_count(node_count, cores_per_node=104)
-    assert layouts != [[]], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
+    assert layouts != [], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
 
     # Test that specifying frac_mom_ncores_over_atm_ncores works
     node_count = 4
@@ -359,11 +359,11 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout, layout
         cores_per_node=104,
         layout_search_config=layout_search_config(frac_mom_ncores_over_atm_ncores=frac_mom_ncores_over_atm_ncores),
     )
-    assert layouts != [[]], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
+    assert layouts != [], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
 
     # Test that the layouts are all unique
     node_count = 4
-    layouts = generate_esm1p6_core_layouts_from_node_count(node_count, cores_per_node=104)[0]
+    layouts = generate_esm1p6_core_layouts_from_node_count(node_count, cores_per_node=104)
     assert len(layouts) == len(set(layouts)), f"Got duplicate elements in layouts. {layouts = }"
 
     # Test that allocating remaining cores to ICE works
@@ -377,12 +377,12 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout, layout
             frac_mom_ncores_over_atm_ncores=frac_mom_ncores_over_atm_ncores, allocate_unused_cores_to_ice=True
         ),
     )
-    assert layouts != [[]], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
-    assert all(layout.ice_ncores >= esm1p6_ctrl_layout.ice_ncores for layout in layouts[0]), (
-        f"Expected ice_ncores to be >= {esm1p6_ctrl_layout.ice_ncores}. Got layout = {layouts[0]}"
+    assert layouts != [], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
+    assert all(layout.ice_ncores >= esm1p6_ctrl_layout.ice_ncores for layout in layouts), (
+        f"Expected ice_ncores to be >= {esm1p6_ctrl_layout.ice_ncores}. Got layout = {layouts}"
     )
-    assert all(layout.ncores_used <= totncores for layout in layouts[0]), (
-        f"Expected ncores used to be at most equal to {totncores}. Got layout = {layouts[0]}"
+    assert all(layout.ncores_used <= totncores for layout in layouts), (
+        f"Expected ncores used to be at most equal to {totncores}. Got layout = {layouts}"
     )
 
 
@@ -408,6 +408,10 @@ def test_generate_esm1p6_perturb_block(esm1p6_ctrl_layout):
     branch_name_prefix = "test_block"
     perturb_block = generate_esm1p6_perturb_block(layout=esm1p6_ctrl_layout, branch_name_prefix=branch_name_prefix)
     assert isinstance(perturb_block, dict), f"Expected perturb block to be a dict, but got: {type(perturb_block)}"
+    assert len(perturb_block["branches"]) == 1, (
+        f"Expected one branch in the perturb block, but got: {len(perturb_block['branches'])}"
+    )
+    # Check that the branch name prefix is correctly included in the name of the first (and only) branch
     assert branch_name_prefix in perturb_block["branches"][0], (
         f"Expected branch name prefix '{branch_name_prefix}' to be in perturb block, but got: {perturb_block}"
     )

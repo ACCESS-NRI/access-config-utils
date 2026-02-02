@@ -431,20 +431,20 @@ def _generate_esm1p6_layout_from_core_counts(  # noqa: C901
 # The noqa comment is to suppress the complexity warning from ruff/flake8
 # The complexity of this function is high due to the nested loops and multiple conditionals. Some day
 # I or someone else will refactor it to reduce the complexity. - MS 7th Oct, 2025
-def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
-    num_nodes_list: float,
+def generate_esm1p6_core_layouts_from_node_count(
+    num_nodes: float,
     cores_per_node: int,
     *,
-    layout_search_config: LayoutSearchConfig = None,
+    layout_search_config: LayoutSearchConfig | None = None,
 ) -> list:
     """
-    Given a list of target number of nodes to use, this function generates
-    possible core layouts for the Atmosphere and Ocean for the ESM 1.6 PI config.
+    Given a target number of nodes to use, this function generates possible core layouts for the Atmosphere and Ocean
+    for the ESM 1.6 PI config.
 
     Parameters
     ----------
-    num_nodes_list : scalar or a list of integer/floats, required
-        A positive number or a list of positive numbers representing the number of nodes to use.
+    num_nodes : float or integer, required
+        A positive number representing the number of nodes to use.
 
     cores_per_node : int, required
         Number of cores available per node. Must be a positive integer.
@@ -457,9 +457,8 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
     Returns
     -------
     list
-        A list of lists containing instances of the class LayoutTuple. Each inner list
-        corresponds to the layouts for the respective number of nodes in
-        ``num_nodes_list``. Each instance has the following fields:
+        A list containing instances of the class LayoutTuple, corresponds to the layouts for the respective number of
+        nodes. Each instance has the following fields:
         - atm_nx : int
         - atm_ny : int
         - mom_nx : int
@@ -467,7 +466,7 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
         - ice_ncores : int
         - ncores_used : int (computed property := atm_nx * atm_ny + mom_nx * mom_ny + ice_ncores)
 
-        An empty list is returned for a given number of nodes if no valid layouts could be generated.
+        An empty list is returned if no valid layouts could be generated.
 
     Raises
     ------
@@ -488,14 +487,8 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
         - ncores_used: 416 cores
     """
 
-    if not isinstance(num_nodes_list, list):
-        num_nodes_list = [num_nodes_list]
-
-    if any(not isinstance(n, (int, float)) for n in num_nodes_list):
-        raise TypeError(f"Number of nodes must be a float or an integer. Got {num_nodes_list} instead")
-
-    if any(n <= 0 for n in num_nodes_list):
-        raise ValueError(f"Number of nodes must be > 0. Got {num_nodes_list} instead")
+    if num_nodes <= 0:
+        raise ValueError(f"Number of nodes must be > 0. Got {num_nodes} instead")
 
     if not isinstance(cores_per_node, int) or cores_per_node <= 0:
         raise ValueError(f"Cores per node must be a positive integer. Got {cores_per_node} instead")
@@ -513,99 +506,88 @@ def generate_esm1p6_core_layouts_from_node_count(  # noqa: C901
     ctrl_totncores = ctrl_layout_config["totncores"]
     ctrl_ice_ncores = ctrl_layout_config["layout"].ice_ncores
 
-    final_layouts = []
-    for num_nodes in num_nodes_list:
-        totncores = int(num_nodes * cores_per_node)
-        if totncores < min_cores_required:
-            logger.warning(
-                f"Total ncores = {totncores} is less than the min. ncores required = {min_cores_required}. Skipping"
+    totncores = int(num_nodes * cores_per_node)
+    if totncores < min_cores_required:
+        logger.warning(
+            f"Total ncores = {totncores} is less than the min. ncores required = {min_cores_required}."
+            "Returning an empty list"
+        )
+        return []
+
+    logger.debug(f"Generating layouts for {num_nodes = } nodes")
+    target_ice_ncores = max(1, int(ctrl_ice_ncores / ctrl_totncores * totncores))
+    # Allow a 20% increase in ice ncores over the target to find a suitable factor of blocksize (360 for ESM1.6)
+    ice_ncores = set_ice_ncores(min_ice_ncores=target_ice_ncores, max_ice_ncores=int(target_ice_ncores * 1.2))
+
+    ncores_left = totncores - ice_ncores
+    max_wasted_ncores = int(totncores * layout_search_config.max_wasted_ncores_frac)
+    min_ncores_needed = totncores - max_wasted_ncores
+
+    min_frac_mom_ncores_over_atm_ncores, max_frac_mom_ncores_over_atm_ncores = (
+        layout_search_config.frac_mom_ncores_over_atm_ncores
+    )
+    max_atm_ncores = max(2, int(ncores_left / (1.0 + min_frac_mom_ncores_over_atm_ncores)))
+    min_atm_ncores = max(2, int(ncores_left / (1.0 + max_frac_mom_ncores_over_atm_ncores)))
+
+    logger.debug(
+        f"ATM ncores range, stepsize = ({min_atm_ncores}, {max_atm_ncores}, {layout_search_config.atm_ncore_stepsize})"
+    )
+    logger.debug(f"MOM ncores range = ({ncores_left - max_atm_ncores}, {ncores_left - min_atm_ncores})")
+    layout = _generate_esm1p6_layout_from_core_counts(
+        min_atm_ncores=min_atm_ncores,
+        max_atm_ncores=max_atm_ncores,
+        ncores_for_atm_and_ocn=ncores_left,
+        ice_ncores=ice_ncores,
+        min_ncores_needed=min_ncores_needed,
+        layout_search_config=layout_search_config,
+    )
+
+    if layout_search_config.allocate_unused_cores_to_ice:
+        # update the ice_ncores in each layout to include any unused cores
+        # This will recreate the existing layout if the total cores used
+        # is equal to the total available cores
+
+        # This works even if layout == [] (i.e., no layouts found). In that case,
+        # layout will remain an empty list
+        layout = [
+            LayoutTuple(
+                x.atm_nx,
+                x.atm_ny,
+                x.mom_nx,
+                x.mom_ny,
+                set_ice_ncores(
+                    min_ice_ncores=x.ice_ncores,
+                    max_ice_ncores=x.ice_ncores + (totncores - x.ncores_used),
+                    smallest_factor=False,
+                ),
             )
-            final_layouts.append([])
-            continue
+            if x
+            else None
+            for x in layout
+            # ruff insists that this line by line breaking up is the correct formatting
+            # even though IMO that's less readable - MS 14th Oct, 2025
+        ]
 
-        logger.debug(f"Generating layouts for {num_nodes = } nodes")
-        target_ice_ncores = max(1, int(ctrl_ice_ncores / ctrl_totncores * totncores))
-        # Allow a 20% increase in ice ncores over the target to find a suitable factor of blocksize (360 for ESM1.6)
-        ice_ncores = set_ice_ncores(min_ice_ncores=target_ice_ncores, max_ice_ncores=int(target_ice_ncores * 1.2))
+    layout = list(set(layout))  # remove duplicates
 
-        ncores_left = totncores - ice_ncores
-        max_wasted_ncores = int(totncores * layout_search_config.max_wasted_ncores_frac)
-        min_ncores_needed = totncores - max_wasted_ncores
+    # sort the layouts by ncores_used (descending, fewer wasted cores first), and then
+    # the sum of the absolute differences between nx and ny for atm and mom (ascending, i.e.,
+    # more square layouts first)
+    # Still works even if layout == [] (i.e., no layouts found)
+    layout = sorted(layout, key=lambda x: (-x.ncores_used, abs(x.atm_nx - x.atm_ny) + abs(x.mom_nx - x.mom_ny)))
 
-        min_frac_mom_ncores_over_atm_ncores, max_frac_mom_ncores_over_atm_ncores = (
-            layout_search_config.frac_mom_ncores_over_atm_ncores
-        )
-        max_atm_ncores = max(2, int(ncores_left / (1.0 + min_frac_mom_ncores_over_atm_ncores)))
-        min_atm_ncores = max(2, int(ncores_left / (1.0 + max_frac_mom_ncores_over_atm_ncores)))
+    logger.info(f"Generated a total of {len(layout)} layouts for {num_nodes} nodes")
 
-        logger.debug(
-            f"ATM ncores range, stepsize = ({min_atm_ncores}, {max_atm_ncores}, "
-            f"{layout_search_config.atm_ncore_stepsize})"
-        )
-        logger.debug(f"MOM ncores range = ({ncores_left - max_atm_ncores}, {ncores_left - min_atm_ncores})")
-        layout = _generate_esm1p6_layout_from_core_counts(
-            min_atm_ncores=min_atm_ncores,
-            max_atm_ncores=max_atm_ncores,
-            ncores_for_atm_and_ocn=ncores_left,
-            ice_ncores=ice_ncores,
-            min_ncores_needed=min_ncores_needed,
-            layout_search_config=layout_search_config,
-        )
-
-        if layout_search_config.allocate_unused_cores_to_ice:
-            # update the ice_ncores in each layout to include any unused cores
-            # This will recreate the existing layout if the total cores used
-            # is equal to the total available cores
-
-            # This works even if layout == [] (i.e., no layouts found). In that case,
-            # layout will remain an empty list
-            layout = [
-                LayoutTuple(
-                    x.atm_nx,
-                    x.atm_ny,
-                    x.mom_nx,
-                    x.mom_ny,
-                    set_ice_ncores(
-                        min_ice_ncores=x.ice_ncores,
-                        max_ice_ncores=x.ice_ncores + (totncores - x.ncores_used),
-                        smallest_factor=False,
-                    ),
-                )
-                if x
-                else None
-                for x in layout
-                # ruff insists that this line by line breaking up is the correct formatting
-                # even though IMO that's less readable - MS 14th Oct, 2025
-            ]
-
-        layout = list(set(layout))  # remove duplicates
-
-        # sort the layouts by ncores_used (descending, fewer wasted cores first), and then
-        # the sum of the absolute differences between nx and ny for atm and mom (ascending, i.e.,
-        # more square layouts first)
-        # Still works even if layout == [] (i.e., no layouts found)
-        layout = sorted(layout, key=lambda x: (-x.ncores_used, abs(x.atm_nx - x.atm_ny) + abs(x.mom_nx - x.mom_ny)))
-
-        final_layouts.append(layout)  # can be an empty list if no layouts found
-
-    logger.info(f"Generated a total of {len(final_layouts)} layouts for {num_nodes_list} nodes")
-
-    return final_layouts
+    return layout
 
 
 def generate_esm1p6_perturb_block(layout: LayoutTuple, branch_name_prefix: str) -> dict:
-    """
-
-    Generates a block for "perturbation" experiments in the ESM 1.6 PI config.
+    """Generates a block for "perturbation" experiments in the ESM 1.6 PI config.
 
     Parameters
     ----------
-    num_nodes : float or int, required
-        A positive number representing the number of nodes to use.
-
-    layouts : list, required
-        A list containing instances of the class `LayoutTuple` as returned
-        by ``generate_esm1p6_core_layouts_from_node_count``.
+    layout : ``LayoutTuple`` tuple, required
+        An instances of the class `LayoutTuple` as returned by ``generate_esm1p6_core_layouts_from_node_count``.
         Each instance of `LayoutTuple` has the following fields:
         - atm_nx : int
         - atm_ny : int
@@ -613,8 +595,6 @@ def generate_esm1p6_perturb_block(layout: LayoutTuple, branch_name_prefix: str) 
         - mom_ny : int
         - ice_ncores : int
         - ncores_used : int (computed property := atm_nx * atm_ny + mom_nx * mom_ny + ice_ncores)
-
-        The layouts will be used in the order they appear in the list.
 
     branch_name_prefix : str, required
         Prefix to use for the branch names in the generated block.
