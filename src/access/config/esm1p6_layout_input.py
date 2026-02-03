@@ -532,7 +532,7 @@ def generate_esm1p6_core_layouts_from_node_count(
     logger.debug(
         f"ATM ncores range, stepsize = ({min_atm_ncores}, {max_atm_ncores}, {layout_search_config.atm_ncore_stepsize})"
     )
-    logger.debug(f"MOM ncores range = ({ncores_left - max_atm_ncores}, {ncores_left - min_atm_ncores})")
+    logger.debug(f"OCN ncores range = ({ncores_left - max_atm_ncores}, {ncores_left - min_atm_ncores})")
     layout = _generate_esm1p6_layout_from_core_counts(
         min_atm_ncores=min_atm_ncores,
         max_atm_ncores=max_atm_ncores,
