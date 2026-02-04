@@ -12,6 +12,7 @@ Note:
 """
 
 import io
+import copy
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -392,6 +393,17 @@ class ACCESSOM3LayoutGenerator:
         return rootpe
 
 
+def _merge_dicts(base_dict: dict, override_dict: dict) -> dict:
+    """Recursively merge override_dict to base_dict."""
+    res = copy.deepcopy(base_dict)
+    for key, value in override_dict.items():
+        if isinstance(value, dict) and isinstance(res.get(key), dict):
+            res[key] = _merge_dicts(res[key], value)
+        else:
+            res[key] = value
+    return res
+
+
 def generate_experiment_generator_yaml_input(
     layouts_by_nodes: dict[int, list],
     pool_map: dict[str, str],
@@ -417,6 +429,7 @@ def generate_experiment_generator_yaml_input(
     test_path: str | None = None,
     repository_directory: str | None = None,
     control_branch_name: str = "ctrl",
+    user_yaml: dict | None = None,
 ) -> str:
     """Generates an experiment generator yaml input file for ACCESS-OM3 configurations."""
 
@@ -495,7 +508,7 @@ def generate_experiment_generator_yaml_input(
             block_name: {
                 "branches": branches,
                 "MOM_input": {
-                    "AUTO_MASKTABLE": flow_seq(["REMOVE"] + ["PRESERVE"] * (n_layouts - 1)),
+                    "AUTO_MASKTABLE": flow_seq(["REMOVE"] * n_layouts),
                 },
                 "ice_in": {
                     "domain_nml": {"max_blocks": -1},
@@ -529,6 +542,9 @@ def generate_experiment_generator_yaml_input(
             }
         },
     }
+
+    if user_yaml:
+        yaml_output = _merge_dicts(yaml_output, user_yaml)
 
     buf = io.StringIO()
     ryaml.dump(yaml_output, buf)
@@ -623,6 +639,8 @@ if __name__ == "__main__":
         blocks_per_node=blocks_per_node,
     )
 
+    n_perturbation_experiments = sum(len(layouts) for layouts in layouts_by_nodes.values())
+
     # for perturbation block generation
     branch_name_prefix = "MC-100km-ryf"
     experiment_generator_block_name = "Parameter_block_test"
@@ -650,5 +668,6 @@ if __name__ == "__main__":
         start_point=start_point,
         test_path=test_path,
         repository_directory=repository_directory,
+        user_yaml=user_yaml,
     )
     print(yaml_input)
