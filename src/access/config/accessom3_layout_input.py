@@ -229,6 +229,7 @@ class ACCESSOM3LayoutGenerator:
         Parameters:
             num_nodes (int): Number of nodes.
             blocks_per_node (dict[str, int] | list[dict[str, int]] | None): Block constraints per node.
+            default (int): Default blocks per node
             name (str): Name of the block constraint for error messages.
 
         Returns:
@@ -668,6 +669,5 @@ if __name__ == "__main__":
         start_point=start_point,
         test_path=test_path,
         repository_directory=repository_directory,
-        user_yaml=user_yaml,
     )
     print(yaml_input)
