@@ -408,9 +408,9 @@ def generate_experiment_generator_yaml_input(
     walltime: list[str] | None = None,
     # others
     restart_n: int = 10,
-    restart_option: str = "days",
+    restart_option: str = "ndays",
     stop_n: int = 10,
-    stop_option: str = "days",
+    stop_option: str = "ndays",
     model_type: str = "access-om3",
     repository_url: str | None = None,
     start_point: str | None = None,
@@ -502,10 +502,10 @@ def generate_experiment_generator_yaml_input(
                 },
                 "config.yaml": {
                     "env": {
-                        "ESMF_RUNTIME_PROFILE": "on",
-                        "ESMF_RUNTIME_TRACE": "on",
+                        "ESMF_RUNTIME_PROFILE": DoubleQuotedScalarString("on"),
+                        "ESMF_RUNTIME_TRACE": DoubleQuotedScalarString("on"),
                         "ESMF_RUNTIME_TRACE_PETLIST": petlist,
-                        "ESMF_RUNTIME_PROFILE_OUTPUT": "SUMMARY",
+                        "ESMF_RUNTIME_PROFILE_OUTPUT": DoubleQuotedScalarString("SUMMARY"),
                     },
                     "ncpus": ncpus,
                     "mem": mem,
