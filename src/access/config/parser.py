@@ -74,16 +74,12 @@ _value_inverse_transformers = {
     "integer": lambda value, token: value,
     "float": lambda value, token: _float_to_str(value, token),
     "double": lambda value, token: _float_to_str(value, token),
-    "complex": lambda value, token: "("
-    + _float_to_str(value.real, token)
-    + ", "
-    + _float_to_str(value.imag, token)
-    + ")",
-    "double_complex": lambda value, token: "("
-    + _float_to_str(value.real, token)
-    + ", "
-    + _float_to_str(value.imag, token)
-    + ")",
+    "complex": lambda value, token: (
+        "(" + _float_to_str(value.real, token) + ", " + _float_to_str(value.imag, token) + ")"
+    ),
+    "double_complex": lambda value, token: (
+        "(" + _float_to_str(value.real, token) + ", " + _float_to_str(value.imag, token) + ")"
+    ),
     "identifier": lambda value, token: value,
     "string": lambda value, token: token[0] + value + token[-1],
     "path": lambda value, token: str(value),

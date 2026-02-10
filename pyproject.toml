@@ -24,7 +24,6 @@ build-backend = "setuptools.build_meta"
 
 [project.optional-dependencies]
 devel = [
-    "ruff",
     "pre-commit",
 ]
 test = [
