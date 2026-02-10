@@ -300,30 +300,34 @@ def test_generate_esm1p6_layout_from_core_counts(layout_tuple, layout_search_con
 def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout, layout_search_config):
     # Test that the validation works
     with pytest.raises(TypeError):
-        layouts = generate_esm1p6_core_layouts_from_node_count([4, "abcd"])
+        layouts = generate_esm1p6_core_layouts_from_node_count("abcd", cores_per_node=104)
 
     # Test with negative nodes
     node_count = -3
     with pytest.raises(ValueError):
-        generate_esm1p6_core_layouts_from_node_count(node_count)
+        generate_esm1p6_core_layouts_from_node_count(node_count, cores_per_node=104)
+
+    # Test with negative cores per node
+    with pytest.raises(ValueError):
+        generate_esm1p6_core_layouts_from_node_count(1, cores_per_node=-1)
 
     # Test that with a very low node count, no layouts are returned (i.e. empty list of an empty list)
     layouts = generate_esm1p6_core_layouts_from_node_count(
-        [0.2], layout_search_config=layout_search_config(max_wasted_ncores_frac=0.2)
+        0.2, cores_per_node=104, layout_search_config=layout_search_config(max_wasted_ncores_frac=0.2)
     )
-    assert layouts != [[]], f"Expected layouts to be returned even with small node fraction. Got layouts = {layouts}"
+    assert layouts != [], f"Expected layouts to be returned even with small node fraction. Got layouts = {layouts}"
 
     # Test that no layouts are returned with nearly zero nodes
     layouts = generate_esm1p6_core_layouts_from_node_count(
-        [0.001], layout_search_config=layout_search_config(max_wasted_ncores_frac=0.5)
+        0.001, cores_per_node=104, layout_search_config=layout_search_config(max_wasted_ncores_frac=0.5)
     )
-    assert layouts == [[]], f"Expected no layouts to be returned for nearly zero nodes. Got layouts = {layouts}"
+    assert layouts == [], f"Expected no layouts to be returned for nearly zero nodes. Got layouts = {layouts}"
 
     # Test with a valid node count that should return the control layout
     node_count = 4
     layouts = generate_esm1p6_core_layouts_from_node_count(
-        node_count, layout_search_config=layout_search_config(tol_around_ctrl_ratio=0.0)
-    )[0]
+        node_count, cores_per_node=104, layout_search_config=layout_search_config(tol_around_ctrl_ratio=0.0)
+    )
     assert len(layouts) == 1, f"Expected *exactly* one layout to be returned. Got layouts = {layouts}"
     layouts = layouts[0]
     assert esm1p6_ctrl_layout == layouts, f"Control config layout={esm1p6_ctrl_layout} not found in solved {layouts}"
@@ -331,8 +335,8 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout, layout
     # Test with a valid node count as a float that should return the control layout
     node_count = 4.0
     layouts = generate_esm1p6_core_layouts_from_node_count(
-        node_count, layout_search_config=layout_search_config(tol_around_ctrl_ratio=0.0)
-    )[0]
+        node_count, cores_per_node=104, layout_search_config=layout_search_config(tol_around_ctrl_ratio=0.0)
+    )
     assert len(layouts) == 1, f"Expected *exactly* one layout to be returned. Got layouts = {layouts}"
     layouts = layouts[0]
     assert esm1p6_ctrl_layout == layouts, f"Control config layout={esm1p6_ctrl_layout} not found in solved {layouts}"
@@ -340,83 +344,74 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout, layout
     # Test with zero nodes
     node_count = 0
     with pytest.raises(ValueError):
-        layouts = generate_esm1p6_core_layouts_from_node_count(node_count)
+        layouts = generate_esm1p6_core_layouts_from_node_count(node_count, cores_per_node=104)
 
     # Test with non-integer nodes
     node_count = 2.5
-    layouts = generate_esm1p6_core_layouts_from_node_count(node_count)
-    assert layouts != [[]], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
+    layouts = generate_esm1p6_core_layouts_from_node_count(node_count, cores_per_node=104)
+    assert layouts != [], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
 
     # Test that specifying frac_mom_ncores_over_atm_ncores works
     node_count = 4
     frac_mom_ncores_over_atm_ncores = (0.8, 1.2)
     layouts = generate_esm1p6_core_layouts_from_node_count(
         node_count,
+        cores_per_node=104,
         layout_search_config=layout_search_config(frac_mom_ncores_over_atm_ncores=frac_mom_ncores_over_atm_ncores),
     )
-    assert layouts != [[]], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
+    assert layouts != [], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
 
     # Test that the layouts are all unique
     node_count = 4
-    layouts = generate_esm1p6_core_layouts_from_node_count(node_count)[0]
+    layouts = generate_esm1p6_core_layouts_from_node_count(node_count, cores_per_node=104)
     assert len(layouts) == len(set(layouts)), f"Got duplicate elements in layouts. {layouts = }"
 
     # Test that allocating remaining cores to ICE works
-    from access.config.layout_config import convert_num_nodes_to_ncores
-
-    node_count, queue = 4, "normalsr"
-    totncores = convert_num_nodes_to_ncores(node_count, queue=queue)
+    node_count = 4
+    totncores = node_count * 104
     frac_mom_ncores_over_atm_ncores = (0.8, 1.2)
     layouts = generate_esm1p6_core_layouts_from_node_count(
         node_count,
-        queue=queue,
+        cores_per_node=104,
         layout_search_config=layout_search_config(
             frac_mom_ncores_over_atm_ncores=frac_mom_ncores_over_atm_ncores, allocate_unused_cores_to_ice=True
         ),
     )
-    assert layouts != [[]], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
-    assert all(layout.ice_ncores >= esm1p6_ctrl_layout.ice_ncores for layout in layouts[0]), (
-        f"Expected ice_ncores to be >= {esm1p6_ctrl_layout.ice_ncores}. Got layout = {layouts[0]}"
+    assert layouts != [], f"Expected layouts to be returned for non-integer nodes. Got layouts = {layouts}"
+    assert all(layout.ice_ncores >= esm1p6_ctrl_layout.ice_ncores for layout in layouts), (
+        f"Expected ice_ncores to be >= {esm1p6_ctrl_layout.ice_ncores}. Got layout = {layouts}"
     )
-    assert all(layout.ncores_used <= totncores for layout in layouts[0]), (
-        f"Expected ncores used to be at most equal to {totncores}. Got layout = {layouts[0]}"
+    assert all(layout.ncores_used <= totncores for layout in layouts), (
+        f"Expected ncores used to be at most equal to {totncores}. Got layout = {layouts}"
     )
 
 
 def test_generate_esm1p6_perturb_block(esm1p6_ctrl_layout):
     # Test that the validation works
     with pytest.raises(ValueError):
-        generate_esm1p6_perturb_block(num_nodes=None, layouts=esm1p6_ctrl_layout, branch_name_prefix="test_block")
-    with pytest.raises(ValueError):
-        generate_esm1p6_perturb_block(num_nodes=-1, layouts=esm1p6_ctrl_layout, branch_name_prefix="test_block")
-
-    with pytest.raises(ValueError):
-        generate_esm1p6_perturb_block(num_nodes=4, layouts=esm1p6_ctrl_layout, branch_name_prefix=None)
+        generate_esm1p6_perturb_block(layout=esm1p6_ctrl_layout, branch_name_prefix=None)
 
     # Test with invalid layout
     with pytest.raises(ValueError):
-        generate_esm1p6_perturb_block(num_nodes=4, layouts=None, branch_name_prefix="test_block")
+        generate_esm1p6_perturb_block(layout=None, branch_name_prefix="test_block")
 
     # Test with empty layout
     with pytest.raises(ValueError):
-        generate_esm1p6_perturb_block(num_nodes=4, layouts=[[]], branch_name_prefix="test_block")
+        generate_esm1p6_perturb_block(layout=[], branch_name_prefix="test_block")
 
     # Test that the validation works for layouts with missing fields
     with pytest.raises(ValueError):
-        missing_ice_ncores_layout = [[416, 16, 13, 14, 14]]
-        generate_esm1p6_perturb_block(num_nodes=4, layouts=missing_ice_ncores_layout, branch_name_prefix="test_block")
-
-    with pytest.raises(ValueError):
-        generate_esm1p6_perturb_block(
-            num_nodes=4, layouts=esm1p6_ctrl_layout, branch_name_prefix="test_block", start_blocknum=-1
-        )
+        missing_ice_ncores_layout = [416, 16, 13, 14, 14]
+        generate_esm1p6_perturb_block(layout=missing_ice_ncores_layout, branch_name_prefix="test_block")
 
     # Test with valid parameters
     branch_name_prefix = "test_block"
-    perturb_block, _ = generate_esm1p6_perturb_block(
-        num_nodes=4, layouts=esm1p6_ctrl_layout, branch_name_prefix=branch_name_prefix
+    perturb_block = generate_esm1p6_perturb_block(layout=esm1p6_ctrl_layout, branch_name_prefix=branch_name_prefix)
+    assert isinstance(perturb_block, dict), f"Expected perturb block to be a dict, but got: {type(perturb_block)}"
+    assert len(perturb_block["branches"]) == 1, (
+        f"Expected one branch in the perturb block, but got: {len(perturb_block['branches'])}"
     )
-    assert isinstance(perturb_block, str), f"Expected perturb block to be a string, but got: {type(perturb_block)}"
-    assert branch_name_prefix in perturb_block, (
+    # Check that the branch name prefix is correctly included in the name of the first (and only) branch
+    assert branch_name_prefix in perturb_block["branches"][0], (
         f"Expected branch name prefix '{branch_name_prefix}' to be in perturb block, but got: {perturb_block}"
     )
