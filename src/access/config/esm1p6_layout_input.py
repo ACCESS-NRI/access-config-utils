@@ -69,7 +69,7 @@ class LayoutSearchConfig:
 
     """
 
-    frac_mom_ncores_over_atm_ncores: (float, float)
+    frac_mom_ncores_over_atm_ncores: tuple[float, float]
     tol_around_ctrl_ratio: float | None
     atm_ncore_stepsize: int
     abs_maxdiff_nx_ny: int
@@ -279,7 +279,7 @@ def _generate_esm1p6_layout_from_core_counts(  # noqa: C901
     ice_ncores: int,
     min_ncores_needed: int,
     *,
-    layout_search_config: LayoutSearchConfig = None,
+    layout_search_config: LayoutSearchConfig | None = None,
 ) -> list:
     """
     Returns a list of possible core layouts for the Atmosphere and Ocean for the ESM 1.6 PI config

@@ -29,7 +29,7 @@ class LayoutTuple(NamedTuple):
         return self.atm_nx * self.atm_ny + self.mom_nx * self.mom_ny + self.ice_ncores
 
 
-def get_ctrl_layout(model: str = "ESM 1.6 PI config") -> {}:
+def get_ctrl_layout(model: str = "ESM 1.6 PI config") -> dict:
     """
     Get the control layout used in the current PI configuration.
 
