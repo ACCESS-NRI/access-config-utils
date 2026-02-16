@@ -561,8 +561,6 @@ def generate_esm1p6_core_layouts_from_node_count(
                     smallest_factor=False,
                 ),
             )
-            if x
-            else None
             for x in layout
             # ruff insists that this line by line breaking up is the correct formatting
             # even though IMO that's less readable - MS 14th Oct, 2025
