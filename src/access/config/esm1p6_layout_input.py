@@ -323,7 +323,7 @@ def _generate_esm1p6_layout_from_core_counts(  # noqa: C901
 
     if ncores_for_atm_and_ocn < min_atm_and_mom_ncores:
         raise ValueError(
-            "Number of cores available for ATM and OCN must be at least {min_atm_and_mom_ncores} "
+            f"Number of cores available for ATM and OCN must be at least {min_atm_and_mom_ncores} "
             f"(2 for atm and 1 for mom). Got {ncores_for_atm_and_ocn} instead"
         )
 
