@@ -190,10 +190,18 @@ class Config(dict):
         super().__delitem__(key)
 
         # To update the parse tree, we need to remove the entire branch that defines the removed item.
-        # First we get the parent of the branch where the value is stored. This is because each value is a child node of
-        # a rule (e.g. the "key_value" rule).
-        rule = self._refs[key].parent
-        # Next we remove the entire rule from the tree. That is done be removing it from the parent's list of children.
+        # We need to find the rule node (e.g. key_value, key_list, key_null) and remove it from its parent.
+        ref = self._refs[key]
+        if isinstance(ref, list):
+            # For key_list entries, the ref is a list of value nodes; the parent of any value is the rule.
+            rule = ref[0].parent
+        elif hasattr(ref, "data") and ref.data.startswith("key_"):
+            # For key_null entries, the ref IS the rule node itself.
+            rule = ref
+        else:
+            # For key_value and key_block entries, the ref is a child node; the parent is the rule.
+            rule = ref.parent
+        # Remove the entire rule from the tree by removing it from the parent's list of children.
         rule.parent.children.remove(rule)
 
         # Finally remove reference to the branch storing the value
