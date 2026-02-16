@@ -47,7 +47,7 @@ class LayoutSearchConfig:
 
         *Note*: Setting to 0 will return only square layouts. Applies to both ATM and MOM layouts.
 
-    max_wasted_ncores_frac : float, optional, default=0.01
+    max_wasted_ncores_frac : float, optional, default=0.02
         Maximum fraction of wasted cores (i.e. not used by atm, mom or ice) to allow when generating layouts.
         Must be in the range [0.0, 1.0].
 
