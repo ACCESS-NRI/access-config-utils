@@ -9,6 +9,10 @@ MOM6, CICE, mediator (MED), and WW3.
 Note:
 - The output of `generate_experiment_generator_yaml_input` can be directly used as an
     `experiment-generator` yaml input file for ACCESS-OM3 configurations.
+- `generate_experiment_generator_yaml_input` injects only:
+    - branches, ncpus, mem, walltime, and enable Control_Experiment metadata.
+    - Other yaml fragments such as PELAYOUT_attributes, ESMF trace env are built via
+        standalone helper functions and merged by the caller.
 """
 
 import io
@@ -36,8 +40,7 @@ def flow_seq(lst: list) -> CommentedSeq:
 
 @dataclass
 class QueueConfig:
-    """Configuration for different job queues."""
-
+    """Configuration for different pbs job queues."""
     queue: str
     nodesize: int
     nodemem: int
@@ -68,10 +71,28 @@ class ConfigLayout:
         pool_ntasks (dict[str, int]): Number of tasks per pool.
         pool_rootpe (dict[str, int]): Root PE for each pool.
     """
-
     ncpus: int
     pool_ntasks: dict[str, int]
     pool_rootpe: dict[str, int]
+
+
+def flatten_layouts(layouts_by_nodes: dict[int, list[ConfigLayout]]) -> list[ConfigLayout]:
+    """Flatten layouts_by_nodes into a deterministic list."""
+    all_layouts: list[ConfigLayout] = []
+    for node in layouts_by_nodes:
+        all_layouts.extend(layouts_by_nodes[node])
+    return all_layouts
+
+
+def merge_dicts(base_dict: dict, override_dict: dict) -> dict:
+    """Recursively merge override_dict to base_dict."""
+    res = copy.deepcopy(base_dict)
+    for key, value in override_dict.items():
+        if isinstance(value, dict) and isinstance(res.get(key), dict):
+            res[key] = merge_dicts(res[key], value)
+        else:
+            res[key] = value
+    return res
 
 
 class ACCESSOM3LayoutGenerator:
@@ -97,7 +118,7 @@ class ACCESSOM3LayoutGenerator:
             )
 
         self.queue_config = queue_config
-        self.cpus_per_node = queue_config.nodesize
+        self.nodesize = queue_config.nodesize
         self.blocks_per_node = blocks_per_node
         self.baseline_pool = baseline_pool
         self.eps = eps
@@ -154,13 +175,13 @@ class ACCESSOM3LayoutGenerator:
         for i, node in enumerate(nodes):
             blocks_per_node = blocks_per_node_list[i]
 
-            if self.cpus_per_node % blocks_per_node != 0:
+            if self.nodesize % blocks_per_node != 0:
                 raise ValueError(
-                    f"cpus_per_node {self.cpus_per_node} must be divisible by blocks_per_node {blocks_per_node}."
+                    f"nodesize {self.nodesize} must be divisible by blocks_per_node {blocks_per_node}."
                 )
 
             # re-compute block size for each node count
-            block_size = self.cpus_per_node // blocks_per_node
+            block_size = self.nodesize // blocks_per_node
 
             layouts: list[ConfigLayout] = []
 
@@ -205,7 +226,7 @@ class ACCESSOM3LayoutGenerator:
             pool_map (dict[str, str]): Mapping of submodels to their respective pools.
             pool_order (list[str] | None): Optional order of pools.
         """
-        pools = sorted(set(pool_map.values()))
+        pools = list(pool_map.values())
 
         if pool_order is not None:
             missing = set(pools) - set(pool_order)
@@ -272,7 +293,7 @@ class ACCESSOM3LayoutGenerator:
             return [{} for _ in range(num_nodes)]
 
         if isinstance(ratio_per_node, dict):
-            return [ratio_per_node for _ in range(num_nodes)]
+            return [dict(ratio_per_node) for _ in range(num_nodes)]
 
         if isinstance(ratio_per_node, list):
             if len(ratio_per_node) != num_nodes:
@@ -394,88 +415,56 @@ class ACCESSOM3LayoutGenerator:
         return rootpe
 
 
-def _merge_dicts(base_dict: dict, override_dict: dict) -> dict:
-    """Recursively merge override_dict to base_dict."""
-    res = copy.deepcopy(base_dict)
-    for key, value in override_dict.items():
-        if isinstance(value, dict) and isinstance(res.get(key), dict):
-            res[key] = _merge_dicts(res[key], value)
-        else:
-            res[key] = value
-    return res
-
-
-def generate_experiment_generator_yaml_input(
-    layouts_by_nodes: dict[int, list],
-    pool_map: dict[str, str],
-    branch_name_prefix: str,
-    block_name: str,
+def build_scheduler_resources(
+    layouts_by_nodes: dict[int, list[ConfigLayout]],
     queue_config: QueueConfig,
-    pool_order: list[str] | None = None,
-    submodels: list[str] | None = None,
-    start_block_id: int = 1,
-    petlist_submodel: str | None = None,
-    include_rootpe: bool = True,
-    # config lists
-    mem: list[str] | None = None,
-    walltime: list[str] | None = None,
-    # others
-    restart_n: int = 10,
-    restart_option: str = "ndays",
-    stop_n: int = 10,
-    stop_option: str = "ndays",
-    model_type: str = "access-om3",
-    repository_url: str | None = None,
-    start_point: str | None = None,
-    test_path: str | None = None,
-    repository_directory: str | None = None,
-    control_branch_name: str = "ctrl",
-    user_yaml: dict | None = None,
-) -> str:
-    """Generates an experiment generator yaml input file for ACCESS-OM3 configurations."""
-
-    all_layouts: list[ConfigLayout] = []
-    for node in layouts_by_nodes:
-        all_layouts.extend(layouts_by_nodes[node])
+    walltime: list[str],
+) -> dict[str, list]:
+    """
+    Returns fields that can be used in the experiment generator for runtime resources like ncpus, mem, walltime.
+    """
+    all_layouts = flatten_layouts(layouts_by_nodes)
 
     if not all_layouts:
-        raise ValueError("No layouts generated to create perturbation block.")
+        raise ValueError("No layouts generated to create runtime resources.")
 
-    n_layouts = len(all_layouts)
+    if queue_config is None:
+        raise ValueError("queue_config is required to create runtime resources.")
 
-    # ncpus
-    ncpus = flow_seq([layout.ncpus for layout in all_layouts])
-
-    # mem and walltime
-    if mem is None:
-        if queue_config is None:
-            # REMOVED is a special keyword in experiment-generator to remove mem keyword
-            # Then let the scheduler decide the memory allocation based on queue type.
-            mem = "REMOVED"
-        else:
-            mem = flow_seq(
-                [
-                    f"{math.ceil(layout.ncpus / queue_config.nodesize) * queue_config.nodemem}GB"
-                    for layout in all_layouts
-                ]
-            )
     if walltime is None:
-        walltime = ["05:00:00"]
+        raise ValueError("walltime is required to create runtime resources.")
 
-    branches = _make_branch_names(
-        layouts_by_nodes=layouts_by_nodes,
-        pool_map=pool_map,
-        branch_name_prefix=branch_name_prefix,
-        queue_config=queue_config,
-        pool_order=pool_order,
+    ncpus = flow_seq([layout.ncpus for layout in all_layouts])
+    mem = flow_seq(
+        [
+            f"{math.ceil(layout.ncpus / queue_config.nodesize) * queue_config.nodemem}GB"
+            for layout in all_layouts
+        ]
     )
+    walltime_seq = flow_seq(walltime)
 
-    # for pelayout_attributes
+    return {
+        "ncpus": ncpus,
+        "mem": mem,
+        "walltime": walltime_seq,
+    }
+
+
+def build_pelayout_attributes(
+    layouts_by_nodes: dict[int, list[ConfigLayout]],
+    pool_map: dict[str, str],
+    include_rootpe: bool = True,
+) -> dict[str, list]:
+    """
+    Build PE layout attributes for the experiment generator yaml input.
+    """
+    all_layouts = flatten_layouts(layouts_by_nodes)
+
+    if not all_layouts:
+        raise ValueError("No layouts generated to create PE layout attributes.")
+
     pelayout: dict[str, list] = {}
-
-    # submodels
-    if submodels is None:
-        submodels = ["ocn", "atm", "cpl", "ice", "rof"]
+    submodels = list(pool_map.keys())
 
     for sub in submodels:
         pool = pool_map[sub]
@@ -483,77 +472,61 @@ def generate_experiment_generator_yaml_input(
         if include_rootpe:
             pelayout[f"{sub}_rootpe"] = flow_seq([layout.pool_rootpe[pool] for layout in all_layouts])
 
-    if petlist_submodel is None:
-        petlist_submodel = "ocn" if "ocn" in submodels else submodels[0]
+    return pelayout
 
-    pet_pool = pool_map[petlist_submodel]
-    pet_rootpes = [layout.pool_rootpe[pet_pool] for layout in all_layouts]
-    petlist = flow_seq([DoubleQuotedScalarString(f"0 {pe}") for pe in pet_rootpes])
 
-    print(f"Generated {n_layouts} layouts for perturbation block '{block_name}'!")
+def build_esmf_trace_env(
+    esmf_trace_analysis: bool,
+    trace_pets: str | int | list[int] | None,
+    n_layouts: int,
+) -> dict[str, str]:
+    """
+    Build ESMF runtime tracing env vars.
 
-    # yaml output
-    yaml_output = {
-        "model_type": model_type,
-        "repository_url": repository_url,
-        "start_point": start_point,
-        "test_path": test_path,
-        "repository_directory": repository_directory,
-        "control_branch_name": control_branch_name,
-        "Control_Experiment": {
-            "config.yaml": {
-                "metadata": {"enable": True},
-            },
-        },
-        "Perturbation_Experiment": {
-            block_name: {
-                "branches": branches,
-                "MOM_input": {
-                    "AUTO_MASKTABLE": flow_seq(["REMOVE"] * n_layouts),
-                },
-                "ice_in": {
-                    "domain_nml": {"max_blocks": -1},
-                },
-                "config.yaml": {
-                    "env": {
-                        "ESMF_RUNTIME_PROFILE": DoubleQuotedScalarString("on"),
-                        "ESMF_RUNTIME_TRACE": DoubleQuotedScalarString("on"),
-                        "ESMF_RUNTIME_TRACE_PETLIST": petlist,
-                        "ESMF_RUNTIME_PROFILE_OUTPUT": DoubleQuotedScalarString("SUMMARY"),
-                    },
-                    "ncpus": ncpus,
-                    "mem": mem,
-                    "walltime": walltime,
-                    "metadata": {"enable": True},
-                    "queue": queue_config.queue,
-                    "platform": {
-                        "nodesize": queue_config.nodesize,
-                        "nodemem": queue_config.nodemem,
-                    },
-                },
-                "nuopc.runconfig": {
-                    "PELAYOUT_attributes": pelayout,
-                    "CLOCK_attributes": {
-                        "restart_n": restart_n,
-                        "restart_option": restart_option,
-                        "stop_n": stop_n,
-                        "stop_option": stop_option,
-                    },
-                },
-            }
-        },
+    trace_pets:
+        - "all": trace all pets and output SUMMARY and BINARY profiles.
+        - list[list[int]]: per-layout PETLIST, each starting with 0, e.g. [[0,12], [0, 24, 48], ...]
+    """
+    if not esmf_trace_analysis:
+        return {}
+
+    if trace_pets is None:
+        raise ValueError(
+            "trace_pets must be provided when esmf_trace_analysis is True."
+            "Use 'all', or a list of PET lists per layout (e.g. [[0, 12], [0, 24, 48]])."
+            )
+
+    env = {
+        "ESMF_RUNTIME_PROFILE": DoubleQuotedScalarString("on"),
+        "ESMF_RUNTIME_TRACE": DoubleQuotedScalarString("on"),
     }
 
-    if user_yaml:
-        yaml_output = _merge_dicts(yaml_output, user_yaml)
+    if trace_pets == "all":
+        env["ESMF_RUNTIME_PROFILE_OUTPUT"] = DoubleQuotedScalarString("SUMMARY,BINARY")
+        return env
 
-    buf = io.StringIO()
-    ryaml.dump(yaml_output, buf)
+    if not isinstance(trace_pets, list) or len(trace_pets) != n_layouts:
+        raise ValueError(
+            f"trace_pets must be a list of length n_layouts={n_layouts}"
+        )
 
-    return buf.getvalue()
+    petlist_strings = []
+    for i, pets in enumerate(trace_pets):
+        if not isinstance(pets, list) or not pets:
+            raise ValueError(
+                f"trace_pets[{i}] must be a non-empty list of ints)."
+            )
+        if pets[0] != 0:
+            raise ValueError("trace_pets must include 0 as the first element (e.g. [0, 12]).")
+        petlist_str = " ".join(str(idx) for idx in pets)
+        petlist_strings.append(DoubleQuotedScalarString(petlist_str))
+
+    env["ESMF_RUNTIME_PROFILE_OUTPUT"] = DoubleQuotedScalarString("SUMMARY")
+    env["ESMF_RUNTIME_TRACE_PETLIST"] = flow_seq(petlist_strings)
+    return env
 
 
-def _make_branch_names(
+def make_branch_names(
     layouts_by_nodes: dict[int, list],
     pool_map: dict[str, str],
     branch_name_prefix: str,
@@ -565,14 +538,14 @@ def _make_branch_names(
     Each layout becomes one branch entry.
     ntasks/rootpe for each submodel is derived from pool_map[submodel] -> pool.
     """
-    pools = sorted(set(pool_map.values()))
+    pools = set(pool_map.values())
 
     if pool_order is not None:
         pools = [pool for pool in pool_order if pool in pools]
 
     branches = []
 
-    for node in sorted(layouts_by_nodes):
+    for node in layouts_by_nodes:
         for layout in layouts_by_nodes[node]:
             tmp = [
                 branch_name_prefix,
@@ -580,11 +553,104 @@ def _make_branch_names(
                 f"queue_{queue_config.queue}",
             ]
             for pool in pools:
-                ntasks = layout.pool_ntasks.get(pool, 0)
+                ntasks = layout.pool_ntasks.get(pool)
                 tmp.append(f"{pool}_{ntasks}")
             branches.append("_".join(tmp))
 
     return branches
+
+
+def generate_experiment_generator_yaml_input(
+    layouts_by_nodes: dict[int, list],
+    pool_map: dict[str, str],
+    branch_name_prefix: str,
+    block_name: str,
+    queue_config: QueueConfig,
+    walltime: list[str],
+    user_dict: dict | None = None,
+    pool_order: list[str] | None = None,
+) -> str:
+    """Generates an experiment generator yaml input file for ACCESS-OM3 configurations."""
+
+    all_layouts = flatten_layouts(layouts_by_nodes)
+    if not all_layouts:
+        raise ValueError("No layouts generated.")
+
+    scheduler_basic = build_scheduler_resources(
+        layouts_by_nodes=layouts_by_nodes,
+        queue_config=queue_config,
+        walltime=walltime,
+    )
+
+    branches = make_branch_names(
+        layouts_by_nodes=layouts_by_nodes,
+        pool_map=pool_map,
+        branch_name_prefix=branch_name_prefix,
+        queue_config=queue_config,
+        pool_order=pool_order,
+    )
+
+    # yaml output
+    base_output = {
+        # always ensures metadata enabled for control and hence perturbation experiments
+        "Control_Experiment": {
+            "config.yaml": {
+                "metadata": {"enable": True},
+            },
+        }
+        # "Perturbation_Experiment": {
+        #     block_name: {
+        #         "branches": branches,
+        #         # "MOM_input": {
+        #         #     "AUTO_MASKTABLE": flow_seq(["REMOVE"] * n_layouts),
+        #         # },
+        #         # "ice_in": {
+        #         #     "domain_nml": {"max_blocks": -1},
+        #         # },
+        #         "config.yaml": {
+        #             "env": env,
+        #             "ncpus": ncpus,
+        #             "mem": mem,
+        #             "walltime": walltime,
+        #             "queue": queue_config.queue,
+        #             "platform": {
+        #                 "nodesize": queue_config.nodesize,
+        #                 "nodemem": queue_config.nodemem,
+        #             },
+        #         },
+        #         "nuopc.runconfig": {
+        #             "PELAYOUT_attributes": pelayout,
+        #             "CLOCK_attributes": {
+        #                 "restart_n": restart_n,
+        #                 "restart_option": restart_option,
+        #                 "stop_n": stop_n,
+        #                 "stop_option": stop_option,
+        #             },
+        #         },
+        #     }
+        # }
+    }
+
+    dict_output = merge_dicts(base_output, user_dict)
+
+    try:
+        block = dict_output["Perturbation_Experiment"][block_name]
+    except KeyError as e:
+        raise KeyError(
+            f"user_dict must define Perturbation_Experiment -> {block_name}."
+        ) from e
+
+    block["branches"] = branches
+    config = block.setdefault("config.yaml", {})
+    config["queue"] = queue_config.queue
+    config["ncpus"] = scheduler_basic["ncpus"]
+    config["mem"] = scheduler_basic["mem"]
+    config["walltime"] = scheduler_basic["walltime"]
+
+    buf = io.StringIO()
+    ryaml.dump(dict_output, buf)
+
+    return buf.getvalue()
 
 
 if __name__ == "__main__":
@@ -640,19 +706,62 @@ if __name__ == "__main__":
         blocks_per_node=blocks_per_node,
     )
 
-    n_perturbation_experiments = sum(len(layouts) for layouts in layouts_by_nodes.values())
+    all_layouts = flatten_layouts(layouts_by_nodes)
+    n_layouts = len(all_layouts)
 
     # for perturbation block generation
     branch_name_prefix = "MC-100km-ryf"
     experiment_generator_block_name = "Parameter_block_test"
-    petlist_submodel = "ocn"
-    include_rootpe = True
+    walltime = ["05:00:00"]
 
-    model_type = "access-om3"
-    repository_url = "https://github.com/ACCESS-NRI/access-om3-configs.git"
-    start_point = "e8f7559"
-    test_path = "om3_scalings"
-    repository_directory = "Scaling_MC-100km-ryf"
+    pelayout = build_pelayout_attributes(
+        layouts_by_nodes=layouts_by_nodes,
+        pool_map=pool_map,
+        include_rootpe=True,
+    )
+
+    trace_pets = [[0, layout.pool_rootpe["ocn"]] for layout in all_layouts]
+    trace_env = build_esmf_trace_env(
+        esmf_trace_analysis=True,
+        trace_pets=trace_pets,
+        n_layouts=n_layouts,
+    )
+
+    universal_config_setup = {
+        "model_type": "access-om3",
+        "repository_url": "https://github.com/ACCESS-NRI/access-om3-configs.git",
+        "start_point": "e8f7559",
+        "test_path": "om3_scalings",
+        "repository_directory": "Scaling_MC-100km-ryf",
+    }
+
+    clock_attributes = {
+        "restart_n": 10,
+        "restart_option": "ndays",
+        "stop_n": 10,
+        "stop_option": "ndays",
+    }
+
+    user_dict = {
+        **universal_config_setup,
+        "Perturbation_Experiment": {
+            experiment_generator_block_name: {
+                "MOM_input": {
+                    "AUTO_MASKTABLE": flow_seq(["REMOVE"] * n_layouts),
+                },
+                "config.yaml": {
+                    "metadata": {"enable": True},
+                    "queue": queue_config.queue,  # ok to include; generator will overwrite consistently
+                    "platform": {"nodesize": queue_config.nodesize, "nodemem": queue_config.nodemem},
+                    "env": trace_env,
+                },
+                "nuopc.runconfig": {
+                    "PELAYOUT_attributes": pelayout,
+                    "CLOCK_attributes": clock_attributes,
+                },
+            }
+        }
+    }
 
     # generate perturbation block yaml text
     yaml_input = generate_experiment_generator_yaml_input(
@@ -662,12 +771,7 @@ if __name__ == "__main__":
         branch_name_prefix=branch_name_prefix,
         block_name=experiment_generator_block_name,
         queue_config=queue_config,
-        petlist_submodel=petlist_submodel,
-        include_rootpe=include_rootpe,
-        model_type=model_type,
-        repository_url=repository_url,
-        start_point=start_point,
-        test_path=test_path,
-        repository_directory=repository_directory,
+        walltime=walltime,
+        user_dict=user_dict,
     )
     print(yaml_input)
