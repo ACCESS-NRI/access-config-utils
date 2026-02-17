@@ -47,7 +47,7 @@ class LayoutSearchConfig:
 
         *Note*: Setting to 0 will return only square layouts. Applies to both ATM and MOM layouts.
 
-    max_wasted_ncores_frac : float, optional, default=0.01
+    max_wasted_ncores_frac : float, optional, default=0.02
         Maximum fraction of wasted cores (i.e. not used by atm, mom or ice) to allow when generating layouts.
         Must be in the range [0.0, 1.0].
 
@@ -69,7 +69,7 @@ class LayoutSearchConfig:
 
     """
 
-    frac_mom_ncores_over_atm_ncores: (float, float)
+    frac_mom_ncores_over_atm_ncores: tuple[float, float]
     tol_around_ctrl_ratio: float | None
     atm_ncore_stepsize: int
     abs_maxdiff_nx_ny: int
@@ -279,7 +279,7 @@ def _generate_esm1p6_layout_from_core_counts(  # noqa: C901
     ice_ncores: int,
     min_ncores_needed: int,
     *,
-    layout_search_config: LayoutSearchConfig = None,
+    layout_search_config: LayoutSearchConfig | None = None,
 ) -> list:
     """
     Returns a list of possible core layouts for the Atmosphere and Ocean for the ESM 1.6 PI config
@@ -323,7 +323,7 @@ def _generate_esm1p6_layout_from_core_counts(  # noqa: C901
 
     if ncores_for_atm_and_ocn < min_atm_and_mom_ncores:
         raise ValueError(
-            "Number of cores available for ATM and OCN must be at least {min_atm_and_mom_ncores} "
+            f"Number of cores available for ATM and OCN must be at least {min_atm_and_mom_ncores} "
             f"(2 for atm and 1 for mom). Got {ncores_for_atm_and_ocn} instead"
         )
 
@@ -561,8 +561,6 @@ def generate_esm1p6_core_layouts_from_node_count(
                     smallest_factor=False,
                 ),
             )
-            if x
-            else None
             for x in layout
             # ruff insists that this line by line breaking up is the correct formatting
             # even though IMO that's less readable - MS 14th Oct, 2025

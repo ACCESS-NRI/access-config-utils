@@ -330,6 +330,24 @@ def test_config_del(parser):
     assert dict(config) == {}
     assert str(config) == ""
 
+    # Delete key-list
+    config = parser.parse("c=1 a=1,2,3")
+    del config["a"]
+    assert dict(config) == {"c": 1}
+    assert str(config) == "c=1"
+
+    # Delete key-list inside block
+    config = parser.parse("c=1 block < a:2 b:4|5|6 >")
+    del config["block"]["b"]
+    assert dict(config) == {"c": 1, "block": {"a": 2}}
+    assert str(config) == "c=1 block<a:2>"
+
+    # Delete key-null
+    config = parser.parse("c=1 a=")
+    del config["a"]
+    assert dict(config) == {"c": 1}
+    assert str(config) == "c=1"
+
 
 def test_config_invalid_rules(parser):
     """Test for rules that are incompatible with the assumptions made in the interpreter"""
