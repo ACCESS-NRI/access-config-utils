@@ -17,75 +17,7 @@ from lark import Lark, Token, Tree, Visitor
 from lark.reconstruct import Reconstructor
 from lark.visitors import Interpreter
 
-
-def _float_to_str(value: float, token: Token) -> str:
-    """Given a float and a Lark token, convert the float to a string using the same notation as used in the token.
-    This is to handle cases where the old Fortran notation is used (e.g.: 1.0d10 or 1.0D10).
-
-    Args:
-        value (float): float to be converted
-        token (Token): Lark token holding the float
-
-    Returns:
-        str: the float as a string
-    """
-    for c in token:
-        if c in ["D", "d", "E", "e"]:
-            return str(value).replace("e", c)
-    else:
-        return str(value)
-
-
-_is_same_type = {
-    "logical": lambda value: type(value) is bool,
-    "bool": lambda value: type(value) is bool,
-    "integer": lambda value: type(value) is int,
-    "float": lambda value: type(value) is float,
-    "double": lambda value: type(value) is float,
-    "complex": lambda value: type(value) is complex,
-    "double_complex": lambda value: type(value) is complex,
-    "identifier": lambda value: type(value) is str and value.isidentifier(),
-    "string": lambda value: type(value) is str,
-    "path": lambda value: isinstance(value, Path),
-}
-"""This dict provides, for each type of value we know about, a lambda function that checks if a value is of the
-expected type."""
-
-_value_transformers = {
-    "logical": lambda token: str(token).lower() == ".true.",
-    "bool": lambda token: str(token) == "True",
-    "integer": lambda token: int(token),
-    "float": lambda token: float(token),
-    "double": lambda token: float(token.replace("D", "E").replace("d", "e")),
-    "complex": lambda token: complex(*map(float, token.strip("()").split(","))),
-    "double_complex": lambda token: complex(
-        *map(float, token.replace("D", "E").replace("d", "e").strip("()").split(","))
-    ),
-    "identifier": lambda token: str(token),
-    "string": lambda token: token[1:-1],
-    "path": lambda token: Path(token),
-}
-"""This dict provides, for each type of value we know about, a lambda function that converts a Lark token into a
-variable of the appropriate type."""
-
-_value_inverse_transformers = {
-    "logical": lambda value, token: ".true." if value else ".false.",
-    "bool": lambda value, token: "True" if value else "False",
-    "integer": lambda value, token: value,
-    "float": lambda value, token: _float_to_str(value, token),
-    "double": lambda value, token: _float_to_str(value, token),
-    "complex": lambda value, token: (
-        "(" + _float_to_str(value.real, token) + ", " + _float_to_str(value.imag, token) + ")"
-    ),
-    "double_complex": lambda value, token: (
-        "(" + _float_to_str(value.real, token) + ", " + _float_to_str(value.imag, token) + ")"
-    ),
-    "identifier": lambda value, token: value,
-    "string": lambda value, token: token[0] + value + token[-1],
-    "path": lambda value, token: str(value),
-}
-"""This dict provides, for each type of value we know about, a lambda function that updates a Lark token with a given
-value. Note that Lark tokens inherit from the str class."""
+from access.config.parser_types import VALUE_TYPE_HANDLER_REGISTRY
 
 
 class ConfigList(list):
@@ -135,7 +67,8 @@ class ConfigList(list):
 def _update_node_value(branch: Tree, value: Any) -> None:
     """Updates the value stored in a Lark tree branch.
 
-    The branch should store a value rule of the appropriate type.
+    The branch should store a value rule of the appropriate type.  Uses the
+    ``_value_type_handlers`` registry to look up the appropriate handler.
 
     Args:
         branch (Tree): Tree branch to update.
@@ -144,10 +77,33 @@ def _update_node_value(branch: Tree, value: Any) -> None:
     Raises:
         TypeError: Raises an exception if the new and old value types do not match.
     """
-    if not hasattr(branch, "data") or not _is_same_type[branch.data](value):
+    handler = VALUE_TYPE_HANDLER_REGISTRY.get(getattr(branch, "data", None))
+    if handler is None or not handler.type_check(value):
         raise TypeError("Trying to change value type")
-    transformed_value = _value_inverse_transformers[branch.data](value, branch.children[0])
+    transformed_value = handler.to_token(value, branch.children[0])
     branch.children[0] = branch.children[0].update(value=transformed_value)  # type: ignore
+
+
+def _find_rule_node(ref: Any) -> Tree:
+    """Given a parse-tree reference for a key, return the corresponding rule node.
+
+    Different rule types store refs differently:
+        - ``key_list``: *ref* is a list of value nodes; the rule is the parent of any element.
+        - ``key_null``: *ref* is the rule node itself.
+        - ``key_value`` / ``key_block``: *ref* is a child node; the rule is its parent.
+
+        Args:
+            ref: The reference to find the rule for.
+
+        Returns:
+            Tree: The rule node.
+    """
+    if isinstance(ref, list):
+        return ref[0].parent
+    elif hasattr(ref, "data") and ref.data.startswith("key_"):
+        return ref
+    else:
+        return ref.parent
 
 
 class Config(dict):
@@ -181,14 +137,64 @@ class Config(dict):
                 data[key] = ConfigList(data[key], self._refs[key])
         super().__init__(data)
 
+    # --- Key normalisation (SRP) ---
+
+    def _normalize_key(self, key: str) -> str:
+        """Normalise a key according to the case-sensitivity setting.
+
+        Args:
+            key (str): The raw key.
+
+        Returns:
+            str: The normalised key.
+        """
+        return key if self._case_sensitive_keys else key.upper()
+
+    # --- Tree update helpers (SRP) ---
+
+    def _update_list_value(self, key: str, value: list) -> ConfigList:
+        """Validate and apply a whole-list replacement to the parse tree.
+
+        Args:
+            key (str): The normalised key.
+            value (list): The new list of values.
+
+        Returns:
+            ConfigList: A ``ConfigList`` wrapping the new values and their tree refs.
+
+        Raises:
+            TypeError: If the existing value is not a list.
+            ValueError: If the new list has a different length.
+        """
+        refs = self._refs[key]
+        if not isinstance(refs, list):
+            raise TypeError(f"Trying to change the type of variable '{key}'")
+        if len(refs) != len(value):
+            raise ValueError(f"Trying to change the length of list '{key}'")
+
+        for branch, v in zip(refs, value, strict=True):
+            _update_node_value(branch, v)
+
+        return ConfigList(value, refs)
+
+    def _reconstruct(self) -> str:
+        """Round-trip reconstruct the parse tree into its text representation.
+
+        Returns:
+            str: The reconstructed text (trailing newline stripped).
+        """
+        # The reconstructor modifies the tree in-place, so work on a deep copy
+        tree = self._tree.__deepcopy__(None)
+        reconstructed = self._reconstructor.reconstruct(tree)
+        return reconstructed[:-1] if reconstructed.endswith("\n") else reconstructed
+
+    # --- dict overrides ---
+
     def __getitem__(self, key: str) -> Any:
         """Override method to get item from dict.
 
         This method takes into account if keys are case-sensitive or not."""
-        if self._case_sensitive_keys:
-            return super().__getitem__(key)
-        else:
-            return super().__getitem__(key.upper())
+        return super().__getitem__(self._normalize_key(key))
 
     def __setitem__(self, key: str, value: Any) -> None:
         """Override method to set item from dict.
@@ -197,12 +203,11 @@ class Config(dict):
         values. To make sure this works correctly, we check that the type of the new value is consistent with the
         current type. This method also takes into account if keys are case-sensitive or not."""
 
-        if not self._case_sensitive_keys:
-            key = key.upper()
+        key = self._normalize_key(key)
 
         # Currently we only support replacing existing values, not adding new ones
         if key not in self:
-            raise (KeyError(f"Key doesn't exist: {key}"))
+            raise KeyError(f"Key doesn't exist: {key}")
 
         if self[key] is None:
             if value is None:
@@ -211,20 +216,10 @@ class Config(dict):
                 raise TypeError(f"Trying to change the type of variable '{key}'")
 
         elif isinstance(value, dict):
-            raise (SyntaxError("Trying to assign a new value to an entire block"))
+            raise SyntaxError("Trying to assign a new value to an entire block")
 
         elif isinstance(value, list):
-            tree = self._refs[key]
-            if not isinstance(tree, list):
-                raise TypeError(f"Trying to change the type of variable '{key}'")
-            if len(tree) != len(value):
-                raise ValueError(f"Trying to change the length of list '{key}'")
-
-            for branch, v in zip(tree, value, strict=True):
-                _update_node_value(branch, v)
-
-            # Wrap in ConfigList so future element-level updates keep the tree in sync
-            value = ConfigList(value, tree)
+            value = self._update_list_value(key, value)
 
         else:
             _update_node_value(self._refs[key], value)
@@ -234,25 +229,13 @@ class Config(dict):
     def __delitem__(self, key: str) -> None:
         """Override method to del item from dict."""
 
-        if not self._case_sensitive_keys:
-            key = key.upper()
+        key = self._normalize_key(key)
 
         # Remove item from the dict
         super().__delitem__(key)
 
-        # To update the parse tree, we need to remove the entire branch that defines the removed item.
-        # We need to find the rule node (e.g. key_value, key_list, key_null) and remove it from its parent.
-        ref = self._refs[key]
-        if isinstance(ref, list):
-            # For key_list entries, the ref is a list of value nodes; the parent of any value is the rule.
-            rule = ref[0].parent
-        elif hasattr(ref, "data") and ref.data.startswith("key_"):
-            # For key_null entries, the ref IS the rule node itself.
-            rule = ref
-        else:
-            # For key_value and key_block entries, the ref is a child node; the parent is the rule.
-            rule = ref.parent
-        # Remove the entire rule from the tree by removing it from the parent's list of children.
+        # Remove the corresponding rule from the parse tree
+        rule = _find_rule_node(self._refs[key])
         rule.parent.children.remove(rule)
 
         # Finally remove reference to the branch storing the value
@@ -262,16 +245,7 @@ class Config(dict):
         """Override method to print dict contents to a string."""
         if dict(self) == {}:
             return ""
-        else:
-            # The reconstructor will modify the tree in-place, so we need to make a deep copy of it beforehand
-            tree = self._tree.__deepcopy__(None)
-
-            # Reconstruct
-            reconstructed = self._reconstructor.reconstruct(tree)
-
-            # Remove last character if it's a new line (this is to remove the newline character added when parsing the
-            # original text)
-            return reconstructed[:-1] if reconstructed.endswith("\n") else reconstructed
+        return self._reconstruct()
 
 
 class AddParent(Visitor):
@@ -427,10 +401,10 @@ class ConfigToDict(Interpreter):
             Tuple[List[Any], List[Tree]]: List of transformed values, list of tree branches storing the corresponding
                 values.
         """
-        refs = [child for child in children if child.data in _value_transformers]
+        refs = [child for child in children if child.data in VALUE_TYPE_HANDLER_REGISTRY]
         if len(refs) == 0:
             raise ValueError("No values found in Tree")
-        values = [_value_transformers[child.data](child.children[0]) for child in refs]
+        values = [VALUE_TYPE_HANDLER_REGISTRY[child.data].from_token(child.children[0]) for child in refs]
         return values, refs
 
     def _transform_value(self, children: list[Tree]) -> tuple[Any, Tree]:
