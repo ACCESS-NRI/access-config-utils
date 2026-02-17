@@ -255,10 +255,49 @@ def test_config_list(parser):
     # List reconstruction
     assert str(config) == "a=1,2,3 b=4,5,6"
 
-    # List modification
+    # Update a single element by index
+    config["a"][1] = 20
+    assert config["a"] == [1, 20, 3]
+    assert str(config) == "a=1,20,3 b=4,5,6"
+
+    # Update using negative index
+    config["b"][-1] = 60
+    assert config["b"] == [4, 5, 60]
+    assert str(config) == "a=1,20,3 b=4,5,60"
+
+    # Replace list with new list of same length and type
     config["a"] = [10, 11, 12]
     assert config["a"] == [10, 11, 12]
-    assert str(config) == "a=10,11,12 b=4,5,6"
+    assert str(config) == "a=10,11,12 b=4,5,60"
+
+    # After whole-list replacement, element updates still work
+    config["a"][1] = 80
+    assert config["a"] == [10, 80, 12]
+    assert str(config) == "a=10,80,12 b=4,5,60"
+
+    # Type mismatch when updating a single element
+    with pytest.raises(TypeError):
+        config["a"][0] = "string"
+
+    # Slice assignment
+    config["a"] = [10, 11, 12]
+    config["a"][0:2] = [1, 2]
+    assert config["a"] == [1, 2, 12]
+    assert str(config) == "a=1,2,12 b=4,5,60"
+
+    # Slice assignment with step
+    config["a"] = [10, 20, 30]
+    config["a"][::2] = [100, 300]
+    assert config["a"] == [100, 20, 300]
+    assert str(config) == "a=100,20,300 b=4,5,60"
+
+    # Slice assignment with wrong length
+    with pytest.raises(ValueError):
+        config["a"][0:2] = [1]
+
+    # Slice assignment with wrong type
+    with pytest.raises(TypeError):
+        config["a"][0:1] = ["string"]
 
     # Assigning scalar to list
     with pytest.raises(TypeError):
@@ -278,6 +317,15 @@ def test_config_list(parser):
     with pytest.raises(TypeError):
         config = parser.parse("a = 1")
         config["a"] = [1, 2]
+
+
+def test_config_list_element_update_in_block(parser):
+    """Test updating individual elements in a list inside a block"""
+    config = parser.parse("block < a:2 b:4|5|6 >")
+
+    config["block"]["b"][1] = 50
+    assert config["block"]["b"] == [4, 50, 6]
+    assert str(config["block"]) == "a:2 b:4|50|6"
 
 
 def test_config_block(parser):
