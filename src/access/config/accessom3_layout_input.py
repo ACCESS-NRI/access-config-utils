@@ -591,37 +591,6 @@ def generate_experiment_generator_yaml_input(
                 "metadata": {"enable": True},
             },
         }
-        # "Perturbation_Experiment": {
-        #     block_name: {
-        #         "branches": branches,
-        #         # "MOM_input": {
-        #         #     "AUTO_MASKTABLE": flow_seq(["REMOVE"] * n_layouts),
-        #         # },
-        #         # "ice_in": {
-        #         #     "domain_nml": {"max_blocks": -1},
-        #         # },
-        #         "config.yaml": {
-        #             "env": env,
-        #             "ncpus": ncpus,
-        #             "mem": mem,
-        #             "walltime": walltime,
-        #             "queue": queue_config.queue,
-        #             "platform": {
-        #                 "nodesize": queue_config.nodesize,
-        #                 "nodemem": queue_config.nodemem,
-        #             },
-        #         },
-        #         "nuopc.runconfig": {
-        #             "PELAYOUT_attributes": pelayout,
-        #             "CLOCK_attributes": {
-        #                 "restart_n": restart_n,
-        #                 "restart_option": restart_option,
-        #                 "stop_n": stop_n,
-        #                 "stop_option": stop_option,
-        #             },
-        #         },
-        #     }
-        # }
     }
 
     dict_output = merge_dicts(base_output, user_dict)
