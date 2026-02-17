@@ -15,8 +15,8 @@ Note:
         standalone helper functions and merged by the caller.
 """
 
-import io
 import copy
+import io
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -41,6 +41,7 @@ def flow_seq(lst: list) -> CommentedSeq:
 @dataclass
 class QueueConfig:
     """Configuration for different pbs job queues."""
+
     queue: str
     nodesize: int
     nodemem: int
@@ -71,6 +72,7 @@ class ConfigLayout:
         pool_ntasks (dict[str, int]): Number of tasks per pool.
         pool_rootpe (dict[str, int]): Root PE for each pool.
     """
+
     ncpus: int
     pool_ntasks: dict[str, int]
     pool_rootpe: dict[str, int]
@@ -176,9 +178,7 @@ class ACCESSOM3LayoutGenerator:
             blocks_per_node = blocks_per_node_list[i]
 
             if self.nodesize % blocks_per_node != 0:
-                raise ValueError(
-                    f"nodesize {self.nodesize} must be divisible by blocks_per_node {blocks_per_node}."
-                )
+                raise ValueError(f"nodesize {self.nodesize} must be divisible by blocks_per_node {blocks_per_node}.")
 
             # re-compute block size for each node count
             block_size = self.nodesize // blocks_per_node
@@ -436,10 +436,7 @@ def build_scheduler_resources(
 
     ncpus = flow_seq([layout.ncpus for layout in all_layouts])
     mem = flow_seq(
-        [
-            f"{math.ceil(layout.ncpus / queue_config.nodesize) * queue_config.nodemem}GB"
-            for layout in all_layouts
-        ]
+        [f"{math.ceil(layout.ncpus / queue_config.nodesize) * queue_config.nodemem}GB" for layout in all_layouts]
     )
     walltime_seq = flow_seq(walltime)
 
@@ -494,7 +491,7 @@ def build_esmf_trace_env(
         raise ValueError(
             "trace_pets must be provided when esmf_trace_analysis is True."
             "Use 'all', or a list of PET lists per layout (e.g. [[0, 12], [0, 24, 48]])."
-            )
+        )
 
     env = {
         "ESMF_RUNTIME_PROFILE": DoubleQuotedScalarString("on"),
@@ -506,16 +503,12 @@ def build_esmf_trace_env(
         return env
 
     if not isinstance(trace_pets, list) or len(trace_pets) != n_layouts:
-        raise ValueError(
-            f"trace_pets must be a list of length n_layouts={n_layouts}"
-        )
+        raise ValueError(f"trace_pets must be a list of length n_layouts={n_layouts}")
 
     petlist_strings = []
     for i, pets in enumerate(trace_pets):
         if not isinstance(pets, list) or not pets:
-            raise ValueError(
-                f"trace_pets[{i}] must be a non-empty list of ints)."
-            )
+            raise ValueError(f"trace_pets[{i}] must be a non-empty list of ints).")
         if pets[0] != 0:
             raise ValueError("trace_pets must include 0 as the first element (e.g. [0, 12]).")
         petlist_str = " ".join(str(idx) for idx in pets)
@@ -636,9 +629,7 @@ def generate_experiment_generator_yaml_input(
     try:
         block = dict_output["Perturbation_Experiment"][block_name]
     except KeyError as e:
-        raise KeyError(
-            f"user_dict must define Perturbation_Experiment -> {block_name}."
-        ) from e
+        raise KeyError(f"user_dict must define Perturbation_Experiment -> {block_name}.") from e
 
     block["branches"] = branches
     config = block.setdefault("config.yaml", {})
@@ -760,7 +751,7 @@ if __name__ == "__main__":
                     "CLOCK_attributes": clock_attributes,
                 },
             }
-        }
+        },
     }
 
     # generate perturbation block yaml text
