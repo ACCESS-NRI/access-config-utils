@@ -13,10 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from lark import Token
 
-
-def _float_to_str(value: float, token: Token) -> str:
+def _float_to_str(value: float, token: str) -> str:
     """Given a float and a Lark token, convert the float to a string using the same notation as used in the token.
     This is to handle cases where the old Fortran notation is used (e.g.: 1.0d10 or 1.0D10).
 

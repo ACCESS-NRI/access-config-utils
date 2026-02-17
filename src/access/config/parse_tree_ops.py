@@ -8,6 +8,8 @@ parser: updating node values, locating rule nodes, annotating parent references,
 and converting a parse tree into a dictionary of values and references.
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 from lark import Token, Tree, Visitor
@@ -30,14 +32,19 @@ def update_node_value(branch: Tree, value: Any) -> None:
     Raises:
         TypeError: Raises an exception if the new and old value types do not match.
     """
-    handler = VALUE_TYPE_HANDLER_REGISTRY.get(getattr(branch, "data", None))
+    data_name: str | None = getattr(branch, "data", None)
+    if data_name is None:
+        raise TypeError("Trying to change value type")
+    handler = VALUE_TYPE_HANDLER_REGISTRY.get(data_name)
     if handler is None or not handler.type_check(value):
         raise TypeError("Trying to change value type")
-    transformed_value = handler.to_token(value, branch.children[0])
-    branch.children[0] = branch.children[0].update(value=transformed_value)  # type: ignore
+    token = branch.children[0]
+    assert isinstance(token, Token)
+    transformed_value = handler.to_token(value, str(token))
+    branch.children[0] = token.update(value=transformed_value)
 
 
-def find_rule_node(ref: Any) -> Tree:
+def find_rule_node(ref: list[Tree] | Tree) -> Tree:
     """Given a parse-tree reference for a key, return the corresponding rule node.
 
     Different rule types store refs differently:
@@ -52,17 +59,17 @@ def find_rule_node(ref: Any) -> Tree:
             Tree: The rule node.
     """
     if isinstance(ref, list):
-        return ref[0].parent
+        return ref[0].parent  # type: ignore[attr-defined]
     elif hasattr(ref, "data") and ref.data.startswith("key_"):
         return ref
     else:
-        return ref.parent
+        return ref.parent  # type: ignore[attr-defined]
 
 
 class AddParent(Visitor):
     """Lark visitor that adds to every node in the tree a reference to its parent."""
 
-    def __default__(self, tree):
+    def __default__(self, tree: Tree) -> None:
         for subtree in tree.children:
             if isinstance(subtree, Tree):
                 assert not hasattr(subtree, "parent")
@@ -86,8 +93,8 @@ class ConfigToDict(Interpreter):
         case_sensitive_keys (bool): Are keys case-sensitive?
     """
 
-    _data: dict  # Private dictionary used to store the config data while traversing the tree.
-    _refs: dict  # Private dictionary used to store the references while traversing the tree.
+    _data: dict[str, Any]  # Private dictionary used to store the config data while traversing the tree.
+    _refs: dict[str, list[Tree] | Tree]  # Private dictionary used to store the references while traversing the tree.
     _reconstructor: Reconstructor  # Lark reconstructor.
     _case_sensitive_keys: bool  # Are keys case-sensitive?
 
@@ -96,7 +103,7 @@ class ConfigToDict(Interpreter):
         self._case_sensitive_keys = case_sensitive_keys
         super().__init__()
 
-    def visit(self, tree: Tree) -> tuple[dict[str, Any], dict[str, Tree]]:
+    def visit(self, tree: Tree) -> tuple[dict[str, Any], dict[str, list[Tree] | Tree]]:
         """Visit the entire tree and return two dictionaries: one holding the parsed items and the other one holding,
         for each parsed item, a reference to the corresponding tree branch.
 
@@ -104,8 +111,8 @@ class ConfigToDict(Interpreter):
             tree (Tree): Tree to visit.
 
         Returns:
-            Tuple[Dict[str, Any], Dict[str, Tree]]: Dict holding the parsed values, dict holding the references to the
-            branches.
+            tuple[dict[str, Any], dict[str, list[Tree] | Tree]]: Dict holding the parsed values, dict holding the
+            references to the branches.
         """
         self._data = {}
         self._refs = {}
@@ -153,7 +160,7 @@ class ConfigToDict(Interpreter):
         refs = [child for child in children if child.data in VALUE_TYPE_HANDLER_REGISTRY]
         if len(refs) == 0:
             raise ValueError("No values found in Tree")
-        values = [VALUE_TYPE_HANDLER_REGISTRY[child.data].from_token(child.children[0]) for child in refs]
+        values = [VALUE_TYPE_HANDLER_REGISTRY[child.data].from_token(str(child.children[0])) for child in refs]
         return values, refs
 
     def _transform_value(self, children: list[Tree]) -> tuple[Any, Tree]:
@@ -198,13 +205,13 @@ class ConfigToDict(Interpreter):
         Args:
             tree (Tree): Lark tree storing a "key_block" rule.
         """
-        # Lazy import to avoid circular dependency (Config -> ConfigToDict -> Config)
-        from access.config.parser import Config
+        # Import here to avoid circular dependency (Config -> ConfigToDict -> Config)
+        from access.config.parser import Config as ConfigImpl
 
         key = self._get_key(tree)
         for child in tree.children:
             if child.data == "block":
-                self._data[key] = Config(child, self._reconstructor, self._case_sensitive_keys)
+                self._data[key] = ConfigImpl(child, self._reconstructor, self._case_sensitive_keys)
                 self._refs[key] = child
                 return
             else:

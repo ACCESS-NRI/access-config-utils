@@ -9,9 +9,11 @@ assignments. Values can either be scalars, lists, or dictionaries. The supported
 common grammar, in the config.lark file.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import Any, SupportsIndex
 
 from lark import Lark, Tree
 from lark.reconstruct import Reconstructor
@@ -30,13 +32,13 @@ class ConfigList(list):
         refs: List of references to the corresponding parse tree value nodes.
     """
 
-    _refs: list  # References to the value nodes of the parse tree
+    _refs: list[Tree]  # References to the value nodes of the parse tree
 
-    def __init__(self, data: list, refs: list) -> None:
+    def __init__(self, data: list[Any], refs: list[Tree]) -> None:
         super().__init__(data)
         self._refs = refs
 
-    def __setitem__(self, index, value) -> None:
+    def __setitem__(self, index: SupportsIndex | slice, value: Any) -> None:
         """Override to update both the list element(s) and the parse tree node(s).
 
         Supports both integer indices and slices. When using slices, the number of
@@ -78,8 +80,8 @@ class Config(dict):
     """
 
     _tree: Tree  # The full parse tree
-    _refs: dict  # References to the nodes of the parse tree
-    _reconstructor: Reconstructor  # Lark reconstrutor used for round-trip parsing
+    _refs: dict[str, list[Tree] | Tree]  # References to the nodes of the parse tree
+    _reconstructor: Reconstructor  # Lark reconstructor used for round-trip parsing
     _case_sensitive_keys: bool  # Are the dict keys case insensitive?
 
     def __init__(self, tree: Tree, reconstructor: Reconstructor, case_sensitive_keys: bool) -> None:
@@ -91,7 +93,9 @@ class Config(dict):
         # Wrap list values in ConfigList so that element-level updates keep the parse tree in sync
         for key in data:
             if isinstance(data[key], list):
-                data[key] = ConfigList(data[key], self._refs[key])
+                refs = self._refs[key]
+                assert isinstance(refs, list)
+                data[key] = ConfigList(data[key], refs)
         super().__init__(data)
 
     # --- Key normalisation (SRP) ---
@@ -109,7 +113,7 @@ class Config(dict):
 
     # --- Tree update helpers (SRP) ---
 
-    def _update_list_value(self, key: str, value: list) -> ConfigList:
+    def _update_list_value(self, key: str, value: list[Any]) -> ConfigList:
         """Validate and apply a whole-list replacement to the parse tree.
 
         Args:
@@ -179,7 +183,10 @@ class Config(dict):
             value = self._update_list_value(key, value)
 
         else:
-            update_node_value(self._refs[key], value)
+            ref = self._refs[key]
+            if not isinstance(ref, Tree):
+                raise TypeError(f"Trying to change the type of variable '{key}'")
+            update_node_value(ref, value)
 
         super().__setitem__(key, value)
 
@@ -193,7 +200,7 @@ class Config(dict):
 
         # Remove the corresponding rule from the parse tree
         rule = find_rule_node(self._refs[key])
-        rule.parent.children.remove(rule)
+        rule.parent.children.remove(rule)  # type: ignore[attr-defined]
 
         # Finally remove reference to the branch storing the value
         del self._refs[key]
@@ -247,7 +254,7 @@ class ConfigParser(ABC):
             bool: Are the keys case-sensitive?
         """
 
-    def parse(self, stream) -> Config:
+    def parse(self, stream: str) -> Config:
         """Parse the given text.
 
         Args:
