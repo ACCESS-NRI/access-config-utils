@@ -88,6 +88,50 @@ _value_inverse_transformers = {
 value. Note that Lark tokens inherit from the str class."""
 
 
+class ConfigList(list):
+    """A list subclass that keeps the parse tree in sync when individual elements are modified.
+
+    When an element is updated via index assignment (e.g., ``config["key"][i] = new_value``), the corresponding
+    node in the Lark parse tree is also updated so that round-trip reconstruction reflects the change.
+
+    Args:
+        data: The list data.
+        refs: List of references to the corresponding parse tree value nodes.
+    """
+
+    _refs: list  # References to the value nodes of the parse tree
+
+    def __init__(self, data: list, refs: list) -> None:
+        super().__init__(data)
+        self._refs = refs
+
+    def __setitem__(self, index, value) -> None:
+        """Override to update both the list element(s) and the parse tree node(s).
+
+        Supports both integer indices and slices. When using slices, the number of
+        elements assigned must match the number of elements in the slice (i.e. the
+        list length cannot change).
+
+        Args:
+            index: Integer index or slice of the element(s) to update.
+            value: New value (or iterable of values for slices).
+
+        Raises:
+            ValueError: If a slice assignment would change the list length.
+        """
+        if isinstance(index, slice):
+            refs_slice = self._refs[index]
+            values = list(value)
+            if len(values) != len(refs_slice):
+                raise ValueError(f"Slice assignment would change list length from {len(refs_slice)} to {len(values)}")
+            for ref, v in zip(refs_slice, values, strict=True):
+                _update_node_value(ref, v)
+            super().__setitem__(index, values)
+        else:
+            _update_node_value(self._refs[index], value)
+            super().__setitem__(index, value)
+
+
 def _update_node_value(branch: Tree, value: Any) -> None:
     """Updates the value stored in a Lark tree branch.
 
@@ -131,6 +175,10 @@ class Config(dict):
         self._case_sensitive_keys = case_sensitive_keys
         interpreter = ConfigToDict(reconstructor, case_sensitive_keys)
         data, self._refs = interpreter.visit(self._tree)
+        # Wrap list values in ConfigList so that element-level updates keep the parse tree in sync
+        for key in data:
+            if isinstance(data[key], list):
+                data[key] = ConfigList(data[key], self._refs[key])
         super().__init__(data)
 
     def __getitem__(self, key: str) -> Any:
@@ -174,6 +222,9 @@ class Config(dict):
 
             for branch, v in zip(tree, value, strict=True):
                 _update_node_value(branch, v)
+
+            # Wrap in ConfigList so future element-level updates keep the tree in sync
+            value = ConfigList(value, tree)
 
         else:
             _update_node_value(self._refs[key], value)
