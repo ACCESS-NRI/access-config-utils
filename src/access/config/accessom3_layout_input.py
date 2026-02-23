@@ -38,18 +38,31 @@ def flow_seq(lst: list) -> CommentedSeq:
     return cs
 
 
-@dataclass
+@dataclass(frozen=True)
 class QueueConfig:
-    """Configuration for different pbs job queues."""
+    """Scheduler-dependent hardware configuration."""
 
-    queue: str
-    nodesize: int
-    nodemem: int
+    scheduler: str  # e.g. "pbs" or "slurm", currently only "pbs" is supported
+    queue: str  # pbs queue name for Gadi or slurm partition name for Setonix
+    nodesize: int  # number of cpu cores per node
+    nodemem: int  # memory per node in GB
 
     @classmethod
-    def from_queue(cls, queue: str) -> "QueueConfig":
-        """Creates a QueueConfig instance based on the queue name."""
-        mapping: dict[str, tuple(int, int)] = {
+    def from_scheduler(cls, scheduler: str, queue: str) -> "QueueConfig":
+        """Creates a QueueConfig instance based on the scheduler and queue name."""
+        scheduler = scheduler.lower()
+
+        if scheduler == "pbs":
+            return cls._from_pbs(queue)
+        elif scheduler == "slurm":
+            raise NotImplementedError("Slurm scheduler is not yet supported.")
+
+        raise ValueError(f"Unsupported scheduler: {scheduler}")
+
+    @classmethod
+    def _from_pbs(cls, queue: str) -> "QueueConfig":
+        """Creates a QueueConfig instance based on the pbs queue name."""
+        mapping: dict[str, tuple[int, int]] = {
             "normalsr": (104, 512),  # Sapphire Rapids
             "expresssr": (104, 512),  # Sapphire Rapids (express)
             "normal": (48, 192),  # Cascade lake
@@ -61,7 +74,7 @@ class QueueConfig:
         if queue not in mapping:
             raise ValueError(f"Unknown queue name: {queue}")
         nodesize, nodemem = mapping[queue]
-        return cls(queue=queue, nodesize=nodesize, nodemem=nodemem)
+        return cls(scheduler="pbs", queue=queue, nodesize=nodesize, nodemem=nodemem)
 
 
 @dataclass
