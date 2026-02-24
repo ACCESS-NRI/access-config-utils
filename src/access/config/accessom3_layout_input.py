@@ -18,6 +18,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
 
+from ruamel.yaml.scalarstring import DoubleQuotedScalarString as DQString
+
 DEFAULT_POOL_ORDER = ["shared", "ocn", "ice", "cpl", "wav", "atm", "rof"]
 
 
@@ -114,9 +116,10 @@ class OM3LayoutSearchConfig:
     scheduler: str
     queue: str
     pool_map: dict[str, str]
+
+    blocks_per_node: int = 8
     pool_order: list[str] | None = None
 
-    blocks_per_node: int
     baseline_pool_name: str = "shared"
     eps: float = 1e-6
     max_ratio_to_baseline: dict[str, float] | None = None
@@ -343,6 +346,11 @@ def generate_om3_core_layouts_from_node_count(
     return layouts
 
 
+def quote_env_for_yaml(env_in: dict[str, str]) -> dict[str, str]:
+    # Quote env variable values to ensure they are treated as strings in yaml
+    return {key: DQString(value) for key, value in env_in.items()}
+
+
 def generate_om3_perturb_block(
     layout: OM3ConfigLayout,
     num_nodes: float,
@@ -372,6 +380,8 @@ def generate_om3_perturb_block(
         pelayout[f"{submodel}_rootpe"] = layout.pool_rootpe[pool]
 
     env = _build_esmf_env(layout, layout_search_config)
+    if env:
+        env = quote_env_for_yaml(env)
 
     block = {
         "branches": [branch_name],
