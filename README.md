@@ -52,8 +52,6 @@ text = '''&data_nml
 
 config = FortranNMLParser().parse(text)
 print(config)
-```
-```python
 &data_nml
 parameterA = 1
 parameterB = 'abc'
@@ -64,8 +62,6 @@ The parsed content can then be modified just like any Python dict:
 ```python
 config["data_nml"]["parameterA"] = 2
 print(config)
-```
-```python
 &data_nml
 parameterA = 2
 parameterB = 'abc'
