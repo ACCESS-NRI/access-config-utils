@@ -180,9 +180,16 @@ class ConfigToDict(Interpreter):
             str: The key name (uppercased if keys are case-insensitive).
 
         """
-        # Get the first child of the "key" rule node among the children of *tree*.
-        # This is the Token holding the key string.
-        key_token = [child.children[0] for child in tree.children if child.data == "key"][0]
+        key_rules = [child.children for child in tree.children if child.data == "key"]
+        if len(key_rules) == 0:
+            raise ValueError("No 'key' rule nodes found among children of key rule node")
+        else:
+            # Multiple "key" rule nodes are possible (e.g., if the tree is a key_block storing one of more key_values)
+            # but the correct one should always be the first one.
+            key_rule = key_rules[0]
+
+        # The token holding the key name is the first child of the "key" rule node.
+        key_token = key_rule[0]
         if isinstance(key_token, Token):
             key = key_token.value
         else:
