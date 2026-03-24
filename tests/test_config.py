@@ -10,7 +10,7 @@ from access.config.parser import ConfigParser
 grammar = """
     // Made-up grammar taylored to test the different building blocks
     // of the configuration parsers.
-    start: (key_block|outer_key_value|outer_key_list|key_null|wrong_key_value1|wrong_key_value2)+
+    start: (key_block|outer_key_value|outer_key_list|key_null|wrong_key_value1|wrong_key_value2|wrong_key_value3)+
 
     key_null: key equal
     outer_key_value: key equal value -> key_value
@@ -29,6 +29,9 @@ grammar = """
     // This rule will trip the interpreter because there is no value
     // (the alias should therefore be key_null)
     ?wrong_key_value2:  key colon equal -> key_value
+
+    // This rule will trip the interpreter because there is no "key" child node
+    ?wrong_key_value3:  "!" value -> key_value
 
     ?value: logical
          | bool
@@ -407,6 +410,10 @@ def test_config_invalid_rules(parser):
     # key_value rule that returns no value
     with pytest.raises(ValueError):
         parser.parse("a := \n")
+
+    # key_value rule that has no "key" child node
+    with pytest.raises(ValueError):
+        parser.parse("! 1\n")
 
 
 def test_config_invalid_operations(parser):
