@@ -140,14 +140,18 @@ class FixedRanks:
 
 @dataclass(frozen=True)
 class RatioAllocation:
-    """The component receives a proportional share of the available ranks.
+    """The component receives ranks in exact proportion to sibling weights.
 
-    When a parent's available ranks are distributed among siblings that all use
-    :class:`RatioAllocation`, each sibling receives
-    ``round(weight / total_weight * available)`` ranks, with ties broken via the
-    largest-remainder method.
+    When a parent's available ranks are distributed among siblings that use
+    :class:`RatioAllocation`, their rank counts are taken to be exact integer
+    multiples of the declared weights: there exists a shared integer
+    multiplier ``k`` such that each sibling receives ``k * weight`` ranks.
 
-    For example, weights (3, 2) with 10 available ranks gives 6 and 4 ranks.
+    For example, weights (3, 2) can be allocated as (3, 2), (6, 4), (9, 6),
+    and so on. Ranks are not assigned by rounding ``weight / total_weight *
+    available``, and any remainder that cannot be expressed via a common
+    integer multiplier is not distributed among ratio-allocated siblings by a
+    largest-remainder rule.
 
     Parameters
     ----------
@@ -172,7 +176,7 @@ class FreeAllocation:
         Minimum number of ranks.  Must be >= 1.  Defaults to 1.
     max_ranks : int | None
         Maximum number of ranks, or ``None`` for no upper bound.
-        Must be >= ``min_ranks`` when provided.
+            Must be >= ``min_ranks`` when provided.
     """
 
     min_ranks: int = 1

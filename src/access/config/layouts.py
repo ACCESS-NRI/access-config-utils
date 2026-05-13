@@ -108,6 +108,10 @@ class ProcessGridDimEvenConstraint(LocalConstraint):
 
     dim: int
 
+    def __post_init__(self) -> None:
+        if self.dim < 0:
+            raise ValueError(f"ProcessGridDimEvenConstraint.dim must be >= 0, got {self.dim}.")
+
     def is_satisfied(self, layout: ComponentLayout, total_ranks: int) -> bool:
         if layout.decomposition is None:
             return True
@@ -130,6 +134,8 @@ class ProcessGridDimDivisibleConstraint(LocalConstraint):
     divisor: int
 
     def __post_init__(self) -> None:
+        if self.dim < 0:
+            raise ValueError(f"ProcessGridDimDivisibleConstraint.dim must be >= 0, got {self.dim}.")
         if self.divisor < 1:
             raise ValueError(f"ProcessGridDimDivisibleConstraint.divisor must be >= 1, got {self.divisor}.")
 
@@ -311,7 +317,7 @@ class SubdomainSizeToleranceConstraint(LocalConstraint):
             lo = dim_size // g
             if lo == 0:
                 return False
-            hi = math.ceil(dim_size / g)
+            hi = (dim_size + g - 1) // g
             if hi / lo > self.tolerance:
                 return False
         return True
@@ -471,8 +477,27 @@ def iter_cartesian_decompositions(domain: Domain, n_ranks: int) -> Iterator[Cart
      CartesianDecomposition(domain=..., grid=(2, 2)),
      CartesianDecomposition(domain=..., grid=(4, 1))]
     """
+    if n_ranks < 1:
+        raise ValueError(f"iter_cartesian_decompositions: n_ranks must be >= 1, got {n_ranks}.")
+
     for grid in _iter_grids(domain.ndim, n_ranks):
         yield CartesianDecomposition(domain, grid)
+
+
+def _iter_divisors(n: int) -> Iterator[int]:
+    """Yield the positive divisors of ``n`` in ascending order."""
+    small_divisors: list[int] = []
+    large_divisors: list[int] = []
+    limit = math.isqrt(n)
+    for divisor in range(1, limit + 1):
+        if n % divisor != 0:
+            continue
+        small_divisors.append(divisor)
+        complement = n // divisor
+        if complement != divisor:
+            large_divisors.append(complement)
+    yield from small_divisors
+    yield from reversed(large_divisors)
 
 
 def _iter_grids(ndim: int, n_ranks: int) -> Iterator[tuple[int, ...]]:
@@ -480,10 +505,9 @@ def _iter_grids(ndim: int, n_ranks: int) -> Iterator[tuple[int, ...]]:
     if ndim == 1:
         yield (n_ranks,)
         return
-    for d0 in range(1, n_ranks + 1):
-        if n_ranks % d0 == 0:
-            for rest in _iter_grids(ndim - 1, n_ranks // d0):
-                yield (d0, *rest)
+    for d0 in _iter_divisors(n_ranks):
+        for rest in _iter_grids(ndim - 1, n_ranks // d0):
+            yield (d0, *rest)
 
 
 # ---------------------------------------------------------------------------
@@ -619,8 +643,8 @@ def _enum_component(
         decompositions = [None]
 
     all_constraints = component.local_constraints + alloc_spec.local_constraints
-    for decomp in decompositions:
-        for sub_layout_tuple in _iter_valid_sub_layouts(component, n_ranks, tpr, total_ranks, alloc_spec):
+    for sub_layout_tuple in _iter_valid_sub_layouts(component, n_ranks, tpr, total_ranks, alloc_spec):
+        for decomp in decompositions:
             candidate = ComponentLayout(
                 name=component.name,
                 n_ranks=n_ranks,

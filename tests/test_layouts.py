@@ -112,6 +112,10 @@ class TestComponentLayout:
 
 
 class TestIterCartesianDecompositions:
+    def test_invalid_n_ranks_raises(self, domain_1d: Domain) -> None:
+        with pytest.raises(ValueError, match="n_ranks"):
+            list(iter_cartesian_decompositions(domain_1d, n_ranks=0))
+
     def test_1d_single(self, domain_1d: Domain) -> None:
         decomps = list(iter_cartesian_decompositions(domain_1d, n_ranks=1))
         assert len(decomps) == 1
@@ -168,6 +172,10 @@ class TestIterCartesianDecompositions:
 
 
 class TestProcessGridDimEvenConstraint:
+    def test_negative_dim_raises(self) -> None:
+        with pytest.raises(ValueError, match="dim"):
+            ProcessGridDimEvenConstraint(dim=-1)
+
     def test_even_grid(self, domain_2d: Domain) -> None:
         c = ProcessGridDimEvenConstraint(dim=0)
         layout = ComponentLayout("x", 4, 1, CartesianDecomposition(domain_2d, (2, 2)))
@@ -185,6 +193,10 @@ class TestProcessGridDimEvenConstraint:
 
 
 class TestProcessGridDimDivisibleConstraint:
+    def test_negative_dim_raises(self) -> None:
+        with pytest.raises(ValueError, match="dim"):
+            ProcessGridDimDivisibleConstraint(dim=-1, divisor=2)
+
     def test_divisible(self, domain_2d: Domain) -> None:
         c = ProcessGridDimDivisibleConstraint(dim=1, divisor=4)
         layout = ComponentLayout("x", 4, 1, CartesianDecomposition(domain_2d, (1, 4)))
@@ -318,6 +330,12 @@ class TestUniformSubdomainConstraint:
 
 
 class TestSubdomainSizeToleranceConstraint:
+    def test_very_large_dimension_uses_integer_ceil(self) -> None:
+        domain = Domain(shape=(10**400,))
+        c = SubdomainSizeToleranceConstraint(tolerance=1.0)
+        layout = ComponentLayout("x", 2, 1, CartesianDecomposition(domain, (2,)))
+        assert c.is_satisfied(layout, total_ranks=2)
+
     def test_exact_passes(self, domain_2d: Domain) -> None:
         c = SubdomainSizeToleranceConstraint(tolerance=1.0)
         layout = ComponentLayout("x", 6, 1, CartesianDecomposition(domain_2d, (3, 2)))
@@ -640,7 +658,7 @@ class TestEnumerateLayoutsTree:
             ),
         )
         # All pairs (r_a, r_b) with 1<=r_a,r_b<=4 and r_a+r_b<=4
-        rank_pairs = {(sl.n_ranks for sl in layout.sub_layouts) for layout in layouts}
+        rank_pairs = {tuple(sl.n_ranks for sl in layout.sub_layouts) for layout in layouts}
         assert len(rank_pairs) == 6  # (1,1),(1,2),(1,3),(2,1),(2,2),(3,1)
 
     def test_infeasible_fixed_children_empty(self) -> None:
