@@ -1,35 +1,28 @@
 # Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
 # SPDX-License-Identifier: Apache-2.0
-"""Parallel component and domain definitions for climate model simulations.
+"""Rank-allocation types for climate model component trees.
 
-This module defines the structural building blocks used to describe how a coupled
-climate model can be parallelised:
+This module owns the allocation strategy model used by
+:func:`access.config.layouts.enumerate_layouts`:
 
-- Rank-allocation types (:class:`FixedAllocation`, :class:`RatioAllocation`, :class:`FreeAllocation`)
-  that specify how MPI ranks are distributed to a component.
-- Constraint abstract base classes (:class:`LocalConstraint`, :class:`GroupConstraint`)
-  that filter which layouts are considered valid.
-- :class:`ParallelComponent`: a parallelisable unit that may carry a domain, sub-components,
-  and constraints.
+- :class:`FixedAllocation`, :class:`RatioAllocation`, and :class:`FreeAllocation`
+    describe how MPI ranks are distributed to child components.
+- :class:`AllocationStrategy` combines a rank allocation with optional child
+    strategies and constraint filters.
 
-See :mod:`access.config.domain_parallelisation` for domain/decomposition models,
-and :mod:`access.config.layouts` for layout result types, concrete constraint
-implementations, and the :func:`~access.config.layouts.enumerate_layouts` entry
-point.
+See :mod:`access.config.parallel_component` for the component-tree model and
+:mod:`access.config.domain_parallelisation` for domain/decomposition models.
 """
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from collections import Counter
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING
 
-from access.config import domain_parallelisation
-
-if TYPE_CHECKING:
-    from access.config.layouts import ComponentLayout
+from access.config.parallel_component import (
+    GroupConstraint,
+    LocalConstraint,
+)
 
 # ---------------------------------------------------------------------------
 # Rank allocation types
@@ -170,109 +163,4 @@ class AllocationStrategy:
         )
 
 
-# ---------------------------------------------------------------------------
-# Constraint abstract base classes
-# ---------------------------------------------------------------------------
-
-
-class LocalConstraint(ABC):
-    """Abstract base for constraints on a single component's layout.
-
-    Place instances of subclasses in :attr:`ParallelComponent.local_constraints`.
-    Concrete implementations live in :mod:`access.config.layouts`.
-    """
-
-    @abstractmethod
-    def is_satisfied(self, layout: ComponentLayout, total_ranks: int) -> bool:
-        """Return ``True`` if the constraint is satisfied.
-
-        Parameters
-        ----------
-        layout : ComponentLayout
-            Candidate layout for the component being validated.
-        total_ranks : int
-            System-wide total MPI ranks (useful for fractional-rank constraints).
-        """
-
-
-class GroupConstraint(ABC):
-    """Abstract base for constraints on a set of sibling component layouts.
-
-    Place instances of subclasses in :attr:`ParallelComponent.group_constraints` of the
-    *parent* component, because these constraints need access to all siblings'
-    layouts simultaneously.
-
-    Concrete implementations live in :mod:`access.config.layouts`.
-    """
-
-    @abstractmethod
-    def is_satisfied(self, sub_layouts: tuple[ComponentLayout, ...], total_ranks: int) -> bool:
-        """Return ``True`` if the constraint is satisfied.
-
-        Parameters
-        ----------
-        sub_layouts : tuple[ComponentLayout, ...]
-            Candidate layouts for all direct sub-components of the parent, in the
-            same order as :attr:`ParallelComponent.subcomponents`.
-        total_ranks : int
-            System-wide total MPI ranks.
-        """
-
-
-# ---------------------------------------------------------------------------
-# ParallelComponent
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ParallelComponent:
-    """A parallelisable unit in a climate model.
-
-    A component may have:
-
-        * An optional :class:`~access.config.domain_parallelisation.Domain` whose work
-            is decomposed across the component's
-      MPI ranks using a cartesian process grid.
-    * Sub-components that each receive a disjoint subset of the component's ranks.
-    * :class:`LocalConstraint` instances that filter candidate layouts for *this*
-      component.
-    * :class:`GroupConstraint` instances that filter the *combined* layouts of all
-      sub-components.
-
-    Parameters
-    ----------
-    name : str
-        Human-readable identifier.  Must be non-empty.
-    domain : access.config.domain_parallelisation.Domain | None
-        Grid decomposed across this component's ranks, or ``None``.
-    subcomponents : tuple[ParallelComponent, ...]
-        Direct child components.  Each receives a disjoint rank subset.
-        All names must be unique; a ``ValueError`` is raised on construction
-        if any two sub-components share a name.
-    local_constraints : tuple[LocalConstraint, ...]
-        Constraints checked against this component's own layout.
-    group_constraints : tuple[GroupConstraint, ...]
-        Constraints checked against the *joint* layouts of all sub-components.
-        Must be placed on the parent, not the individual sub-components.
-
-    Examples
-    --------
-    >>> atm = ParallelComponent("atmosphere", domain=domain_parallelisation.Domain((192, 144)))
-    >>> ocn = ParallelComponent("ocean",      domain=domain_parallelisation.Domain((360, 300)))
-    >>> ice = ParallelComponent("ice")
-    >>> coupled = ParallelComponent("coupled_model", subcomponents=(atm, ocn, ice))
-    """
-
-    name: str
-    domain: domain_parallelisation.Domain | None = None
-    subcomponents: tuple[ParallelComponent, ...] = ()
-    local_constraints: tuple[LocalConstraint, ...] = ()
-    group_constraints: tuple[GroupConstraint, ...] = ()
-
-    def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("ParallelComponent.name must be non-empty.")
-        names = [sub.name for sub in self.subcomponents]
-        if len(names) != len(set(names)):
-            dupes = [n for n, c in Counter(names).items() if c > 1]
-            raise ValueError(f"ParallelComponent subcomponents must have unique names; duplicates: {dupes}.")
+# The component-tree model lives in access.config.parallel_component.

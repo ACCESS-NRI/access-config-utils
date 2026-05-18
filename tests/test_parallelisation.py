@@ -7,11 +7,11 @@ import dataclasses
 import pytest
 
 from access.config.domain_parallelisation import Domain
+from access.config.parallel_component import ParallelComponent
 from access.config.parallelisation import (
     AllocationStrategy,
     FixedAllocation,
     FreeAllocation,
-    ParallelComponent,
     RatioAllocation,
 )
 
@@ -139,11 +139,11 @@ class TestParallelComponent:
 
 
 # ---------------------------------------------------------------------------
-# AllocationSpec
+# AllocationStrategy
 # ---------------------------------------------------------------------------
 
 
-class TestAllocationSpec:
+class TestAllocationStrategy:
     def test_leaf_fixed(self) -> None:
         spec = AllocationStrategy(FixedAllocation(12))
         assert spec.allocation == FixedAllocation(12)

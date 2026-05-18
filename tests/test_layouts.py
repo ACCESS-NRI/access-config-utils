@@ -8,7 +8,6 @@ import pytest
 
 from access.config.domain_parallelisation import Domain, DomainCartesianDecomposition
 from access.config.layouts import (
-    ComponentLayout,
     FixedThreadsPerRankConstraint,
     MaxRankFractionConstraint,
     MaxThreadsPerRankConstraint,
@@ -24,11 +23,11 @@ from access.config.layouts import (
     UniformSubdomainConstraint,
     enumerate_layouts,
 )
+from access.config.parallel_component import ComponentLayout, ParallelComponent
 from access.config.parallelisation import (
     AllocationStrategy,
     FixedAllocation,
     FreeAllocation,
-    ParallelComponent,
     RatioAllocation,
 )
 
@@ -412,7 +411,10 @@ class TestEnumerateLayoutsLeaf:
     def test_leaf_with_domain(self, leaf_with_domain: ParallelComponent) -> None:
         # domain=(12,8), 4 ranks → decompositions: (1,4),(2,2),(4,1)
         layouts = enumerate_layouts(leaf_with_domain, total_cores=4)
-        grids = [layout.decomposition.grid for layout in layouts]
+        grids = []
+        for layout in layouts:
+            assert layout.decomposition is not None
+            grids.append(layout.decomposition.grid)
         assert (1, 4) in grids
         assert (2, 2) in grids
         assert (4, 1) in grids
@@ -674,6 +676,7 @@ class TestEnumerateLayoutsConstraints:
         layouts = enumerate_layouts(comp, total_cores=6)
         for layout in layouts:
             d = layout.decomposition
+            assert d is not None
             assert all(dim % g == 0 for dim, g in zip(d.domain.shape, d.grid, strict=True))
 
     def test_min_subdomain_filters(self) -> None:
@@ -687,6 +690,7 @@ class TestEnumerateLayoutsConstraints:
         layouts = enumerate_layouts(comp, total_cores=4)
         for layout in layouts:
             d = layout.decomposition
+            assert d is not None
             assert all(dim // g >= 3 for dim, g in zip(d.domain.shape, d.grid, strict=True))
 
     def test_max_rank_fraction_filters(self) -> None:
@@ -745,8 +749,8 @@ class TestEnumerateLayoutsConstraints:
         assert len(layouts) == 1
 
     def test_alloc_spec_constraint_filters(self, domain_2d: Domain) -> None:
-        # domain_2d=(12,8); FixedRanks(4) → decomps (1,4),(2,2),(4,1).
-        # ProcessGridDimEvenConstraint on the AllocationSpec filters out (1,4) → 2 pass.
+        # domain_2d=(12,8); FixedAllocation(4) → decomps (1,4),(2,2),(4,1).
+        # ProcessGridDimEvenConstraint on the AllocationStrategy filters out (1,4) → 2 pass.
         a = ParallelComponent("a", domain=domain_2d)
         b = ParallelComponent("b")
         parent = ParallelComponent("p", subcomponents=(a, b))
@@ -765,10 +769,12 @@ class TestEnumerateLayoutsConstraints:
         )
         assert len(layouts) == 2  # (2,2) and (4,1); (1,4) filtered
         for layout in layouts:
-            assert layout.sub_layouts[0].decomposition.grid[0] % 2 == 0
+            sub_layout = layout.sub_layouts[0]
+            assert sub_layout.decomposition is not None
+            assert sub_layout.decomposition.grid[0] % 2 == 0
 
     def test_alloc_spec_group_constraint_filters(self) -> None:
-        # group_constraints on AllocationSpec filter sibling combos;
+        # group_constraints on AllocationStrategy filter sibling combos;
         # the component itself has no group constraints here.
         a = ParallelComponent("a")
         b = ParallelComponent("b")
@@ -826,4 +832,5 @@ class TestEnumerateLayoutsConstraints:
         )
         layouts = enumerate_layouts(comp, total_cores=6)
         for layout in layouts:
+            assert layout.decomposition is not None
             assert layout.decomposition.grid[0] % 2 == 0

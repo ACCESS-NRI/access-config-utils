@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Layout result types, constraints, and enumeration for parallel component trees.
 
-This module builds on top of :mod:`access.config.parallelisation` and
-:mod:`access.config.domain_parallelisation`, and provides:
+This module builds on top of :mod:`access.config.parallel_component`,
+:mod:`access.config.parallelisation`, and :mod:`access.config.domain_parallelisation`,
+and provides:
 
-- :class:`ComponentLayout`: the resolved parallelisation assignment for one component.
+- :class:`ComponentLayout` from :mod:`access.config.parallel_component`: the resolved
+    parallelisation assignment for one component.
 - Constraint implementations for the four constraint categories:
 
   1. **Cartesian grid** - properties of the MPI process grid
@@ -22,7 +24,7 @@ This module builds on top of :mod:`access.config.parallelisation` and
      :class:`ThreadsDivisorConstraint`).
 
 - :func:`enumerate_layouts`: enumerate all valid :class:`ComponentLayout` trees for a
-  component definition and a total core budget.
+    component definition and a total core budget.
 """
 
 from __future__ import annotations
@@ -33,60 +35,18 @@ from dataclasses import dataclass
 from typing import cast
 
 from access.config import domain_parallelisation
+from access.config.parallel_component import (
+    ComponentLayout,
+    GroupConstraint,
+    LocalConstraint,
+    ParallelComponent,
+)
 from access.config.parallelisation import (
     AllocationStrategy,
     FixedAllocation,
     FreeAllocation,
-    GroupConstraint,
-    LocalConstraint,
-    ParallelComponent,
     RatioAllocation,
 )
-
-# ---------------------------------------------------------------------------
-# ComponentLayout
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ComponentLayout:
-    """The resolved parallelisation assignment for one component.
-
-    Parameters
-    ----------
-    name : str
-        ParallelComponent name (mirrors :attr:`~access.config.parallelisation.ParallelComponent.name`).
-    n_ranks : int
-        MPI ranks assigned to this component.  Must be >= 1.
-    threads_per_rank : int
-        OpenMP threads per MPI rank.  Must be >= 1.
-    decomposition : CartesianDecomposition | None
-        How this component's domain is tiled across the MPI cartesian grid, or
-        ``None`` when the component has no domain.
-    sub_layouts : tuple[ComponentLayout, ...]
-        Layouts for each direct sub-component, in the same order as
-        :attr:`~access.config.parallelisation.ParallelComponent.subcomponents`.
-    """
-
-    name: str
-    n_ranks: int
-    threads_per_rank: int
-    decomposition: domain_parallelisation.DomainCartesianDecomposition | None
-    sub_layouts: tuple[ComponentLayout, ...] = ()
-
-    def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("ComponentLayout.name must be non-empty.")
-        if self.n_ranks < 1:
-            raise ValueError(f"ComponentLayout.n_ranks must be >= 1, got {self.n_ranks}.")
-        if self.threads_per_rank < 1:
-            raise ValueError(f"ComponentLayout.threads_per_rank must be >= 1, got {self.threads_per_rank}.")
-
-    @property
-    def total_cores(self) -> int:
-        """CPU cores consumed by this component (``n_ranks × threads_per_rank``)."""
-        return self.n_ranks * self.threads_per_rank
-
 
 # ---------------------------------------------------------------------------
 # Category 1 — Cartesian grid constraints
@@ -507,19 +467,22 @@ def _iter_rank_splits(
     ratio_indices = [i for i, a in enumerate(allocs) if isinstance(a, RatioAllocation)]
     free_indices = [i for i, a in enumerate(allocs) if isinstance(a, FreeAllocation)]
 
-    fixed_total = sum(allocs[i].n_ranks for i in fixed_indices)
+    fixed_allocs = cast(list[FixedAllocation], [allocs[i] for i in fixed_indices])
+    ratio_allocs = cast(list[RatioAllocation], [allocs[i] for i in ratio_indices])
+    free_allocs = cast(list[FreeAllocation], [allocs[i] for i in free_indices])
+
+    fixed_total = sum(alloc.n_ranks for alloc in fixed_allocs)
     available = parent_ranks - fixed_total
 
     if available < 0:
         return  # fixed components alone exceed the budget
 
-    free_allocs = cast(list[FreeAllocation], [allocs[i] for i in free_indices])
     free_min_total = sum(a.min_ranks for a in free_allocs)
 
     def _build_result(ratio_ranks: dict[int, int], free_assignment: tuple[int, ...]) -> tuple[int, ...]:
         result = [0] * n
         for i in fixed_indices:
-            result[i] = allocs[i].n_ranks
+            result[i] = fixed_allocs[fixed_indices.index(i)].n_ranks
         for i, r in ratio_ranks.items():
             result[i] = r
         for i, r in zip(free_indices, free_assignment, strict=True):
@@ -527,10 +490,10 @@ def _iter_rank_splits(
         return tuple(result)
 
     if ratio_indices:
-        sum_ratio_weights = sum(allocs[i].weight for i in ratio_indices)
+        sum_ratio_weights = sum(alloc.weight for alloc in ratio_allocs)
         max_k = (available - free_min_total) // sum_ratio_weights
         for k in range(1, max_k + 1):
-            ratio_ranks = {i: k * allocs[i].weight for i in ratio_indices}
+            ratio_ranks = {i: k * alloc.weight for i, alloc in zip(ratio_indices, ratio_allocs, strict=True)}
             remaining = available - k * sum_ratio_weights
             for free_assignment in _iter_free_assignments(free_allocs, remaining):
                 yield _build_result(ratio_ranks, free_assignment)
