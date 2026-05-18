@@ -5,116 +5,31 @@
 This module defines the structural building blocks used to describe how a coupled
 climate model can be parallelised:
 
-- :class:`Domain`: an N-dimensional rectangular grid.
-- :class:`CartesianDecomposition`: how a domain is tiled across an MPI cartesian process grid.
-- Rank-allocation types (:class:`FixedRanks`, :class:`RatioAllocation`, :class:`FreeAllocation`)
+- Rank-allocation types (:class:`FixedAllocation`, :class:`RatioAllocation`, :class:`FreeAllocation`)
   that specify how MPI ranks are distributed to a component.
 - Constraint abstract base classes (:class:`LocalConstraint`, :class:`GroupConstraint`)
   that filter which layouts are considered valid.
 - :class:`ParallelComponent`: a parallelisable unit that may carry a domain, sub-components,
   and constraints.
 
-See :mod:`access.config.layouts` for layout result types, concrete constraint
-implementations, and the :func:`~access.config.layouts.enumerate_layouts` entry point.
+See :mod:`access.config.domain_parallelisation` for domain/decomposition models,
+and :mod:`access.config.layouts` for layout result types, concrete constraint
+implementations, and the :func:`~access.config.layouts.enumerate_layouts` entry
+point.
 """
 
 from __future__ import annotations
 
-import math
 from abc import ABC, abstractmethod
 from collections import Counter
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from access.config import domain_parallelisation
+
 if TYPE_CHECKING:
     from access.config.layouts import ComponentLayout
-
-# ---------------------------------------------------------------------------
-# Domain
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class Domain:
-    """An N-dimensional rectangular grid.
-
-    Parameters
-    ----------
-    shape : tuple[int, ...]
-        Size of the grid along each spatial dimension.  Must be non-empty and
-        every entry must be >= 1.
-
-    Examples
-    --------
-    >>> Domain(shape=(360, 300))          # 2-D grid
-    >>> Domain(shape=(192, 144, 85))      # 3-D grid
-    """
-
-    shape: tuple[int, ...]
-
-    def __post_init__(self) -> None:
-        if not self.shape:
-            raise ValueError("Domain shape must have at least one dimension.")
-        if any(d < 1 for d in self.shape):
-            raise ValueError(f"All dimension sizes must be >= 1, got shape={self.shape}.")
-
-    @property
-    def ndim(self) -> int:
-        """Number of spatial dimensions."""
-        return len(self.shape)
-
-    @property
-    def size(self) -> int:
-        """Total number of grid points (product of all dimension sizes)."""
-        return math.prod(self.shape)
-
-
-# ---------------------------------------------------------------------------
-# CartesianDecomposition
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class CartesianDecomposition:
-    """Decomposition of a domain across an MPI cartesian process grid.
-
-    Parameters
-    ----------
-    domain : Domain
-        The domain being decomposed.
-    grid : tuple[int, ...]
-        Number of MPI sub-domains along each dimension.  Must have the same
-        length as ``domain.shape`` and all entries must be >= 1.
-
-    Examples
-    --------
-    >>> CartesianDecomposition(Domain((360, 300)), grid=(6, 5))
-    """
-
-    domain: Domain
-    grid: tuple[int, ...]
-
-    def __post_init__(self) -> None:
-        if len(self.grid) != self.domain.ndim:
-            raise ValueError(f"grid has {len(self.grid)} dimension(s), but domain has {self.domain.ndim}.")
-        if any(g < 1 for g in self.grid):
-            raise ValueError(f"All grid entries must be >= 1, got grid={self.grid}.")
-
-    @property
-    def n_ranks(self) -> int:
-        """Total MPI ranks used by this decomposition (product of grid entries)."""
-        return math.prod(self.grid)
-
-    @property
-    def local_shape(self) -> tuple[float, ...]:
-        """Average local sub-domain size along each dimension (``domain.shape[i] / grid[i]``).
-
-        Values are floating-point; use :class:`~access.config.layouts.UniformSubdomainConstraint`
-        to enforce exact integer divisibility.
-        """
-        return tuple(d / g for d, g in zip(self.domain.shape, self.grid, strict=True))
-
 
 # ---------------------------------------------------------------------------
 # Rank allocation types
@@ -122,7 +37,7 @@ class CartesianDecomposition:
 
 
 @dataclass(frozen=True)
-class FixedRanks:
+class FixedAllocation:
     """The component must receive exactly ``n_ranks`` MPI ranks.
 
     Parameters
@@ -135,7 +50,7 @@ class FixedRanks:
 
     def __post_init__(self) -> None:
         if self.n_ranks < 1:
-            raise ValueError(f"FixedRanks.n_ranks must be >= 1, got {self.n_ranks}.")
+            raise ValueError(f"FixedAllocation.n_ranks must be >= 1, got {self.n_ranks}.")
 
 
 @dataclass(frozen=True)
@@ -190,19 +105,19 @@ class FreeAllocation:
 
 
 #: Type alias covering all rank-allocation specifications.
-RankAllocation = FixedRanks | RatioAllocation | FreeAllocation
+RankAllocation = FixedAllocation | RatioAllocation | FreeAllocation
 
 
 # ---------------------------------------------------------------------------
-# AllocationSpec
+# AllocationStrategy
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
-class AllocationSpec:
+class AllocationStrategy:
     """Rank-allocation assignment for one node in a component tree.
 
-    An :class:`AllocationSpec` tree is passed to
+    An :class:`AllocationStrategy` tree is passed to
     :func:`~access.config.layouts.enumerate_layouts` to describe how ranks are
     distributed among sub-components, independently of the
     :class:`ParallelComponent` structure (domains and constraints).
@@ -211,16 +126,16 @@ class AllocationSpec:
     ----------
     allocation : RankAllocation
         How this component receives ranks from its parent.
-    subcomponents : dict[str, AllocationSpec]
-        Allocation specs for direct sub-components, keyed by component name.
+    subcomponents : dict[str, AllocationStrategy]
+        Allocation strategies for direct sub-components, keyed by component name.
         Omit (or pass ``{}``) for leaf components.
     local_constraints : tuple[LocalConstraint, ...]
-        Constraints applied only when this allocation spec is active, checked
+        Constraints applied only when this allocation strategy is active, checked
         alongside the component's own :attr:`~ParallelComponent.local_constraints`.
         Use this for strategy-specific filters (e.g. aspect-ratio limits) that
         should not be hard-coded into the component definition.
     group_constraints : tuple[GroupConstraint, ...]
-        Group constraints applied only when this allocation spec is active,
+        Group constraints applied only when this allocation strategy is active,
         checked alongside the parent component's own
         :attr:`~ParallelComponent.group_constraints`.
         Use this for strategy-specific cross-component constraints (e.g.
@@ -229,15 +144,15 @@ class AllocationSpec:
 
     Examples
     --------
-    >>> AllocationSpec(FreeAllocation(), subcomponents={
-    ...     "UM7":   AllocationSpec(FreeAllocation()),
-    ...     "MOM5":  AllocationSpec(FreeAllocation()),
-    ...     "CICE5": AllocationSpec(FixedRanks(12)),
+    >>> AllocationStrategy(FreeAllocation(), subcomponents={
+    ...     "UM7":   AllocationStrategy(FreeAllocation()),
+    ...     "MOM5":  AllocationStrategy(FreeAllocation()),
+    ...     "CICE5": AllocationStrategy(FixedAllocation(12)),
     ... })
     """
 
     allocation: RankAllocation
-    subcomponents: dict[str, AllocationSpec] = field(default_factory=dict)
+    subcomponents: dict[str, AllocationStrategy] = field(default_factory=dict)
     local_constraints: tuple[LocalConstraint, ...] = ()
     group_constraints: tuple[GroupConstraint, ...] = ()
 
@@ -315,7 +230,8 @@ class ParallelComponent:
 
     A component may have:
 
-    * An optional :class:`Domain` whose work is decomposed across the component's
+        * An optional :class:`~access.config.domain_parallelisation.Domain` whose work
+            is decomposed across the component's
       MPI ranks using a cartesian process grid.
     * Sub-components that each receive a disjoint subset of the component's ranks.
     * :class:`LocalConstraint` instances that filter candidate layouts for *this*
@@ -327,7 +243,7 @@ class ParallelComponent:
     ----------
     name : str
         Human-readable identifier.  Must be non-empty.
-    domain : Domain | None
+    domain : access.config.domain_parallelisation.Domain | None
         Grid decomposed across this component's ranks, or ``None``.
     subcomponents : tuple[ParallelComponent, ...]
         Direct child components.  Each receives a disjoint rank subset.
@@ -339,23 +255,16 @@ class ParallelComponent:
         Constraints checked against the *joint* layouts of all sub-components.
         Must be placed on the parent, not the individual sub-components.
 
-    Notes
-    -----
-    Rank-allocation strategies (how ranks are distributed among sub-components)
-    are specified separately via :class:`AllocationSpec` and passed to
-    :func:`~access.config.layouts.enumerate_layouts`.  This decoupling allows
-    the same :class:`ParallelComponent` tree to be enumerated under different strategies.
-
     Examples
     --------
-    >>> atm = ParallelComponent("atmosphere", domain=Domain((192, 144)))
-    >>> ocn = ParallelComponent("ocean",      domain=Domain((360, 300)))
+    >>> atm = ParallelComponent("atmosphere", domain=domain_parallelisation.Domain((192, 144)))
+    >>> ocn = ParallelComponent("ocean",      domain=domain_parallelisation.Domain((360, 300)))
     >>> ice = ParallelComponent("ice")
     >>> coupled = ParallelComponent("coupled_model", subcomponents=(atm, ocn, ice))
     """
 
     name: str
-    domain: Domain | None = None
+    domain: domain_parallelisation.Domain | None = None
     subcomponents: tuple[ParallelComponent, ...] = ()
     local_constraints: tuple[LocalConstraint, ...] = ()
     group_constraints: tuple[GroupConstraint, ...] = ()

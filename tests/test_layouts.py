@@ -6,6 +6,7 @@ import dataclasses
 
 import pytest
 
+from access.config.domain_parallelisation import Domain, DomainCartesianDecomposition
 from access.config.layouts import (
     ComponentLayout,
     FixedThreadsPerRankConstraint,
@@ -22,13 +23,10 @@ from access.config.layouts import (
     ThreadsDivisorConstraint,
     UniformSubdomainConstraint,
     enumerate_layouts,
-    iter_cartesian_decompositions,
 )
 from access.config.parallelisation import (
-    AllocationSpec,
-    CartesianDecomposition,
-    Domain,
-    FixedRanks,
+    AllocationStrategy,
+    FixedAllocation,
     FreeAllocation,
     ParallelComponent,
     RatioAllocation,
@@ -40,19 +38,8 @@ from access.config.parallelisation import (
 
 
 @pytest.fixture(scope="module")
-def domain_1d() -> Domain:
-    return Domain(shape=(100,))
-
-
-@pytest.fixture(scope="module")
 def domain_2d() -> Domain:
     return Domain(shape=(12, 8))
-
-
-@pytest.fixture(scope="module")
-def domain_prime() -> Domain:
-    """Domain whose total size is a prime — forces 1×n or n×1 decompositions."""
-    return Domain(shape=(7, 11))
 
 
 @pytest.fixture(scope="module")
@@ -80,7 +67,7 @@ def two_child_tree(domain_2d: Domain) -> ParallelComponent:
 
 class TestComponentLayout:
     def test_basic(self, domain_2d: Domain) -> None:
-        decomp = CartesianDecomposition(domain_2d, grid=(2, 2))
+        decomp = DomainCartesianDecomposition(domain_2d, grid=(2, 2))
         layout = ComponentLayout("comp", n_ranks=4, threads_per_rank=1, decomposition=decomp)
         assert layout.total_cores == 4
 
@@ -107,66 +94,6 @@ class TestComponentLayout:
 
 
 # ---------------------------------------------------------------------------
-# iter_cartesian_decompositions
-# ---------------------------------------------------------------------------
-
-
-class TestIterCartesianDecompositions:
-    def test_invalid_n_ranks_raises(self, domain_1d: Domain) -> None:
-        with pytest.raises(ValueError, match="n_ranks"):
-            list(iter_cartesian_decompositions(domain_1d, n_ranks=0))
-
-    def test_1d_single(self, domain_1d: Domain) -> None:
-        decomps = list(iter_cartesian_decompositions(domain_1d, n_ranks=1))
-        assert len(decomps) == 1
-        assert decomps[0].grid == (1,)
-
-    def test_1d_multiple(self, domain_1d: Domain) -> None:
-        decomps = list(iter_cartesian_decompositions(domain_1d, n_ranks=4))
-        grids = [d.grid for d in decomps]
-        assert (4,) in grids
-        assert all(d.n_ranks == 4 for d in decomps)
-
-    def test_2d_rank_1(self, domain_2d: Domain) -> None:
-        decomps = list(iter_cartesian_decompositions(domain_2d, n_ranks=1))
-        assert len(decomps) == 1
-        assert decomps[0].grid == (1, 1)
-
-    def test_2d_rank_4(self, domain_2d: Domain) -> None:
-        decomps = list(iter_cartesian_decompositions(domain_2d, n_ranks=4))
-        grids = [d.grid for d in decomps]
-        assert (1, 4) in grids
-        assert (2, 2) in grids
-        assert (4, 1) in grids
-        assert all(d.n_ranks == 4 for d in decomps)
-
-    def test_2d_prime_rank(self, domain_2d: Domain) -> None:
-        # 7 is prime: only (1,7) and (7,1)
-        decomps = list(iter_cartesian_decompositions(domain_2d, n_ranks=7))
-        grids = [d.grid for d in decomps]
-        assert (1, 7) in grids
-        assert (7, 1) in grids
-        assert len(grids) == 2
-
-    def test_3d(self) -> None:
-        domain = Domain(shape=(4, 4, 4))
-        decomps = list(iter_cartesian_decompositions(domain, n_ranks=8))
-        grids = [d.grid for d in decomps]
-        assert all(d.n_ranks == 8 for d in decomps)
-        # (2,2,2) must be among them
-        assert (2, 2, 2) in grids
-
-    def test_all_products_correct(self, domain_2d: Domain) -> None:
-        for n in [1, 2, 3, 6, 12]:
-            for d in iter_cartesian_decompositions(domain_2d, n_ranks=n):
-                assert d.n_ranks == n
-
-    def test_domain_attached(self, domain_2d: Domain) -> None:
-        decomps = list(iter_cartesian_decompositions(domain_2d, n_ranks=4))
-        assert all(d.domain is domain_2d for d in decomps)
-
-
-# ---------------------------------------------------------------------------
 # Category 1 — Cartesian grid constraints
 # ---------------------------------------------------------------------------
 
@@ -178,12 +105,12 @@ class TestProcessGridDimEvenConstraint:
 
     def test_even_grid(self, domain_2d: Domain) -> None:
         c = ProcessGridDimEvenConstraint(dim=0)
-        layout = ComponentLayout("x", 4, 1, CartesianDecomposition(domain_2d, (2, 2)))
+        layout = ComponentLayout("x", 4, 1, DomainCartesianDecomposition(domain_2d, (2, 2)))
         assert c.is_satisfied(layout, total_ranks=4)
 
     def test_odd_grid_fails(self, domain_2d: Domain) -> None:
         c = ProcessGridDimEvenConstraint(dim=0)
-        layout = ComponentLayout("x", 3, 1, CartesianDecomposition(domain_2d, (3, 1)))
+        layout = ComponentLayout("x", 3, 1, DomainCartesianDecomposition(domain_2d, (3, 1)))
         assert not c.is_satisfied(layout, total_ranks=3)
 
     def test_no_decomposition_passes(self) -> None:
@@ -199,12 +126,12 @@ class TestProcessGridDimDivisibleConstraint:
 
     def test_divisible(self, domain_2d: Domain) -> None:
         c = ProcessGridDimDivisibleConstraint(dim=1, divisor=4)
-        layout = ComponentLayout("x", 4, 1, CartesianDecomposition(domain_2d, (1, 4)))
+        layout = ComponentLayout("x", 4, 1, DomainCartesianDecomposition(domain_2d, (1, 4)))
         assert c.is_satisfied(layout, total_ranks=4)
 
     def test_not_divisible(self, domain_2d: Domain) -> None:
         c = ProcessGridDimDivisibleConstraint(dim=1, divisor=4)
-        layout = ComponentLayout("x", 6, 1, CartesianDecomposition(domain_2d, (2, 3)))
+        layout = ComponentLayout("x", 6, 1, DomainCartesianDecomposition(domain_2d, (2, 3)))
         assert not c.is_satisfied(layout, total_ranks=6)
 
     def test_invalid_divisor_raises(self) -> None:
@@ -220,13 +147,13 @@ class TestProcessGridDimDivisibleConstraint:
 class TestProcessGridAspectRatioConstraint:
     def test_square_passes(self, domain_2d: Domain) -> None:
         c = ProcessGridAspectRatioConstraint(max_ratio=2.0)
-        layout = ComponentLayout("x", 4, 1, CartesianDecomposition(domain_2d, (2, 2)))
+        layout = ComponentLayout("x", 4, 1, DomainCartesianDecomposition(domain_2d, (2, 2)))
         assert c.is_satisfied(layout, total_ranks=4)
 
     def test_elongated_fails(self, domain_2d: Domain) -> None:
         c = ProcessGridAspectRatioConstraint(max_ratio=2.0)
         # (1, 12): ratio = 12 > 2
-        layout = ComponentLayout("x", 12, 1, CartesianDecomposition(domain_2d, (1, 12)))
+        layout = ComponentLayout("x", 12, 1, DomainCartesianDecomposition(domain_2d, (1, 12)))
         assert not c.is_satisfied(layout, total_ranks=12)
 
     def test_invalid_ratio_raises(self) -> None:
@@ -314,13 +241,13 @@ class TestUniformSubdomainConstraint:
     def test_uniform(self, domain_2d: Domain) -> None:
         # 12 / 3 == 4, 8 / 2 == 4 — both exact
         c = UniformSubdomainConstraint()
-        layout = ComponentLayout("x", 6, 1, CartesianDecomposition(domain_2d, (3, 2)))
+        layout = ComponentLayout("x", 6, 1, DomainCartesianDecomposition(domain_2d, (3, 2)))
         assert c.is_satisfied(layout, total_ranks=6)
 
     def test_non_uniform(self, domain_2d: Domain) -> None:
         # 12 / 5 is not integer
         c = UniformSubdomainConstraint()
-        layout = ComponentLayout("x", 5, 1, CartesianDecomposition(domain_2d, (5, 1)))
+        layout = ComponentLayout("x", 5, 1, DomainCartesianDecomposition(domain_2d, (5, 1)))
         assert not c.is_satisfied(layout, total_ranks=5)
 
     def test_no_decomposition_passes(self) -> None:
@@ -333,26 +260,26 @@ class TestSubdomainSizeToleranceConstraint:
     def test_very_large_dimension_uses_integer_ceil(self) -> None:
         domain = Domain(shape=(10**400,))
         c = SubdomainSizeToleranceConstraint(tolerance=1.0)
-        layout = ComponentLayout("x", 2, 1, CartesianDecomposition(domain, (2,)))
+        layout = ComponentLayout("x", 2, 1, DomainCartesianDecomposition(domain, (2,)))
         assert c.is_satisfied(layout, total_ranks=2)
 
     def test_exact_passes(self, domain_2d: Domain) -> None:
         c = SubdomainSizeToleranceConstraint(tolerance=1.0)
-        layout = ComponentLayout("x", 6, 1, CartesianDecomposition(domain_2d, (3, 2)))
+        layout = ComponentLayout("x", 6, 1, DomainCartesianDecomposition(domain_2d, (3, 2)))
         assert c.is_satisfied(layout, total_ranks=6)
 
     def test_within_tolerance(self) -> None:
         # Domain (13,), grid (4,): floor=3, ceil=4, ratio=4/3≈1.33 <= 1.5
         domain = Domain(shape=(13,))
         c = SubdomainSizeToleranceConstraint(tolerance=1.5)
-        layout = ComponentLayout("x", 4, 1, CartesianDecomposition(domain, (4,)))
+        layout = ComponentLayout("x", 4, 1, DomainCartesianDecomposition(domain, (4,)))
         assert c.is_satisfied(layout, total_ranks=4)
 
     def test_exceeds_tolerance(self) -> None:
         # Domain (13,), grid (4,): ratio=4/3≈1.33 — fails at tolerance=1.2
         domain = Domain(shape=(13,))
         c = SubdomainSizeToleranceConstraint(tolerance=1.2)
-        layout = ComponentLayout("x", 4, 1, CartesianDecomposition(domain, (4,)))
+        layout = ComponentLayout("x", 4, 1, DomainCartesianDecomposition(domain, (4,)))
         assert not c.is_satisfied(layout, total_ranks=4)
 
     def test_invalid_tolerance_raises(self) -> None:
@@ -368,7 +295,7 @@ class TestSubdomainSizeToleranceConstraint:
         # Domain (2,), grid (4,) -> floor(2/4) = 0, which must fail.
         domain = Domain(shape=(2,))
         c = SubdomainSizeToleranceConstraint(tolerance=10.0)
-        layout = ComponentLayout("x", 4, 1, CartesianDecomposition(domain, (4,)))
+        layout = ComponentLayout("x", 4, 1, DomainCartesianDecomposition(domain, (4,)))
         assert not c.is_satisfied(layout, total_ranks=4)
 
 
@@ -385,7 +312,7 @@ class TestSubdomainAspectRatioConstraint:
     def test_aspect_ratio_check(self) -> None:
         domain = Domain(shape=(12, 8))
         c = SubdomainAspectRatioConstraint(max_ratio=1.2)
-        layout = ComponentLayout("x", 4, 1, CartesianDecomposition(domain, (2, 2)))
+        layout = ComponentLayout("x", 4, 1, DomainCartesianDecomposition(domain, (2, 2)))
         # local_shape = (6, 4) -> ratio 1.5, which exceeds 1.2
         assert not c.is_satisfied(layout, total_ranks=4)
 
@@ -394,13 +321,13 @@ class TestMinSubdomainSizeConstraint:
     def test_large_enough(self, domain_2d: Domain) -> None:
         # 12/3=4, 8/2=4 — both >= 2
         c = MinSubdomainSizeConstraint(min_size=2)
-        layout = ComponentLayout("x", 6, 1, CartesianDecomposition(domain_2d, (3, 2)))
+        layout = ComponentLayout("x", 6, 1, DomainCartesianDecomposition(domain_2d, (3, 2)))
         assert c.is_satisfied(layout, total_ranks=6)
 
     def test_too_small(self, domain_2d: Domain) -> None:
         # 8/8=1 < 2
         c = MinSubdomainSizeConstraint(min_size=2)
-        layout = ComponentLayout("x", 8, 1, CartesianDecomposition(domain_2d, (1, 8)))
+        layout = ComponentLayout("x", 8, 1, DomainCartesianDecomposition(domain_2d, (1, 8)))
         assert not c.is_satisfied(layout, total_ranks=8)
 
     def test_invalid_min_size_raises(self) -> None:
@@ -523,7 +450,9 @@ class TestEnumerateLayoutsLeaf:
             enumerate_layouts(
                 parent,
                 total_cores=4,
-                allocations=AllocationSpec(FreeAllocation(), subcomponents={"TYPO": AllocationSpec(FixedRanks(4))}),
+                allocations=AllocationStrategy(
+                    FreeAllocation(), subcomponents={"TYPO": AllocationStrategy(FixedAllocation(4))}
+                ),
             )
 
     def test_invalid_total_cores_raises(self, leaf_no_domain: ParallelComponent) -> None:
@@ -551,9 +480,12 @@ class TestEnumerateLayoutsTree:
         layouts = enumerate_layouts(
             coupled,
             total_cores=10,
-            allocations=AllocationSpec(
+            allocations=AllocationStrategy(
                 FreeAllocation(),
-                subcomponents={"atm": AllocationSpec(FixedRanks(6)), "ocn": AllocationSpec(FixedRanks(4))},
+                subcomponents={
+                    "atm": AllocationStrategy(FixedAllocation(6)),
+                    "ocn": AllocationStrategy(FixedAllocation(4)),
+                },
             ),
         )
         assert len(layouts) > 0
@@ -576,11 +508,11 @@ class TestEnumerateLayoutsTree:
         layouts = enumerate_layouts(
             coupled,
             total_cores=10,
-            allocations=AllocationSpec(
+            allocations=AllocationStrategy(
                 FreeAllocation(),
                 subcomponents={
-                    "atm": AllocationSpec(RatioAllocation(weight=3)),
-                    "ocn": AllocationSpec(RatioAllocation(weight=2)),
+                    "atm": AllocationStrategy(RatioAllocation(weight=3)),
+                    "ocn": AllocationStrategy(RatioAllocation(weight=2)),
                 },
             ),
         )
@@ -604,11 +536,11 @@ class TestEnumerateLayoutsTree:
         layouts = enumerate_layouts(
             parent,
             total_cores=6,
-            allocations=AllocationSpec(
+            allocations=AllocationStrategy(
                 FreeAllocation(),
                 subcomponents={
-                    "a": AllocationSpec(RatioAllocation(weight=1)),
-                    "b": AllocationSpec(RatioAllocation(weight=1)),
+                    "a": AllocationStrategy(RatioAllocation(weight=1)),
+                    "b": AllocationStrategy(RatioAllocation(weight=1)),
                 },
             ),
         )
@@ -627,12 +559,12 @@ class TestEnumerateLayoutsTree:
         layouts = enumerate_layouts(
             parent,
             total_cores=9,
-            allocations=AllocationSpec(
+            allocations=AllocationStrategy(
                 FreeAllocation(),
                 subcomponents={
-                    "a": AllocationSpec(RatioAllocation(weight=1)),
-                    "b": AllocationSpec(RatioAllocation(weight=1)),
-                    "spare": AllocationSpec(FreeAllocation(min_ranks=1)),
+                    "a": AllocationStrategy(RatioAllocation(weight=1)),
+                    "b": AllocationStrategy(RatioAllocation(weight=1)),
+                    "spare": AllocationStrategy(FreeAllocation(min_ranks=1)),
                 },
             ),
         )
@@ -649,11 +581,11 @@ class TestEnumerateLayoutsTree:
         layouts = enumerate_layouts(
             parent,
             total_cores=4,
-            allocations=AllocationSpec(
+            allocations=AllocationStrategy(
                 FreeAllocation(),
                 subcomponents={
-                    "a": AllocationSpec(FreeAllocation(min_ranks=1, max_ranks=4)),
-                    "b": AllocationSpec(FreeAllocation(min_ranks=1, max_ranks=4)),
+                    "a": AllocationStrategy(FreeAllocation(min_ranks=1, max_ranks=4)),
+                    "b": AllocationStrategy(FreeAllocation(min_ranks=1, max_ranks=4)),
                 },
             ),
         )
@@ -669,9 +601,12 @@ class TestEnumerateLayoutsTree:
         layouts = enumerate_layouts(
             parent,
             total_cores=10,
-            allocations=AllocationSpec(
+            allocations=AllocationStrategy(
                 FreeAllocation(),
-                subcomponents={"a": AllocationSpec(FixedRanks(8)), "b": AllocationSpec(FixedRanks(8))},
+                subcomponents={
+                    "a": AllocationStrategy(FixedAllocation(8)),
+                    "b": AllocationStrategy(FixedAllocation(8)),
+                },
             ),
         )
         assert layouts == []
@@ -683,9 +618,12 @@ class TestEnumerateLayoutsTree:
         layouts = enumerate_layouts(
             parent,
             total_cores=5,
-            allocations=AllocationSpec(
+            allocations=AllocationStrategy(
                 FreeAllocation(),
-                subcomponents={"alpha": AllocationSpec(FixedRanks(2)), "beta": AllocationSpec(FixedRanks(3))},
+                subcomponents={
+                    "alpha": AllocationStrategy(FixedAllocation(2)),
+                    "beta": AllocationStrategy(FixedAllocation(3)),
+                },
             ),
         )
         assert len(layouts) == 1
@@ -700,14 +638,14 @@ class TestEnumerateLayoutsTree:
         layouts = enumerate_layouts(
             root,
             total_cores=4,
-            allocations=AllocationSpec(
+            allocations=AllocationStrategy(
                 FreeAllocation(),
                 subcomponents={
-                    "mid": AllocationSpec(
-                        FixedRanks(4),
+                    "mid": AllocationStrategy(
+                        FixedAllocation(4),
                         subcomponents={
-                            "leaf1": AllocationSpec(FixedRanks(2)),
-                            "leaf2": AllocationSpec(FixedRanks(2)),
+                            "leaf1": AllocationStrategy(FixedAllocation(2)),
+                            "leaf2": AllocationStrategy(FixedAllocation(2)),
                         },
                     ),
                 },
@@ -758,11 +696,11 @@ class TestEnumerateLayoutsConstraints:
         layouts = enumerate_layouts(
             parent,
             total_cores=10,
-            allocations=AllocationSpec(
+            allocations=AllocationStrategy(
                 FreeAllocation(),
                 subcomponents={
-                    "a": AllocationSpec(FreeAllocation(min_ranks=1)),
-                    "b": AllocationSpec(FreeAllocation(min_ranks=1)),
+                    "a": AllocationStrategy(FreeAllocation(min_ranks=1)),
+                    "b": AllocationStrategy(FreeAllocation(min_ranks=1)),
                 },
             ),
         )
@@ -783,11 +721,11 @@ class TestEnumerateLayoutsConstraints:
         layouts = enumerate_layouts(
             parent,
             total_cores=9,
-            allocations=AllocationSpec(
+            allocations=AllocationStrategy(
                 FreeAllocation(),
                 subcomponents={
-                    "a": AllocationSpec(FreeAllocation(min_ranks=1)),
-                    "b": AllocationSpec(FreeAllocation(min_ranks=1)),
+                    "a": AllocationStrategy(FreeAllocation(min_ranks=1)),
+                    "b": AllocationStrategy(FreeAllocation(min_ranks=1)),
                 },
             ),
         )
@@ -815,11 +753,13 @@ class TestEnumerateLayoutsConstraints:
         layouts = enumerate_layouts(
             parent,
             total_cores=5,
-            allocations=AllocationSpec(
+            allocations=AllocationStrategy(
                 FreeAllocation(),
                 subcomponents={
-                    "a": AllocationSpec(FixedRanks(4), local_constraints=(ProcessGridDimEvenConstraint(dim=0),)),
-                    "b": AllocationSpec(FixedRanks(1)),
+                    "a": AllocationStrategy(
+                        FixedAllocation(4), local_constraints=(ProcessGridDimEvenConstraint(dim=0),)
+                    ),
+                    "b": AllocationStrategy(FixedAllocation(1)),
                 },
             ),
         )
@@ -836,11 +776,11 @@ class TestEnumerateLayoutsConstraints:
         layouts = enumerate_layouts(
             parent,
             total_cores=9,
-            allocations=AllocationSpec(
+            allocations=AllocationStrategy(
                 FreeAllocation(),
                 subcomponents={
-                    "a": AllocationSpec(FreeAllocation(min_ranks=1)),
-                    "b": AllocationSpec(FreeAllocation(min_ranks=1)),
+                    "a": AllocationStrategy(FreeAllocation(min_ranks=1)),
+                    "b": AllocationStrategy(FreeAllocation(min_ranks=1)),
                 },
                 group_constraints=(RankRatioGroupConstraint(name_a="a", name_b="b", min_ratio=2.0),),
             ),
@@ -862,11 +802,11 @@ class TestEnumerateLayoutsConstraints:
         layouts = enumerate_layouts(
             parent,
             total_cores=9,
-            allocations=AllocationSpec(
+            allocations=AllocationStrategy(
                 FreeAllocation(),
                 subcomponents={
-                    "a": AllocationSpec(FreeAllocation(min_ranks=1)),
-                    "b": AllocationSpec(FreeAllocation(min_ranks=1)),
+                    "a": AllocationStrategy(FreeAllocation(min_ranks=1)),
+                    "b": AllocationStrategy(FreeAllocation(min_ranks=1)),
                 },
                 group_constraints=(RankRatioGroupConstraint(name_a="b", name_b="a", min_ratio=0.25),),
             ),

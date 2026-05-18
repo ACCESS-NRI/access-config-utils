@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Layout result types, constraints, and enumeration for parallel component trees.
 
-This module builds on top of :mod:`access.config.parallelisation` and provides:
+This module builds on top of :mod:`access.config.parallelisation` and
+:mod:`access.config.domain_parallelisation`, and provides:
 
 - :class:`ComponentLayout`: the resolved parallelisation assignment for one component.
 - Constraint implementations for the four constraint categories:
@@ -20,8 +21,6 @@ This module builds on top of :mod:`access.config.parallelisation` and provides:
      (:class:`MaxThreadsPerRankConstraint`, :class:`FixedThreadsPerRankConstraint`,
      :class:`ThreadsDivisorConstraint`).
 
-- :func:`iter_cartesian_decompositions`: enumerate all valid cartesian decompositions
-  of a domain for a given rank count.
 - :func:`enumerate_layouts`: enumerate all valid :class:`ComponentLayout` trees for a
   component definition and a total core budget.
 """
@@ -29,16 +28,14 @@ This module builds on top of :mod:`access.config.parallelisation` and provides:
 from __future__ import annotations
 
 import itertools
-import math
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import cast
 
+from access.config import domain_parallelisation
 from access.config.parallelisation import (
-    AllocationSpec,
-    CartesianDecomposition,
-    Domain,
-    FixedRanks,
+    AllocationStrategy,
+    FixedAllocation,
     FreeAllocation,
     GroupConstraint,
     LocalConstraint,
@@ -74,7 +71,7 @@ class ComponentLayout:
     name: str
     n_ranks: int
     threads_per_rank: int
-    decomposition: CartesianDecomposition | None
+    decomposition: domain_parallelisation.DomainCartesianDecomposition | None
     sub_layouts: tuple[ComponentLayout, ...] = ()
 
     def __post_init__(self) -> None:
@@ -448,69 +445,6 @@ class ThreadsDivisorConstraint(LocalConstraint):
 
 
 # ---------------------------------------------------------------------------
-# iter_cartesian_decompositions
-# ---------------------------------------------------------------------------
-
-
-def iter_cartesian_decompositions(domain: Domain, n_ranks: int) -> Iterator[CartesianDecomposition]:
-    """Yield all :class:`CartesianDecomposition` objects for *domain* using *n_ranks* ranks.
-
-    Enumerates every N-tuple ``(g0, g1, ..., g_{N-1})`` such that
-    ``g0 * g1 * ... * g_{N-1} == n_ranks`` and ``gi >= 1`` for all ``i``.
-
-    Parameters
-    ----------
-    domain : Domain
-        The domain to be decomposed.
-    n_ranks : int
-        Total number of MPI ranks.  Must be >= 1.
-
-    Yields
-    ------
-    CartesianDecomposition
-        Each valid decomposition in lexicographic grid order.
-
-    Examples
-    --------
-    >>> list(iter_cartesian_decompositions(Domain((10, 10)), 4))
-    [CartesianDecomposition(domain=..., grid=(1, 4)),
-     CartesianDecomposition(domain=..., grid=(2, 2)),
-     CartesianDecomposition(domain=..., grid=(4, 1))]
-    """
-    if n_ranks < 1:
-        raise ValueError(f"iter_cartesian_decompositions: n_ranks must be >= 1, got {n_ranks}.")
-
-    for grid in _iter_grids(domain.ndim, n_ranks):
-        yield CartesianDecomposition(domain, grid)
-
-
-def _iter_divisors(n: int) -> Iterator[int]:
-    """Yield the positive divisors of ``n`` in ascending order."""
-    small_divisors: list[int] = []
-    large_divisors: list[int] = []
-    limit = math.isqrt(n)
-    for divisor in range(1, limit + 1):
-        if n % divisor != 0:
-            continue
-        small_divisors.append(divisor)
-        complement = n // divisor
-        if complement != divisor:
-            large_divisors.append(complement)
-    yield from small_divisors
-    yield from reversed(large_divisors)
-
-
-def _iter_grids(ndim: int, n_ranks: int) -> Iterator[tuple[int, ...]]:
-    """Yield all ndim-tuples whose product equals n_ranks."""
-    if ndim == 1:
-        yield (n_ranks,)
-        return
-    for d0 in _iter_divisors(n_ranks):
-        for rest in _iter_grids(ndim - 1, n_ranks // d0):
-            yield (d0, *rest)
-
-
-# ---------------------------------------------------------------------------
 # Enumeration internals
 # ---------------------------------------------------------------------------
 
@@ -550,13 +484,13 @@ def _iter_free_assignments(
 def _iter_rank_splits(
     subcomponents: tuple[ParallelComponent, ...],
     parent_ranks: int,
-    alloc_specs: tuple[AllocationSpec, ...],
+    alloc_specs: tuple[AllocationStrategy, ...],
 ) -> Iterator[tuple[int, ...]]:
     """Yield all valid rank assignments to *subcomponents* that sum to at most *parent_ranks*.
 
     The three allocation types are read from *alloc_specs* (one per subcomponent):
 
-    * :class:`FixedRanks` – always receives exactly ``n_ranks``.
+    * :class:`FixedAllocation` – always receives exactly ``n_ranks``.
     * :class:`RatioAllocation` – receives ``k * weight`` ranks for an integer
       multiplier *k* >= 1; all ratio siblings share the same *k*.
     * :class:`FreeAllocation` – receives any rank count in ``[min_ranks, max_ranks]``
@@ -569,7 +503,7 @@ def _iter_rank_splits(
     n = len(subcomponents)
     allocs = [spec.allocation for spec in alloc_specs]
 
-    fixed_indices = [i for i, a in enumerate(allocs) if isinstance(a, FixedRanks)]
+    fixed_indices = [i for i, a in enumerate(allocs) if isinstance(a, FixedAllocation)]
     ratio_indices = [i for i, a in enumerate(allocs) if isinstance(a, RatioAllocation)]
     free_indices = [i for i, a in enumerate(allocs) if isinstance(a, FreeAllocation)]
 
@@ -605,15 +539,17 @@ def _iter_rank_splits(
             yield _build_result({}, free_assignment)
 
 
-def _default_alloc_spec(component: ParallelComponent) -> AllocationSpec:
+def _default_alloc_spec(component: ParallelComponent) -> AllocationStrategy:
     """Return a default all-:class:`FreeAllocation` spec tree for *component*."""
-    return AllocationSpec(
+    return AllocationStrategy(
         FreeAllocation(),
         subcomponents={sub.name: _default_alloc_spec(sub) for sub in component.subcomponents},
     )
 
 
-def _validate_alloc_spec_names(component: ParallelComponent, alloc_spec: AllocationSpec, path: str = "root") -> None:
+def _validate_alloc_spec_names(
+    component: ParallelComponent, alloc_spec: AllocationStrategy, path: str = "root"
+) -> None:
     """Validate that allocation-spec child names match the component tree."""
     sub_names = {sub.name for sub in component.subcomponents}
     unknown = set(alloc_spec.subcomponents) - sub_names
@@ -633,12 +569,12 @@ def _enum_component(
     n_ranks: int,
     tpr: int,
     total_ranks: int,
-    alloc_spec: AllocationSpec,
+    alloc_spec: AllocationStrategy,
 ) -> Iterator[ComponentLayout]:
     """Yield all valid :class:`ComponentLayout` objects for *component* with *n_ranks* and *tpr*."""
-    decompositions: list[CartesianDecomposition | None]
+    decompositions: list[domain_parallelisation.DomainCartesianDecomposition | None]
     if component.domain is not None:
-        decompositions = list(iter_cartesian_decompositions(component.domain, n_ranks))
+        decompositions = list(domain_parallelisation.iter_cartesian_decompositions(component.domain, n_ranks))
     else:
         decompositions = [None]
 
@@ -661,7 +597,7 @@ def _iter_valid_sub_layouts(
     n_ranks: int,
     tpr: int,
     total_ranks: int,
-    alloc_spec: AllocationSpec,
+    alloc_spec: AllocationStrategy,
 ) -> Iterator[tuple[ComponentLayout, ...]]:
     """Yield sub-layout tuples for *component*'s subcomponents that satisfy group constraints."""
     if not component.subcomponents:
@@ -671,7 +607,7 @@ def _iter_valid_sub_layouts(
     # Resolve the name-keyed dict to a positional tuple aligned with component.subcomponents.
     # Missing names fall back to FreeAllocation.
     ordered_alloc_specs = tuple(
-        alloc_spec.subcomponents.get(sub.name, AllocationSpec(FreeAllocation())) for sub in component.subcomponents
+        alloc_spec.subcomponents.get(sub.name, AllocationStrategy(FreeAllocation())) for sub in component.subcomponents
     )
 
     for rank_split in _iter_rank_splits(component.subcomponents, n_ranks, ordered_alloc_specs):
@@ -695,7 +631,7 @@ def enumerate_layouts(
     total_cores: int,
     *,
     tpr_range: tuple[int, int] = (1, 1),
-    allocations: AllocationSpec | None = None,
+    allocations: AllocationStrategy | None = None,
 ) -> list[ComponentLayout]:
     """Return all valid :class:`ComponentLayout` trees for *component* given *total_cores*.
 
@@ -716,8 +652,8 @@ def enumerate_layouts(
     tpr_range : tuple[int, int]
         Inclusive range ``(min_tpr, max_tpr)`` of threads-per-rank values to try.
         Defaults to ``(1, 1)`` (pure MPI, no OpenMP threading).
-    allocations : AllocationSpec | None
-        Top-level :class:`~access.config.parallelisation.AllocationSpec` for *component*.
+    allocations : AllocationStrategy | None
+        Top-level :class:`~access.config.parallelisation.AllocationStrategy` for *component*.
         Child allocation specs are provided via its ``subcomponents`` mapping.
         Missing names at any level fall back to
         :class:`~access.config.parallelisation.FreeAllocation`.
