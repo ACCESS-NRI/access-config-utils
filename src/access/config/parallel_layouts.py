@@ -251,7 +251,7 @@ def _iter_rank_splits(
 
 
 def _default_alloc_spec(component: ParallelComponent) -> AllocationStrategy:
-    """Return a default free-allocation spec tree for *component*."""
+    """Return a default free-allocation strategy tree for *component*."""
     return AllocationStrategy(
         subcomponents={sub.name: _default_alloc_spec(sub) for sub in component.subcomponents},
     )
@@ -260,7 +260,7 @@ def _default_alloc_spec(component: ParallelComponent) -> AllocationStrategy:
 def _validate_alloc_spec_names(
     component: ParallelComponent, alloc_spec: AllocationStrategy, path: str = "root"
 ) -> None:
-    """Validate that allocation-spec child names match the component tree."""
+    """Validate that allocation-strategy child names match the component tree."""
     sub_names = {sub.name for sub in component.subcomponents}
     unknown = set(alloc_spec.subcomponents) - sub_names
     if unknown:
@@ -364,7 +364,7 @@ def enumerate_layouts(
         Defaults to ``(1, 1)`` (pure MPI, no OpenMP threading).
     allocations : AllocationStrategy | None
         Top-level :class:`AllocationStrategy` for *component*.
-        Child allocation specs are provided via its ``subcomponents`` mapping.
+        Child allocation strategies are provided via its ``subcomponents`` mapping.
         Missing names at any level fall back to free mode (default
         :class:`AllocationStrategy` with no ``n_ranks`` or ``weight`` set).
         The root ``allocation`` field is accepted for structural consistency,
