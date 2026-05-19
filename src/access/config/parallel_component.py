@@ -64,7 +64,7 @@ class LocalConstraint(ABC):
     """Abstract base for constraints on a single component's layout.
 
     Place instances of subclasses in :attr:`ParallelComponent.local_constraints`.
-    Concrete implementations live in :mod:`access.config.layouts`.
+    Concrete implementations live in :mod:`access.config.constraints`.
     """
 
     @abstractmethod
@@ -79,7 +79,7 @@ class GroupConstraint(ABC):
     *parent* component, because these constraints need access to all siblings'
     layouts simultaneously.
 
-    Concrete implementations live in :mod:`access.config.layouts`.
+    Concrete implementations live in :mod:`access.config.constraints`.
     """
 
     @abstractmethod

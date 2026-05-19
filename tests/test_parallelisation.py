@@ -160,7 +160,7 @@ class TestAllocationStrategy:
         assert parent.subcomponents["b"].n_ranks == 12
 
     def test_with_local_constraints(self) -> None:
-        from access.config.layouts import FixedThreadsPerRankConstraint
+        from access.config.constraints import FixedThreadsPerRankConstraint
 
         c = FixedThreadsPerRankConstraint(n_threads=1)
         spec = AllocationStrategy(local_constraints=(c,))
@@ -171,7 +171,7 @@ class TestAllocationStrategy:
         assert spec.group_constraints == ()
 
     def test_with_group_constraints(self) -> None:
-        from access.config.layouts import RankRatioGroupConstraint
+        from access.config.constraints import RankRatioGroupConstraint
 
         gc = RankRatioGroupConstraint(name_a="a", name_b="b", min_ratio=1.0)
         spec = AllocationStrategy(group_constraints=(gc,))
