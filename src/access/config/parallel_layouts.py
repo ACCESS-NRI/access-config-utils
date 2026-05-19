@@ -163,10 +163,11 @@ def _iter_free_assignments(
 ) -> Iterator[tuple[int, ...]]:
     """Yield all ways to assign up to *budget* ranks among *free_allocs*.
 
-    Assigns ranks to each :class:`FreeAllocation` in order such that each
-    allocation's ``min_ranks``/``max_ranks`` bounds are respected and the total
-    assigned does not exceed *budget*.  Any leftover budget (``budget -
-    sum(assignment)``) is silently unused — callers may apply a
+    Assigns ranks to each :class:`AllocationStrategy` with
+    ``allocation_mode == "free"`` in order such that each allocation's
+    ``min_ranks``/``max_ranks`` bounds are respected and the total assigned does
+    not exceed *budget*. Any leftover budget (``budget - sum(assignment)``) is
+    silently unused — callers may apply a
     :class:`MaxWastedRankFractionConstraint` on the parent component to
     restrict this slack.
     """
@@ -208,8 +209,13 @@ def _iter_rank_splits(
     the unused ranks are left idle.  Use :class:`MaxWastedRankFractionConstraint`
     on the parent component to restrict idle cores.
     """
-    n = len(subcomponents)
     allocs = list(alloc_specs)
+    if len(subcomponents) != len(allocs):
+        raise ValueError(
+            "subcomponents and alloc_specs must have the same length: "
+            f"got {len(subcomponents)} subcomponents and {len(allocs)} allocation specs"
+        )
+    n = len(allocs)
 
     fixed_indices = [i for i, a in enumerate(allocs) if a.n_ranks is not None]
     ratio_indices = [i for i, a in enumerate(allocs) if a.weight is not None]
@@ -367,8 +373,9 @@ def enumerate_layouts(
         Child allocation strategies are provided via its ``subcomponents`` mapping.
         Missing names at any level fall back to free mode (default
         :class:`AllocationStrategy` with no ``n_ranks`` or ``weight`` set).
-        The root ``allocation`` field is accepted for structural consistency,
-        but is not used because the root always receives ``total_ranks``.
+        The root strategy in ``allocations`` is accepted for structural consistency,
+        but its ``n_ranks`` field is not used because the root always receives
+        ``total_ranks``.
         ``None`` (the default) assigns free-mode :class:`AllocationStrategy`
         to every node in the tree recursively.
 

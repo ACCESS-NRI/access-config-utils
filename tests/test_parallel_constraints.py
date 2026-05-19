@@ -53,6 +53,12 @@ class TestProcessGridDimEvenConstraint:
         layout = ComponentLayout("x", 4, 1, None)
         assert c.is_satisfied(layout, total_ranks=4)
 
+    def test_dim_out_of_range_raises(self, domain_2d: Domain) -> None:
+        c = ProcessGridDimEvenConstraint(dim=5)
+        layout = ComponentLayout("x", 4, 1, DomainCartesianDecomposition(domain_2d, (2, 2)))
+        with pytest.raises(ValueError, match="out of range"):
+            c.is_satisfied(layout, total_ranks=4)
+
 
 class TestProcessGridDimDivisibleConstraint:
     def test_negative_dim_raises(self) -> None:
@@ -77,6 +83,12 @@ class TestProcessGridDimDivisibleConstraint:
         c = ProcessGridDimDivisibleConstraint(dim=0, divisor=4)
         layout = ComponentLayout("x", 4, 1, None)
         assert c.is_satisfied(layout, total_ranks=4)
+
+    def test_dim_out_of_range_raises(self, domain_2d: Domain) -> None:
+        c = ProcessGridDimDivisibleConstraint(dim=5, divisor=2)
+        layout = ComponentLayout("x", 4, 1, DomainCartesianDecomposition(domain_2d, (2, 2)))
+        with pytest.raises(ValueError, match="out of range"):
+            c.is_satisfied(layout, total_ranks=4)
 
 
 class TestProcessGridAspectRatioConstraint:

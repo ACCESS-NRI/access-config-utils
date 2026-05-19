@@ -32,7 +32,7 @@ class ComponentLayout:
         MPI ranks assigned to this component.  Must be >= 1.
     threads_per_rank : int
         OpenMP threads per MPI rank.  Must be >= 1.
-    decomposition : CartesianDecomposition | None
+    decomposition : parallel_domain.DomainCartesianDecomposition | None
         How this component's domain is tiled across the MPI cartesian grid, or
         ``None`` when the component has no domain.
     sub_layouts : tuple[ComponentLayout, ...]

@@ -47,7 +47,12 @@ class ProcessGridDimEvenConstraint(LocalConstraint):
     def is_satisfied(self, layout: ComponentLayout, total_ranks: int) -> bool:
         if layout.decomposition is None:
             return True
-        return layout.decomposition.grid[self.dim] % 2 == 0
+        grid = layout.decomposition.grid
+        if self.dim >= len(grid):
+            raise ValueError(
+                f"ProcessGridDimEvenConstraint.dim={self.dim} is out of range for a grid of length {len(grid)}."
+            )
+        return grid[self.dim] % 2 == 0
 
 
 @dataclass(frozen=True)
@@ -74,7 +79,12 @@ class ProcessGridDimDivisibleConstraint(LocalConstraint):
     def is_satisfied(self, layout: ComponentLayout, total_ranks: int) -> bool:
         if layout.decomposition is None:
             return True
-        return layout.decomposition.grid[self.dim] % self.divisor == 0
+        grid = layout.decomposition.grid
+        if self.dim >= len(grid):
+            raise ValueError(
+                f"ProcessGridDimDivisibleConstraint.dim={self.dim} is out of range for a grid of length {len(grid)}."
+            )
+        return grid[self.dim] % self.divisor == 0
 
 
 @dataclass(frozen=True)

@@ -119,7 +119,7 @@ def _iter_grids(ndim: int, n_ranks: int) -> Iterator[tuple[int, ...]]:
 
 
 def iter_cartesian_decompositions(domain: Domain, n_ranks: int) -> Iterator[DomainCartesianDecomposition]:
-    """Yield all :class:`CartesianDecomposition` objects for *domain* using *n_ranks* ranks.
+    """Yield all :class:`DomainCartesianDecomposition` objects for *domain* using *n_ranks* ranks.
 
     Enumerates every N-tuple ``(g0, g1, ..., g_{N-1})`` such that
     ``g0 * g1 * ... * g_{N-1} == n_ranks`` and ``gi >= 1`` for all ``i``.
@@ -133,15 +133,15 @@ def iter_cartesian_decompositions(domain: Domain, n_ranks: int) -> Iterator[Doma
 
     Yields
     ------
-    CartesianDecomposition
+    DomainCartesianDecomposition
         Each valid decomposition in lexicographic grid order.
 
     Examples
     --------
     >>> list(iter_cartesian_decompositions(Domain((10, 10)), 4))
-    [CartesianDecomposition(domain=..., grid=(1, 4)),
-     CartesianDecomposition(domain=..., grid=(2, 2)),
-     CartesianDecomposition(domain=..., grid=(4, 1))]
+    [DomainCartesianDecomposition(domain=..., grid=(1, 4)),
+     DomainCartesianDecomposition(domain=..., grid=(2, 2)),
+     DomainCartesianDecomposition(domain=..., grid=(4, 1))]
     """
     if n_ranks < 1:
         raise ValueError(f"iter_cartesian_decompositions: n_ranks must be >= 1, got {n_ranks}.")
