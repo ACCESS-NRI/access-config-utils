@@ -1,10 +1,11 @@
 # Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for concrete constraints in access.config.constraints."""
+"""Tests for concrete constraints in access.config.parallel_constraints."""
 
 import pytest
 
-from access.config.constraints import (
+from access.config.parallel_component import ComponentLayout
+from access.config.parallel_constraints import (
     FixedThreadsPerRankConstraint,
     MaxRankFractionConstraint,
     MaxThreadsPerRankConstraint,
@@ -19,8 +20,7 @@ from access.config.constraints import (
     ThreadsDivisorConstraint,
     UniformSubdomainConstraint,
 )
-from access.config.domain_parallelisation import Domain, DomainCartesianDecomposition
-from access.config.parallel_component import ComponentLayout
+from access.config.parallel_domain import Domain, DomainCartesianDecomposition
 
 
 @pytest.fixture(scope="module")

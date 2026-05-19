@@ -1,14 +1,14 @@
 """Component-tree model for climate model parallelisation.
 
 This module owns the structural model used by
-:func:`access.config.layouts.enumerate_layouts`:
+:func:`access.config.parallel_layouts.enumerate_layouts`:
 
 - :class:`ComponentLayout` describes the resolved layout for one component.
 - :class:`LocalConstraint` and :class:`GroupConstraint` define constraint hooks.
 - :class:`ParallelComponent` describes the parallelisable tree structure.
 
-See :mod:`access.config.parallelisation` for rank-allocation strategies and
-:mod:`access.config.domain_parallelisation` for domain/decomposition models.
+See :mod:`access.config.parallel_layouts` for rank-allocation strategies and
+:mod:`access.config.parallel_domain` for domain/decomposition models.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from collections import Counter
 from dataclasses import dataclass
 
-from access.config import domain_parallelisation
+from access.config import parallel_domain
 
 
 @dataclass(frozen=True)
@@ -43,7 +43,7 @@ class ComponentLayout:
     name: str
     n_ranks: int
     threads_per_rank: int
-    decomposition: domain_parallelisation.DomainCartesianDecomposition | None
+    decomposition: parallel_domain.DomainCartesianDecomposition | None
     sub_layouts: tuple[ComponentLayout, ...] = ()
 
     def __post_init__(self) -> None:
@@ -64,7 +64,7 @@ class LocalConstraint(ABC):
     """Abstract base for constraints on a single component's layout.
 
     Place instances of subclasses in :attr:`ParallelComponent.local_constraints`.
-    Concrete implementations live in :mod:`access.config.constraints`.
+    Concrete implementations live in :mod:`access.config.parallel_constraints`.
     """
 
     @abstractmethod
@@ -79,7 +79,7 @@ class GroupConstraint(ABC):
     *parent* component, because these constraints need access to all siblings'
     layouts simultaneously.
 
-    Concrete implementations live in :mod:`access.config.constraints`.
+    Concrete implementations live in :mod:`access.config.parallel_constraints`.
     """
 
     @abstractmethod
@@ -93,7 +93,7 @@ class ParallelComponent:
 
     A component may have:
 
-    * An optional :class:`~access.config.domain_parallelisation.Domain` whose work
+    * An optional :class:`~access.config.parallel_domain.Domain` whose work
       is decomposed across the component's MPI ranks using a cartesian process grid.
     * Sub-components that each receive a disjoint subset of the component's ranks.
     * :class:`LocalConstraint` instances that filter candidate layouts for *this*
@@ -105,7 +105,7 @@ class ParallelComponent:
     ----------
     name : str
         Human-readable identifier.  Must be non-empty.
-    domain : access.config.domain_parallelisation.Domain | None
+    domain : access.config.parallel_domain.Domain | None
         Grid decomposed across this component's ranks, or ``None``.
     subcomponents : tuple[ParallelComponent, ...]
         Direct child components.  Each receives a disjoint rank subset.
@@ -119,14 +119,14 @@ class ParallelComponent:
 
     Examples
     --------
-    >>> atm = ParallelComponent("atmosphere", domain=domain_parallelisation.Domain((192, 144)))
-    >>> ocn = ParallelComponent("ocean",      domain=domain_parallelisation.Domain((360, 300)))
+    >>> atm = ParallelComponent("atmosphere", domain=parallel_domain.Domain((192, 144)))
+    >>> ocn = ParallelComponent("ocean",      domain=parallel_domain.Domain((360, 300)))
     >>> ice = ParallelComponent("ice")
     >>> coupled = ParallelComponent("coupled_model", subcomponents=(atm, ocn, ice))
     """
 
     name: str
-    domain: domain_parallelisation.Domain | None = None
+    domain: parallel_domain.Domain | None = None
     subcomponents: tuple[ParallelComponent, ...] = ()
     local_constraints: tuple[LocalConstraint, ...] = ()
     group_constraints: tuple[GroupConstraint, ...] = ()

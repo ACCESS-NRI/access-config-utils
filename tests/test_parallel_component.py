@@ -6,8 +6,8 @@ import dataclasses
 
 import pytest
 
-from access.config.domain_parallelisation import Domain, DomainCartesianDecomposition
 from access.config.parallel_component import ComponentLayout, GroupConstraint, LocalConstraint, ParallelComponent
+from access.config.parallel_domain import Domain, DomainCartesianDecomposition
 
 
 @pytest.fixture(scope="module")

@@ -86,7 +86,7 @@ class DomainCartesianDecomposition:
     def local_shape(self) -> tuple[float, ...]:
         """Average local sub-domain size along each dimension (``domain.shape[i] / grid[i]``).
 
-        Values are floating-point; use :class:`~access.config.layouts.UniformSubdomainConstraint`
+        Values are floating-point; use :class:`~access.config.parallel_constraints.UniformSubdomainConstraint`
         to enforce exact integer divisibility.
         """
         return tuple(d / g for d, g in zip(self.domain.shape, self.grid, strict=True))

@@ -1,12 +1,12 @@
 # Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for access.config.domain_parallelisation."""
+"""Tests for access.config.parallel_domain."""
 
 import dataclasses
 
 import pytest
 
-from access.config.domain_parallelisation import (
+from access.config.parallel_domain import (
     Domain,
     DomainCartesianDecomposition,
     _iter_divisors,
