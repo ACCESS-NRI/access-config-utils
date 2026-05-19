@@ -32,7 +32,6 @@ from __future__ import annotations
 import itertools
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import cast
 
 from access.config import domain_parallelisation
 from access.config.parallel_component import (
@@ -41,12 +40,7 @@ from access.config.parallel_component import (
     LocalConstraint,
     ParallelComponent,
 )
-from access.config.parallelisation import (
-    AllocationStrategy,
-    FixedAllocation,
-    FreeAllocation,
-    RatioAllocation,
-)
+from access.config.parallelisation import AllocationStrategy
 
 # ---------------------------------------------------------------------------
 # Category 1 — Cartesian grid constraints
@@ -410,7 +404,7 @@ class ThreadsDivisorConstraint(LocalConstraint):
 
 
 def _iter_free_assignments(
-    free_allocs: list[FreeAllocation],
+    free_allocs: list[AllocationStrategy],
     budget: int,
 ) -> Iterator[tuple[int, ...]]:
     """Yield all ways to assign up to *budget* ranks among *free_allocs*.
@@ -448,12 +442,12 @@ def _iter_rank_splits(
 ) -> Iterator[tuple[int, ...]]:
     """Yield all valid rank assignments to *subcomponents* that sum to at most *parent_ranks*.
 
-    The three allocation types are read from *alloc_specs* (one per subcomponent):
+    The allocation mode of each *alloc_spec* determines how ranks are distributed:
 
-    * :class:`FixedAllocation` – always receives exactly ``n_ranks``.
-    * :class:`RatioAllocation` – receives ``k * weight`` ranks for an integer
+    * **fixed** (``n_ranks`` is set) – always receives exactly ``n_ranks``.
+    * **ratio** (``weight`` is set) – receives ``k * weight`` ranks for an integer
       multiplier *k* >= 1; all ratio siblings share the same *k*.
-    * :class:`FreeAllocation` – receives any rank count in ``[min_ranks, max_ranks]``
+    * **free** (default) – receives any rank count in ``[min_ranks, max_ranks]``
       from the budget remaining after fixed and ratio allocations.
 
     The total assigned across all sub-components may be less than *parent_ranks*;
@@ -461,17 +455,17 @@ def _iter_rank_splits(
     on the parent component to restrict idle cores.
     """
     n = len(subcomponents)
-    allocs = [spec.allocation for spec in alloc_specs]
+    allocs = list(alloc_specs)
 
-    fixed_indices = [i for i, a in enumerate(allocs) if isinstance(a, FixedAllocation)]
-    ratio_indices = [i for i, a in enumerate(allocs) if isinstance(a, RatioAllocation)]
-    free_indices = [i for i, a in enumerate(allocs) if isinstance(a, FreeAllocation)]
+    fixed_indices = [i for i, a in enumerate(allocs) if a.n_ranks is not None]
+    ratio_indices = [i for i, a in enumerate(allocs) if a.weight is not None]
+    free_indices = [i for i, a in enumerate(allocs) if a.n_ranks is None and a.weight is None]
 
-    fixed_allocs = cast(list[FixedAllocation], [allocs[i] for i in fixed_indices])
-    ratio_allocs = cast(list[RatioAllocation], [allocs[i] for i in ratio_indices])
-    free_allocs = cast(list[FreeAllocation], [allocs[i] for i in free_indices])
+    fixed_allocs = [allocs[i] for i in fixed_indices]
+    ratio_allocs = [allocs[i] for i in ratio_indices]
+    free_allocs = [allocs[i] for i in free_indices]
 
-    fixed_total = sum(alloc.n_ranks for alloc in fixed_allocs)
+    fixed_total = sum(alloc.n_ranks for alloc in fixed_allocs)  # type: ignore[misc]
     available = parent_ranks - fixed_total
 
     if available < 0:
@@ -482,7 +476,7 @@ def _iter_rank_splits(
     def _build_result(ratio_ranks: dict[int, int], free_assignment: tuple[int, ...]) -> tuple[int, ...]:
         result = [0] * n
         for i in fixed_indices:
-            result[i] = fixed_allocs[fixed_indices.index(i)].n_ranks
+            result[i] = fixed_allocs[fixed_indices.index(i)].n_ranks  # type: ignore[assignment]
         for i, r in ratio_ranks.items():
             result[i] = r
         for i, r in zip(free_indices, free_assignment, strict=True):
@@ -490,10 +484,10 @@ def _iter_rank_splits(
         return tuple(result)
 
     if ratio_indices:
-        sum_ratio_weights = sum(alloc.weight for alloc in ratio_allocs)
+        sum_ratio_weights = sum(alloc.weight for alloc in ratio_allocs)  # type: ignore[misc]
         max_k = (available - free_min_total) // sum_ratio_weights
         for k in range(1, max_k + 1):
-            ratio_ranks = {i: k * alloc.weight for i, alloc in zip(ratio_indices, ratio_allocs, strict=True)}
+            ratio_ranks = {i: k * alloc.weight for i, alloc in zip(ratio_indices, ratio_allocs, strict=True)}  # type: ignore[misc]
             remaining = available - k * sum_ratio_weights
             for free_assignment in _iter_free_assignments(free_allocs, remaining):
                 yield _build_result(ratio_ranks, free_assignment)
@@ -503,9 +497,8 @@ def _iter_rank_splits(
 
 
 def _default_alloc_spec(component: ParallelComponent) -> AllocationStrategy:
-    """Return a default all-:class:`FreeAllocation` spec tree for *component*."""
+    """Return a default free-allocation spec tree for *component*."""
     return AllocationStrategy(
-        FreeAllocation(),
         subcomponents={sub.name: _default_alloc_spec(sub) for sub in component.subcomponents},
     )
 
@@ -570,7 +563,7 @@ def _iter_valid_sub_layouts(
     # Resolve the name-keyed dict to a positional tuple aligned with component.subcomponents.
     # Missing names fall back to FreeAllocation.
     ordered_alloc_specs = tuple(
-        alloc_spec.subcomponents.get(sub.name, AllocationStrategy(FreeAllocation())) for sub in component.subcomponents
+        alloc_spec.subcomponents.get(sub.name, AllocationStrategy()) for sub in component.subcomponents
     )
 
     for rank_split in _iter_rank_splits(component.subcomponents, n_ranks, ordered_alloc_specs):

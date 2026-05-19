@@ -24,12 +24,7 @@ from access.config.layouts import (
     enumerate_layouts,
 )
 from access.config.parallel_component import ComponentLayout, ParallelComponent
-from access.config.parallelisation import (
-    AllocationStrategy,
-    FixedAllocation,
-    FreeAllocation,
-    RatioAllocation,
-)
+from access.config.parallelisation import AllocationStrategy
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -452,9 +447,7 @@ class TestEnumerateLayoutsLeaf:
             enumerate_layouts(
                 parent,
                 total_cores=4,
-                allocations=AllocationStrategy(
-                    FreeAllocation(), subcomponents={"TYPO": AllocationStrategy(FixedAllocation(4))}
-                ),
+                allocations=AllocationStrategy(subcomponents={"TYPO": AllocationStrategy(n_ranks=4)}),
             )
 
     def test_invalid_total_cores_raises(self, leaf_no_domain: ParallelComponent) -> None:
@@ -483,10 +476,9 @@ class TestEnumerateLayoutsTree:
             coupled,
             total_cores=10,
             allocations=AllocationStrategy(
-                FreeAllocation(),
                 subcomponents={
-                    "atm": AllocationStrategy(FixedAllocation(6)),
-                    "ocn": AllocationStrategy(FixedAllocation(4)),
+                    "atm": AllocationStrategy(n_ranks=6),
+                    "ocn": AllocationStrategy(n_ranks=4),
                 },
             ),
         )
@@ -511,10 +503,9 @@ class TestEnumerateLayoutsTree:
             coupled,
             total_cores=10,
             allocations=AllocationStrategy(
-                FreeAllocation(),
                 subcomponents={
-                    "atm": AllocationStrategy(RatioAllocation(weight=3)),
-                    "ocn": AllocationStrategy(RatioAllocation(weight=2)),
+                    "atm": AllocationStrategy(weight=3),
+                    "ocn": AllocationStrategy(weight=2),
                 },
             ),
         )
@@ -539,10 +530,9 @@ class TestEnumerateLayoutsTree:
             parent,
             total_cores=6,
             allocations=AllocationStrategy(
-                FreeAllocation(),
                 subcomponents={
-                    "a": AllocationStrategy(RatioAllocation(weight=1)),
-                    "b": AllocationStrategy(RatioAllocation(weight=1)),
+                    "a": AllocationStrategy(weight=1),
+                    "b": AllocationStrategy(weight=1),
                 },
             ),
         )
@@ -562,11 +552,10 @@ class TestEnumerateLayoutsTree:
             parent,
             total_cores=9,
             allocations=AllocationStrategy(
-                FreeAllocation(),
                 subcomponents={
-                    "a": AllocationStrategy(RatioAllocation(weight=1)),
-                    "b": AllocationStrategy(RatioAllocation(weight=1)),
-                    "spare": AllocationStrategy(FreeAllocation(min_ranks=1)),
+                    "a": AllocationStrategy(weight=1),
+                    "b": AllocationStrategy(weight=1),
+                    "spare": AllocationStrategy(min_ranks=1),
                 },
             ),
         )
@@ -584,10 +573,9 @@ class TestEnumerateLayoutsTree:
             parent,
             total_cores=4,
             allocations=AllocationStrategy(
-                FreeAllocation(),
                 subcomponents={
-                    "a": AllocationStrategy(FreeAllocation(min_ranks=1, max_ranks=4)),
-                    "b": AllocationStrategy(FreeAllocation(min_ranks=1, max_ranks=4)),
+                    "a": AllocationStrategy(min_ranks=1, max_ranks=4),
+                    "b": AllocationStrategy(min_ranks=1, max_ranks=4),
                 },
             ),
         )
@@ -604,10 +592,9 @@ class TestEnumerateLayoutsTree:
             parent,
             total_cores=10,
             allocations=AllocationStrategy(
-                FreeAllocation(),
                 subcomponents={
-                    "a": AllocationStrategy(FixedAllocation(8)),
-                    "b": AllocationStrategy(FixedAllocation(8)),
+                    "a": AllocationStrategy(n_ranks=8),
+                    "b": AllocationStrategy(n_ranks=8),
                 },
             ),
         )
@@ -621,10 +608,9 @@ class TestEnumerateLayoutsTree:
             parent,
             total_cores=5,
             allocations=AllocationStrategy(
-                FreeAllocation(),
                 subcomponents={
-                    "alpha": AllocationStrategy(FixedAllocation(2)),
-                    "beta": AllocationStrategy(FixedAllocation(3)),
+                    "alpha": AllocationStrategy(n_ranks=2),
+                    "beta": AllocationStrategy(n_ranks=3),
                 },
             ),
         )
@@ -641,13 +627,12 @@ class TestEnumerateLayoutsTree:
             root,
             total_cores=4,
             allocations=AllocationStrategy(
-                FreeAllocation(),
                 subcomponents={
                     "mid": AllocationStrategy(
-                        FixedAllocation(4),
+                        n_ranks=4,
                         subcomponents={
-                            "leaf1": AllocationStrategy(FixedAllocation(2)),
-                            "leaf2": AllocationStrategy(FixedAllocation(2)),
+                            "leaf1": AllocationStrategy(n_ranks=2),
+                            "leaf2": AllocationStrategy(n_ranks=2),
                         },
                     ),
                 },
@@ -701,10 +686,9 @@ class TestEnumerateLayoutsConstraints:
             parent,
             total_cores=10,
             allocations=AllocationStrategy(
-                FreeAllocation(),
                 subcomponents={
-                    "a": AllocationStrategy(FreeAllocation(min_ranks=1)),
-                    "b": AllocationStrategy(FreeAllocation(min_ranks=1)),
+                    "a": AllocationStrategy(min_ranks=1),
+                    "b": AllocationStrategy(min_ranks=1),
                 },
             ),
         )
@@ -726,10 +710,9 @@ class TestEnumerateLayoutsConstraints:
             parent,
             total_cores=9,
             allocations=AllocationStrategy(
-                FreeAllocation(),
                 subcomponents={
-                    "a": AllocationStrategy(FreeAllocation(min_ranks=1)),
-                    "b": AllocationStrategy(FreeAllocation(min_ranks=1)),
+                    "a": AllocationStrategy(min_ranks=1),
+                    "b": AllocationStrategy(min_ranks=1),
                 },
             ),
         )
@@ -758,12 +741,9 @@ class TestEnumerateLayoutsConstraints:
             parent,
             total_cores=5,
             allocations=AllocationStrategy(
-                FreeAllocation(),
                 subcomponents={
-                    "a": AllocationStrategy(
-                        FixedAllocation(4), local_constraints=(ProcessGridDimEvenConstraint(dim=0),)
-                    ),
-                    "b": AllocationStrategy(FixedAllocation(1)),
+                    "a": AllocationStrategy(n_ranks=4, local_constraints=(ProcessGridDimEvenConstraint(dim=0),)),
+                    "b": AllocationStrategy(n_ranks=1),
                 },
             ),
         )
@@ -783,10 +763,9 @@ class TestEnumerateLayoutsConstraints:
             parent,
             total_cores=9,
             allocations=AllocationStrategy(
-                FreeAllocation(),
                 subcomponents={
-                    "a": AllocationStrategy(FreeAllocation(min_ranks=1)),
-                    "b": AllocationStrategy(FreeAllocation(min_ranks=1)),
+                    "a": AllocationStrategy(min_ranks=1),
+                    "b": AllocationStrategy(min_ranks=1),
                 },
                 group_constraints=(RankRatioGroupConstraint(name_a="a", name_b="b", min_ratio=2.0),),
             ),
@@ -809,10 +788,9 @@ class TestEnumerateLayoutsConstraints:
             parent,
             total_cores=9,
             allocations=AllocationStrategy(
-                FreeAllocation(),
                 subcomponents={
-                    "a": AllocationStrategy(FreeAllocation(min_ranks=1)),
-                    "b": AllocationStrategy(FreeAllocation(min_ranks=1)),
+                    "a": AllocationStrategy(min_ranks=1),
+                    "b": AllocationStrategy(min_ranks=1),
                 },
                 group_constraints=(RankRatioGroupConstraint(name_a="b", name_b="a", min_ratio=0.25),),
             ),
