@@ -13,6 +13,7 @@ permissions:
   contents: read
 
 env:
+  PIP_UPLOADED_PRIOR_TO: P7D
   PY_VERSION_BUILD: 3.12
 
 jobs:

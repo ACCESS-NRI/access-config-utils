@@ -5,6 +5,7 @@ on:
       - 'v*'
 
 env:
+  PIP_UPLOADED_PRIOR_TO: P7D
   PY_VERSION: 3.12
 
 jobs:
