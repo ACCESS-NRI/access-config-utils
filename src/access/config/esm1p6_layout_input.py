@@ -620,6 +620,7 @@ def generate_esm1p6_perturb_block(layout: LayoutTuple, branch_name_prefix: str) 
     atm_nx, atm_ny = layout.atm_nx, layout.atm_ny
     mom_nx, mom_ny = layout.mom_nx, layout.mom_ny
     ice_ncores = layout.ice_ncores
+    ice_nx_per_core = 360 // int(ice_ncores)
     atm_ncores = atm_nx * atm_ny
     mom_ncores = mom_nx * mom_ny
     branch_name = f"{branch_name_prefix}_atm_{atm_nx}x{atm_ny}_mom_{mom_nx}x{mom_ny}_ice_{ice_ncores}x1"
@@ -632,7 +633,7 @@ def generate_esm1p6_perturb_block(layout: LayoutTuple, branch_name_prefix: str) 
                     {"ncpus": mom_ncores},  # ncores for ocean
                     {
                         "ncpus": ice_ncores,  # ncores for ice
-                        "exe": [f"cice_access-esm1.6_360x300_{ice_ncores}x1_{ice_ncores}p.exe"],
+                        "exe": [f"cice_access_360x300_{ice_nx_per_core}x300.exe"],
                     },
                 ]
             ]
