@@ -521,3 +521,20 @@ def test_config_string_quote_switching(parser):
     with pytest.raises(TypeError):
         config["a"] = "has ' and \""
     assert str(config) == "a=\"has ' inside\"b='has \" inside'"
+
+
+def test_config_non_finite_floats(parser):
+    """Test that infinities and NaNs are refused rather than written as bare words.
+
+    Python writes them as ``inf`` and ``nan``, which no supported format reads back as a
+    number, so writing one would silently produce a file that no longer means the same.
+    """
+    config = parser.parse("a=1.0 b=(1.0, 2.0) c=1.0d0")
+
+    for key in ("a", "b", "c"):
+        for value in (float("inf"), float("-inf"), float("nan")):
+            with pytest.raises(TypeError):
+                config[key] = value if key != "b" else complex(value, 0.0)
+
+    # None of the refused assignments changed the file.
+    assert str(config) == "a=1.0 b=(1.0, 2.0)c=1.0d0"

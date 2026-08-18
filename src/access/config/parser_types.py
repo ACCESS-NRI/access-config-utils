@@ -9,6 +9,7 @@ provides the ``VALUE_TYPE_HANDLER_REGISTRY`` that maps grammar rule names to the
 handlers.
 """
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,7 +66,13 @@ def _float_to_str(value: float, token_text: str) -> str:
     Returns:
         str: The float as a string.
 
+    Raises:
+        UnsupportedEntryError: If *value* is an infinity or a NaN. Python writes those as
+            bare words that no supported format can read back, so writing one would produce
+            a file that no longer parses.
     """
+    if not math.isfinite(value):
+        raise UnsupportedEntryError(f"{value!r} cannot be represented in a configuration file")
     for c in token_text:
         if c in ["D", "d", "E", "e"]:
             return str(value).replace("e", c)
