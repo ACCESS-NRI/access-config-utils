@@ -10,63 +10,45 @@ logger = logging.getLogger(__name__)
 
 
 class LayoutSearchConfig:
-    """
-    Configuration class for setting up searching for core layouts with different model components.
+    """Configuration for searching core layouts across the model components.
 
-    Parameters
-    ----------
-    tol_around_ctrl_ratio : float or None, optional, default=None
-        Tolerance around the control ratio for core allocation to ATM and MOM.
-        If set, the min and max fractions of MOM ncores over ATM ncores will be set to (at most) within
-        (1 ± tol_around_ctrl_ratio) of the released PI config. Must be in the range [0.0, 1.0].
-        If not set, the min and max fractions of MOM ncores over ATM ncores are used from the
-        ``mom_ncores_over_atm_ncores_range`` parameter.
-
-        When set to 0.0, the ratio of MOM ncores to ATM ncores needs to *exactly* match the
-        ratio in the control layout. This is guaranteed to at least generate the control
-        layout for the control num_nodes, but may not generate any layouts for other node counts.
-
-        *Note*: This parameter takes precedence over ``mom_ncores_over_atm_ncores_range`` if both are set.
-
-    frac_mom_ncores_over_atm_ncores : (float, float), optional, default=(0.75, 1.25)
-        Fraction of ocean model cores over atmosphere model cores.
-        A tuple of two floats representing the minimum and maximum fractions of MOM ncores over ATM
-        ncores to consider when generating layouts. Must be greater than 0.0, and the second
-        value (i.e, the max.) must be at least equal to the first value (i.e., the min.)
-        Layouts with MOM ncores over ATM ncores outside this range will be discarded.
-
-        *Note*: This parameter is set automatically if ``tol_around_ctrl_ratio`` is set.
-
-    atm_ncore_stepsize : int, optional, default=2
-        The step size to cover the range of allowed number of atmosphere model cores.
-        Must be a non-zero and positive integer.
-
-    abs_maxdiff_nx_ny : int, optional, default=4
-        Absolute max. of the difference between nx and ny (in the solved layout) to
-        consider when generating layouts. Must be a non-negative integer.
-
-        *Note*: Setting to 0 will return only square layouts. Applies to both ATM and MOM layouts.
-
-    max_wasted_ncores_frac : float, optional, default=0.02
-        Maximum fraction of wasted cores (i.e. not used by atm, mom or ice) to allow when generating layouts.
-        Must be in the range [0.0, 1.0].
-
-    prefer_atm_nx_greater_than_ny : bool, optional, default=True
-        If True, only consider ATM layouts with nx >= ny.
-
-    prefer_mom_nx_greater_than_ny : bool, optional, default=True
-        If True, only consider MOM layouts with nx >= ny.
-
-    prefer_atm_ncores_greater_than_mom_ncores : bool, optional, default=True
-        If True, only consider layouts with ATM ncores >= MOM ncores.
-
-    allocate_unused_cores_to_ice : bool, optional, default=False
-        If True, allocate unused cores to the ice model.
-
-    ctrl_ratio : float
-        Ratio of MOM to ATM cores in the control layout. Set automatically
-        when the class is instantiated.
-
+    Args:
+        frac_mom_ncores_over_atm_ncores (tuple[float, float]): Fraction of ocean model
+            cores over atmosphere model cores: the minimum and maximum fractions of MOM
+            ncores over ATM ncores to consider when generating layouts. Must be greater
+            than 0.0, and the second value (the max.) must be at least equal to the first
+            (the min.). Layouts outside this range are discarded. Defaults to
+            ``(0.75, 1.25)``. *Note*: set automatically if *tol_around_ctrl_ratio* is set.
+        tol_around_ctrl_ratio (float | None): Tolerance around the control ratio for core
+            allocation to ATM and MOM. If set, the min and max fractions of MOM ncores
+            over ATM ncores are set to (at most) within ``(1 ± tol_around_ctrl_ratio)`` of
+            the released PI config. Must be in the range ``[0.0, 1.0]``. If not set, the
+            fractions come from *frac_mom_ncores_over_atm_ncores* instead. When set to
+            0.0, the ratio of MOM ncores to ATM ncores must *exactly* match the ratio in
+            the control layout: that is guaranteed to generate at least the control layout
+            for the control ``num_nodes``, but may generate none for other node counts.
+            Defaults to ``None``. *Note*: takes precedence over
+            *frac_mom_ncores_over_atm_ncores* if both are set.
+        atm_ncore_stepsize (int): The step size to cover the range of allowed number of
+            atmosphere model cores. Must be a non-zero positive integer. Defaults to 2.
+        abs_maxdiff_nx_ny (int): Absolute max. of the difference between nx and ny (in the
+            solved layout) to consider when generating layouts. Must be a non-negative
+            integer. Defaults to 4. *Note*: setting it to 0 returns only square layouts,
+            and it applies to both ATM and MOM layouts.
+        max_wasted_ncores_frac (float): Maximum fraction of wasted cores (i.e. not used by
+            atm, mom or ice) to allow when generating layouts. Must be in the range
+            ``[0.0, 1.0]``. Defaults to 0.02.
+        prefer_atm_nx_greater_than_ny (bool): If ``True``, only consider ATM layouts with
+            ``nx >= ny``. Defaults to ``True``.
+        prefer_mom_nx_greater_than_ny (bool): If ``True``, only consider MOM layouts with
+            ``nx >= ny``. Defaults to ``True``.
+        prefer_atm_ncores_greater_than_mom_ncores (bool): If ``True``, only consider
+            layouts with ATM ncores >= MOM ncores. Defaults to ``True``.
+        allocate_unused_cores_to_ice (bool): If ``True``, allocate unused cores to the ice
+            model. Defaults to ``False``.
+        validate_on_init (bool): If ``True``, validate the configuration during
+            construction rather than leaving it to an explicit ``validate()`` call.
+            Defaults to ``True``.
     """
 
     frac_mom_ncores_over_atm_ncores: tuple[float, float]
@@ -228,25 +210,18 @@ class LayoutSearchConfig:
 
 
 def set_ice_ncores(min_ice_ncores: int, max_ice_ncores: int, blocksize: int = 360, smallest_factor: bool = True) -> int:
-    """
-    Sets the number of cores for ICE such that it divides the given blocksize, and is the largest
-    possible value within the given min and max range.
+    """Set the number of ICE cores to a factor of *blocksize* within the given range.
 
-    Parameters
-    ----------
-    min_ice_ncores : int, required
-        Minimum number of ICE cores to consider. Must be at least 1 and less than or equal to max_ice_ncores.
-
-    max_ice_ncores : int, required
-        Maximum number of ICE cores to consider. Must be at least 1 and greater than or equal to min_ice_ncores.
-
-    blocksize : int, optional, default=360 (the blocksize used in the released ESM 1.6 PI config)
-        Blocksize to use for determining the ICE core layout. Must be at least 1.
-
-    smallest_factor : bool, optional, default=True
-        If True, the smallest factor of the blocksize that is within the min and max ICE ncores will be used.
-        If False, the largest factor will be used.
-
+    Args:
+        min_ice_ncores (int): Minimum number of ICE cores to consider. Must be at least 1
+            and less than or equal to *max_ice_ncores*.
+        max_ice_ncores (int): Maximum number of ICE cores to consider. Must be at least 1
+            and greater than or equal to *min_ice_ncores*.
+        blocksize (int): Blocksize to use for determining the ICE core layout. Must be at
+            least 1. Defaults to 360, the blocksize used in the released ESM 1.6 PI config.
+        smallest_factor (bool): If ``True``, use the smallest factor of the blocksize that
+            is within the min and max ICE ncores. If ``False``, use the largest factor.
+            Defaults to ``True``.
     """
     if min_ice_ncores < 1 or max_ice_ncores < 1 or max_ice_ncores < min_ice_ncores:
         raise ValueError("Invalid min/max ice ncores. Expected both to be >= 1 and max >= min.")
@@ -270,8 +245,8 @@ def set_ice_ncores(min_ice_ncores: int, max_ice_ncores: int, blocksize: int = 36
 
 
 # The noqa comment is to suppress the complexity warning from ruff/flake8
-# The complexity of this function is high due to the nested loops and multiple conditionals. Some day
-# I or someone else will refactor it to reduce the complexity. - MS 7th Oct, 2025
+# The complexity of this function is high due to the nested loops and multiple conditionals.
+# Some day I or someone else will refactor it to reduce the complexity. - MS 7th Oct, 2025
 def _generate_esm1p6_layout_from_core_counts(  # noqa: C901
     min_atm_ncores: int,
     max_atm_ncores: int,
@@ -281,36 +256,22 @@ def _generate_esm1p6_layout_from_core_counts(  # noqa: C901
     *,
     layout_search_config: LayoutSearchConfig | None = None,
 ) -> list:
-    """
-    Returns a list of possible core layouts for the Atmosphere and Ocean for the ESM 1.6 PI config
+    """Return the possible Atmosphere and Ocean core layouts for the ESM 1.6 PI config.
 
-    Parameters
-    ----------
-    min_atm_ncores : int, required
-        Minimum number of ATM cores to consider when generating layouts.
-        Must be at least 2 and less than or equal to max_atm_ncores.
-
-    max_atm_ncores : int, required
-        Maximum number of ATM cores to consider when generating layouts.
-        Must be at least 2 and greater than or equal to min_atm_ncores.
-
-    ncores_for_atm_and_ocn : int, required
-        Total number of cores available for ATM and MOM.
-        Must be at least 3 (2 for atm and 1 for mom).
-
-    ice_ncores : int, required
-        Number of cores allocated to ICE. Must be at least 1.
-
-    min_ncores_needed : int, required
-        Minimum number of cores that must be used by ATM, MOM and ICE combined.
-        Must be at least 3 + ice_ncores (2 for ATM, 1 for MOM and ``ice_ncores`` for ice).
-        Layouts using fewer cores will be discarded.
-
-    layout_search_config : LayoutSearchConfig, optional, default=None
-        An instance of the LayoutSearchConfig class containing configuration parameters for layout generation.
-        Please refer to the class documentation for the parameters and their descriptions.
-        If None, default values will be used.
-
+    Args:
+        min_atm_ncores (int): Minimum number of ATM cores to consider when generating
+            layouts. Must be at least 2 and less than or equal to *max_atm_ncores*.
+        max_atm_ncores (int): Maximum number of ATM cores to consider when generating
+            layouts. Must be at least 2 and greater than or equal to *min_atm_ncores*.
+        ncores_for_atm_and_ocn (int): Total number of cores available for ATM and MOM.
+            Must be at least 3 (2 for atm and 1 for mom).
+        ice_ncores (int): Number of cores allocated to ICE. Must be at least 1.
+        min_ncores_needed (int): Minimum number of cores that must be used by ATM, MOM and
+            ICE combined. Must be at least ``3 + ice_ncores`` (2 for ATM, 1 for MOM and
+            ``ice_ncores`` for ice). Layouts using fewer cores are discarded.
+        layout_search_config (LayoutSearchConfig | None): Configuration parameters for
+            layout generation; see the class documentation for the parameters and their
+            descriptions. ``None`` (the default) uses the default values.
     """
 
     min_atm_and_mom_ncores = 3  # atm requires min 2 ncores (2x1 layout), mom requires min 1 ncore (1x1 layout)
@@ -383,7 +344,8 @@ def _generate_esm1p6_layout_from_core_counts(  # noqa: C901
             if not mom_layout:
                 continue
 
-            # filter mom_layout to only include layouts with ncores in the range [min_mom_ncores, max_mom_ncores]
+            # filter mom_layout down to layouts with ncores within
+            # [min_mom_ncores, max_mom_ncores]
             layout = []
             for mom_nx, mom_ny in mom_layout:
                 mom_ncores = mom_nx * mom_ny
@@ -429,62 +391,38 @@ def _generate_esm1p6_layout_from_core_counts(  # noqa: C901
 
 
 # The noqa comment is to suppress the complexity warning from ruff/flake8
-# The complexity of this function is high due to the nested loops and multiple conditionals. Some day
-# I or someone else will refactor it to reduce the complexity. - MS 7th Oct, 2025
+# The complexity of this function is high due to the nested loops and multiple conditionals.
+# Some day I or someone else will refactor it to reduce the complexity. - MS 7th Oct, 2025
 def generate_esm1p6_core_layouts_from_node_count(
     num_nodes: float,
     cores_per_node: int,
     *,
     layout_search_config: LayoutSearchConfig | None = None,
 ) -> list:
-    """
-    Given a target number of nodes to use, this function generates possible core layouts for the Atmosphere and Ocean
-    for the ESM 1.6 PI config.
+    """Generate possible ESM 1.6 PI core layouts for a target number of nodes.
 
-    Parameters
-    ----------
-    num_nodes : float or integer, required
-        A positive number representing the number of nodes to use.
+    Note: atm requires nx to be even, so atm requires min 2 cores (2x1 layout), mom
+    requires min 1 core (1x1 layout) and ice requires min 1 core. The released PI
+    configuration used as the reference is atm 16x13 (208 cores), ocn 14x14 (196 cores)
+    and ice 12x1 (12 cores), on the ``normalsr`` queue over 4 nodes, for a total of 416
+    cores, all of them used.
 
-    cores_per_node : int, required
-        Number of cores available per node. Must be a positive integer.
+    Args:
+        num_nodes (float): A positive number representing the number of nodes to use.
+        cores_per_node (int): Number of cores available per node. Must be a positive
+            integer.
+        layout_search_config (LayoutSearchConfig | None): Configuration parameters for
+            layout generation; see the class documentation for the parameters and their
+            descriptions. ``None`` (the default) uses the default values.
 
-    layout_search_config : LayoutSearchConfig, optional, default=None
-        An instance of the LayoutSearchConfig class containing configuration parameters for layout generation.
-        Please refer to the class documentation for the parameters and their descriptions.
-        If None, default values will be used.
+    Returns:
+        list[LayoutTuple]: The layouts for the given number of nodes, each with the
+            fields ``atm_nx``, ``atm_ny``, ``mom_nx``, ``mom_ny`` and ``ice_ncores``,
+            plus the computed property ``ncores_used``. Empty if no valid layout could
+            be generated.
 
-    Returns
-    -------
-    list
-        A list containing instances of the class LayoutTuple, corresponds to the layouts for the respective number of
-        nodes. Each instance has the following fields:
-        - atm_nx : int
-        - atm_ny : int
-        - mom_nx : int
-        - mom_ny : int
-        - ice_ncores : int
-        - ncores_used : int (computed property := atm_nx * atm_ny + mom_nx * mom_ny + ice_ncores)
-
-        An empty list is returned if no valid layouts could be generated.
-
-    Raises
-    ------
-    ValueError
-        If any of the input parameters are invalid.
-
-    Notes
-    -----
-    - atm requires nx to be even -> atm requires min 2 cores (2x1 layout),
-      mom requires min 1 core (1x1 layout), ice requires min 1 core
-    - The released PI configuration used is:
-        - atm: 16x13 (208 cores)
-        - ocn: 14x14 (196 cores)
-        - ice: 12x1  (12 cores)
-        - queue: normalsr
-        - num_nodes: 4
-        - totncores: 416 cores
-        - ncores_used: 416 cores
+    Raises:
+        ValueError: If any of the input parameters are invalid.
     """
 
     if num_nodes <= 0:
@@ -516,7 +454,8 @@ def generate_esm1p6_core_layouts_from_node_count(
 
     logger.debug(f"Generating layouts for {num_nodes = } nodes")
     target_ice_ncores = max(1, int(ctrl_ice_ncores / ctrl_totncores * totncores))
-    # Allow a 20% increase in ice ncores over the target to find a suitable factor of blocksize (360 for ESM1.6)
+    # Allow a 20% increase in ice ncores over the target to find a suitable factor
+    # of blocksize (360 for ESM1.6)
     ice_ncores = set_ice_ncores(min_ice_ncores=target_ice_ncores, max_ice_ncores=int(target_ice_ncores * 1.2))
 
     ncores_left = totncores - ice_ncores
@@ -569,8 +508,8 @@ def generate_esm1p6_core_layouts_from_node_count(
     layout = list(set(layout))  # remove duplicates
 
     # sort the layouts by ncores_used (descending, fewer wasted cores first), and then
-    # the sum of the absolute differences between nx and ny for atm and mom (ascending, i.e.,
-    # more square layouts first)
+    # the sum of the absolute differences between nx and ny for atm and mom (ascending,
+    # i.e., more square layouts first)
     # Still works even if layout == [] (i.e., no layouts found)
     layout = sorted(layout, key=lambda x: (-x.ncores_used, abs(x.atm_nx - x.atm_ny) + abs(x.mom_nx - x.mom_ny)))
 
@@ -580,33 +519,21 @@ def generate_esm1p6_core_layouts_from_node_count(
 
 
 def generate_esm1p6_perturb_block(layout: LayoutTuple, branch_name_prefix: str) -> dict:
-    """Generates a block for "perturbation" experiments in the ESM 1.6 PI config.
+    """Generate a block for "perturbation" experiments in the ESM 1.6 PI config.
 
-    Parameters
-    ----------
-    layout : ``LayoutTuple`` tuple, required
-        An instances of the class `LayoutTuple` as returned by ``generate_esm1p6_core_layouts_from_node_count``.
-        Each instance of `LayoutTuple` has the following fields:
-        - atm_nx : int
-        - atm_ny : int
-        - mom_nx : int
-        - mom_ny : int
-        - ice_ncores : int
-        - ncores_used : int (computed property := atm_nx * atm_ny + mom_nx * mom_ny + ice_ncores)
+    Args:
+        layout (LayoutTuple): A layout as returned by
+            ``generate_esm1p6_core_layouts_from_node_count``, with the fields ``atm_nx``,
+            ``atm_ny``, ``mom_nx``, ``mom_ny`` and ``ice_ncores``, plus the computed
+            property ``ncores_used``.
+        branch_name_prefix (str): Prefix to use for the branch names in the generated
+            block.
 
-    branch_name_prefix : str, required
-        Prefix to use for the branch names in the generated block.
+    Returns:
+        dict: The generated block.
 
-    Returns
-    -------
-    dict
-        A dict representing the generated block.
-
-    Raises
-    ------
-    ValueError
-        If any of the input parameters are invalid.
-
+    Raises:
+        ValueError: If any of the input parameters are invalid.
     """
     if not layout:
         raise ValueError("No layout provided")

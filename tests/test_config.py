@@ -417,7 +417,7 @@ def test_config_invalid_rules(parser):
 
 
 def test_config_invalid_operations(parser):
-    """Test operations that are not supported by the configurations as stored in an Config instance"""
+    """Test operations not supported by the configurations stored in a Config instance"""
     config = parser.parse("a=1")
 
     # Adding a new item

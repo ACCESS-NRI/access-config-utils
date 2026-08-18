@@ -3,8 +3,9 @@
 
 """Utilities to handle YAML-based configuration files.
 
-The ruamel.yaml parser provides round-trip parsing of YAML files and has all capabilities we require. Here we simply
-provide wrappers around the ruamel.yaml classes so that the API is the same/similar to the other parsers.
+The ruamel.yaml parser provides round-trip parsing of YAML files and has all capabilities
+we require. Here we simply provide wrappers around the ruamel.yaml classes so that the API
+is the same/similar to the other parsers.
 """
 
 from io import StringIO
@@ -16,10 +17,11 @@ from ruamel.yaml import YAML, CommentedMap
 class YAMLConfig(dict):
     """Class to store a YAML configuration as a dict.
 
-    The YAML parsers generates an instance of CommentedMap, which in turn also behaves like a dictionary. Unfortunately
-    we cannot simply subclass CommentedMap. This is because the dump method of YAML calls the __str__ method of
-    CommentedMap, which leads to a infinite recursion when calling the __str__ method of this class. This means that,
-    instead, we need to keep a copy of the CommentedMap and sync it with the dict.
+    The YAML parsers generates an instance of CommentedMap, which in turn also behaves
+    like a dictionary. Unfortunately we cannot simply subclass CommentedMap. This is
+    because the dump method of YAML calls the __str__ method of CommentedMap, which leads
+    to a infinite recursion when calling the __str__ method of this class. This means
+    that, instead, we need to keep a copy of the CommentedMap and sync it with the dict.
     """
 
     def __init__(self, map: CommentedMap) -> None:

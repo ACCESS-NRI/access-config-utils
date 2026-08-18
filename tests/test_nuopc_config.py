@@ -82,7 +82,7 @@ ALLCOMP_attributes::
 
 @pytest.fixture(scope="module")
 def modified_nuopc_config_file():
-    """Fixture returning the content of the previous NUOPC config file, but with some modifications."""
+    """Fixture returning the previous NUOPC config file, with some modifications."""
     return """DRIVER_attributes:: # Comment 1
 
   Verbosity = off

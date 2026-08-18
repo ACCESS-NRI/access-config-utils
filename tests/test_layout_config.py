@@ -21,7 +21,7 @@ def test_layout_tuple(layout_tuple):
     mom_nx, mom_ny = 5, 4
     ice_ncores = 2
     ncores_used = atm_nx * atm_ny + mom_nx * mom_ny + ice_ncores
-    # With the class setup, ncores_used is a property, so we don't pass it in the constructor
+    # With the class setup, ncores_used is a property, so it is not a constructor arg
     with pytest.raises(TypeError):
         layout = layout_tuple(ncores_used, atm_nx, atm_ny, mom_nx, mom_ny, ice_ncores)
 

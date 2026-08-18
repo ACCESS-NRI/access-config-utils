@@ -3,10 +3,11 @@
 
 """Classes and utilities to build configuration parsers using Lark.
 
-The classes implemented in this module make a few assumptions about the files to be parsed. The main assumption is that
-the contents of the files can be mapped into a Python dictionary, that is, they consist of a series of key-value
-assignments. Values can either be scalars, lists, or dictionaries. The supported types of scalars are defined in a
-common grammar, in the config.lark file.
+The classes implemented in this module make a few assumptions about the files to be
+parsed. The main assumption is that the contents of the files can be mapped into a Python
+dictionary, that is, they consist of a series of key-value assignments. Values can either
+be scalars, lists, or dictionaries. The supported types of scalars are defined in a common
+grammar, in the config.lark file.
 """
 
 from __future__ import annotations
@@ -22,14 +23,15 @@ from access.config.parse_tree_ops import AddParent, ConfigToDict, find_rule_node
 
 
 class ConfigList(list):
-    """A list subclass that keeps the parse tree in sync when individual elements are modified.
+    """A list subclass keeping the parse tree in sync when individual elements change.
 
-    When an element is updated via index assignment (e.g., ``config["key"][i] = new_value``), the corresponding
-    value-type rule node in the Lark parse tree is also updated so that round-trip reconstruction reflects the change.
+    When an element is updated via index assignment (e.g. ``config["key"][i] = new_value``),
+    the corresponding value-type rule node in the Lark parse tree is also updated so that
+    round-trip reconstruction reflects the change.
 
     Args:
-        data: The list data.
-        refs: List of references to the value-type rule nodes (one per list element).
+        data (list[Any]): The list data.
+        refs (list[Tree]): References to the value-type rule nodes, one per list element.
     """
 
     _refs: list[Tree]  # Value-type rule nodes from the parse tree, one per list element.
@@ -46,9 +48,11 @@ class ConfigList(list):
         list length cannot change).
 
         Args:
-            index: Integer index or slice of the element(s) to update.
-            value: New value (or iterable of values for slices). The type of each value
-                must match the type already stored in the corresponding value-type rule node.
+            index (SupportsIndex | slice): Integer index or slice of the element(s) to
+                update.
+            value (Any): New value (or iterable of values for slices). The type of each
+                value must match the type already stored in the corresponding value-type
+                rule node.
 
         Raises:
             ValueError: If a slice assignment would change the list length.
@@ -69,10 +73,12 @@ class ConfigList(list):
 class Config(dict):
     """Class inheriting from dict used to store the contents of parsed configuration files.
 
-    For each entry we keep a reference to the corresponding rule node in the parse tree so that we can update it when
-    changing the contents of the dict. This is then done by overriding the __setitem__ and __delitem__ methods.
+    For each entry we keep a reference to the corresponding rule node in the parse tree so
+    that we can update it when changing the contents of the dict. This is then done by
+    overriding the __setitem__ and __delitem__ methods.
 
-    The class also adds support for case-insensitive keys by overriding the appropriate dict methods.
+    The class also adds support for case-insensitive keys by overriding the appropriate
+    dict methods.
 
     Args:
         tree (Tree): the parse tree, as returned by Lark.
@@ -83,7 +89,7 @@ class Config(dict):
     _tree: Tree  # The full parse tree
     _refs: dict[str, list[Tree] | Tree]
     # References to rule nodes in the parse tree, keyed by config key:
-    #   scalar keys  → a single value-type rule node (Tree whose .data is in VALUE_TYPE_HANDLER_REGISTRY)
+    #   scalar keys  → a value-type rule node (Tree whose .data is in the handler registry)
     #   list keys    → a list of value-type rule nodes (one per element)
     #   block keys   → the "block" rule node (Tree whose .data == "block")
     _reconstructor: Reconstructor  # Lark reconstructor used for round-trip parsing
@@ -95,7 +101,7 @@ class Config(dict):
         self._case_sensitive_keys = case_sensitive_keys
         interpreter = ConfigToDict(reconstructor, case_sensitive_keys)
         data, self._refs = interpreter.visit(self._tree)
-        # Wrap list values in ConfigList so that element-level updates keep the parse tree in sync
+        # Wrap list values in ConfigList so element-level updates keep the tree in sync
         for key in data:
             if isinstance(data[key], list):
                 refs = self._refs[key]
@@ -159,15 +165,18 @@ class Config(dict):
     def __getitem__(self, key: str) -> Any:
         """Override method to get item from dict.
 
-        This method takes into account if keys are case-sensitive or not."""
+        This method takes into account if keys are case-sensitive or not.
+        """
         return super().__getitem__(self._normalize_key(key))
 
     def __setitem__(self, key: str, value: Any) -> None:
         """Override method to set item from dict.
 
-        This method takes care of updating the parse tree, so that when writing it back into text it will use the new
-        values. To make sure this works correctly, we check that the type of the new value is consistent with the
-        current type. This method also takes into account if keys are case-sensitive or not."""
+        This method takes care of updating the parse tree, so that when writing it back
+        into text it will use the new values. To make sure this works correctly, we check
+        that the type of the new value is consistent with the current type. This method
+        also takes into account if keys are case-sensitive or not.
+        """
 
         key = self._normalize_key(key)
 
@@ -220,26 +229,31 @@ class Config(dict):
 class ConfigParser(ABC):
     """Lark-based configuration parser base class.
 
-    The parsers built by extending this class are meant for files that share a common structure. In this case, the
-    files must be made by a series of key-value assignments that can be mapped onto a Python dict. Each key-value
-    assignment can therefore be one of three types:
+    The parsers built by extending this class are meant for files that share a common
+    structure. In this case, the files must be made by a series of key-value assignments
+    that can be mapped onto a Python dict. Each key-value assignment can therefore be one
+    of three types:
       - scalar (e.g, 'a=1')
       - list/array (e.g., 'a=1,2,3')
       - block/dict containing other key-value assignments (e.g., 'blk: b=1, c=2')
 
-    Because the resulting parse trees are all processed using the ``ConfigToDict`` Interpreter, whose callbacks are
-    named after grammar rules, all grammars must follow the same structure and use the same rule names:
+    Because the resulting parse trees are all processed using the ``ConfigToDict``
+    Interpreter, whose callbacks are named after grammar rules, all grammars must follow
+    the same structure and use the same rule names:
 
-      - Key-value assignment rules must be named (or aliased to): ``"key_value"``, ``"key_list"``, and
-        ``"key_block"``. The ``ConfigToDict`` Interpreter dispatches to methods of those exact names.
-      - Only value-type rules from ``"config.lark"`` should be used for scalar values. Their names must be registered
-        in ``VALUE_TYPE_HANDLER_REGISTRY``.
-      - The rule that captures the key name must be named ``"key"``. Its first child must be a ``Token`` (terminal)
-        whose text is the key string. The ``"config.lark"`` file provides a ``"key"`` rule suitable for most cases.
-      - Empty assignments (e.g., ``a=``) are supported. The corresponding rule must be named ``"key_null"``.
+      - Key-value assignment rules must be named (or aliased to): ``"key_value"``,
+        ``"key_list"``, and ``"key_block"``. The ``ConfigToDict`` Interpreter dispatches
+        to methods of those exact names.
+      - Only value-type rules from ``"config.lark"`` should be used for scalar values.
+        Their names must be registered in ``VALUE_TYPE_HANDLER_REGISTRY``.
+      - The rule that captures the key name must be named ``"key"``. Its first child must
+        be a ``Token`` (terminal) whose text is the key string. The ``"config.lark"`` file
+        provides a ``"key"`` rule suitable for most cases.
+      - Empty assignments (e.g., ``a=``) are supported. The corresponding rule must be
+        named ``"key_null"``.
 
-    This class is made abstract to prevent instantiation, as it requires a Lark grammar to be provided in order to work
-    correctly.
+    This class is made abstract to prevent instantiation, as it requires a Lark grammar to
+    be provided in order to work correctly.
     """
 
     @property
@@ -271,8 +285,9 @@ class ConfigParser(ABC):
         """
         parser = Lark(self.grammar, import_paths=[Path(__file__).parent], maybe_placeholders=False)
 
-        # Parse text. Here we add a newline character to simplify the writting of the grammars, as otherwise one would
-        # have to explicitly take into account the case where the text does no end with a newline.
+        # Parse text. Here we add a newline character to simplify the writting of the
+        # grammars, as otherwise one would have to explicitly take into account the case
+        # where the text does no end with a newline.
         tree = parser.parse(stream + "\n")
 
         AddParent().visit(tree)

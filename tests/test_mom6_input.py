@@ -51,7 +51,7 @@ List = 'a','b','c'
 
 @pytest.fixture(scope="module")
 def modified_mom6_input_file():
-    """Fixture returning the content of the previous mom6_input file, but with some modifications."""
+    """Fixture returning the previous mom6_input file, with some modifications."""
     return """
 BOOL = True ! This is a comment
 FLOAT1 = 900.0

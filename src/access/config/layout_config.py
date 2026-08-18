@@ -5,17 +5,16 @@ logger = logging.getLogger(__name__)
 
 
 class LayoutTuple(NamedTuple):
-    """
-    Defines a class with a namedtuple to hold layout information.
-    Returns
-    -------
-    object
-        - atm_nx (int): Number of cores in the x-direction for the atmosphere model.
-        - atm_ny (int): Number of cores in the y-direction for the atmosphere model.
-        - mom_nx (int): Number of cores in the x-direction for the ocean model.
-        - mom_ny (int): Number of cores in the y-direction for the ocean model.
-        - ice_ncores (int): Number of cores used for the ice model.
-        - ncores_used (int): Total number of cores used. Computed property.
+    """Named tuple holding the core layout of an ESM1.6 configuration.
+
+    The total core count is not stored: it is the computed property ``ncores_used``.
+
+    Args:
+        atm_nx (int): Number of cores in the x-direction for the atmosphere model.
+        atm_ny (int): Number of cores in the y-direction for the atmosphere model.
+        mom_nx (int): Number of cores in the x-direction for the ocean model.
+        mom_ny (int): Number of cores in the y-direction for the ocean model.
+        ice_ncores (int): Number of cores used for the ice model.
     """
 
     atm_nx: int
@@ -30,33 +29,19 @@ class LayoutTuple(NamedTuple):
 
 
 def get_ctrl_layout(model: str = "ESM 1.6 PI config") -> dict:
-    """
-    Get the control layout used in the current PI configuration.
+    """Get the control layout used in the current PI configuration.
 
-    Parameters
-    ----------
-    model : str, optional
-        Model name. Currently, only "ESM 1.6 PI config" is supported
+    For ``"ESM 1.6 PI config"`` the layout is ``atm_nx=16``, ``atm_ny=13``, ``mom_nx=14``,
+    ``mom_ny=14`` and ``ice_ncores=12``, on the ``normalsr`` queue over 4 nodes. Those
+    counts spend the whole allocation: ``layout.ncores_used`` equals the reported
+    ``totncores`` of 416.
 
-    Returns
-    -------
-    dict
-        A dictionary containing the control layout for ESM1.6 PI configuration:
-        - layout (LayoutTuple): Named tuple with layout information.
-        - queue (str): Queue name = "normalsr"
-        - totncores (int): Total number of cores available = 416
-        - num_nodes (int): Number of nodes used = 4
+    Args:
+        model (str): Model name. Currently, only ``"ESM 1.6 PI config"`` is supported.
 
-    LayoutTuple
-        A named tuple containing the control layout information:
-        - atm_nx (int): Number of cores in the x-direction for the atmosphere model = 16.
-        - atm_ny (int): Number of cores in the y-direction for the atmosphere model = 13.
-        - mom_nx (int): Number of cores in the x-direction for the ocean model = 14.
-        - mom_ny (int): Number of cores in the y-direction for the ocean model = 14.
-        - ice_ncores (int): Number of cores used for the ice model = 12.
-        - ncores_used (int): Total number of cores used.
-          Computed property := (atm_nx * atm_ny + mom_nx * mom_ny + ice_ncores) = 416 (i.e., same as ``totncores``).
-
+    Returns:
+        dict: The control layout, with keys ``layout`` (a ``LayoutTuple``), ``queue``
+            (str), ``totncores`` (int) and ``num_nodes`` (int).
     """
     if not isinstance(model, str):
         raise TypeError(f"Model name must be a string. Got {type(model)} instead")
@@ -80,37 +65,28 @@ def find_layouts_with_maxncore(
     even_nx: bool = False,
     prefer_nx_greater_than_ny: bool = False,
 ) -> list:
-    """
-    Find possible (nx, ny) layouts for a given maximum number of cores (maxncore).
+    """Find possible ``(nx, ny)`` layouts for a given maximum number of cores.
 
-    The function returns a list of tuples (nx, ny) such that ``nx * ny <= maxncore``.
-    The function tries to find layouts with nx and ny as close as possible to
-    sqrt(maxncore).
+    The function returns a list of tuples ``(nx, ny)`` such that ``nx * ny <= maxncore``.
+    The function tries to find layouts with ``nx`` and ``ny`` as close as possible to
+    ``sqrt(maxncore)``.
 
-    Parameters
-    ----------
-    maxncore : int, required
-        Maximum number of cores to use.
+    Args:
+        maxncore (int): Maximum number of cores to use.
+        abs_maxdiff_nx_ny (int): Maximum absolute difference between ``nx`` and ``ny``
+            in the layout. Defaults to 4.
+        even_nx (bool): If ``True``, only layouts with even ``nx`` are returned.
+            Defaults to ``False``.
+        prefer_nx_greater_than_ny (bool): If ``True``, only layouts with ``nx >= ny``
+            are returned. Defaults to ``False``.
 
-    abs_maxdiff_nx_ny : int, optional
-        Maximum absolute difference between nx and ny in the layout. Default is 4.
+    Returns:
+        list[tuple[int, int]]: The unique ``(nx, ny)`` layouts found, or an empty list
+            if there are none.
 
-    even_nx : bool, optional
-        If True, only layouts with even nx are returned. Default is False.
-
-    prefer_nx_greater_than_ny : bool, optional
-        If True, only layouts with nx >= ny are returned. Default is False.
-
-    Returns
-    -------
-    list of tuples
-        List of (nx, ny) tuples representing the unique layouts found.
-        If no layouts are found, an empty list is returned.
-
-    Raises
-    ------
-    ValueError
-        If maxncore is not a positive integer or if abs_maxdiff_nx_ny is negative.
+    Raises:
+        ValueError: If *maxncore* is not a positive integer, or if *abs_maxdiff_nx_ny*
+            is negative.
     """
     import math
 

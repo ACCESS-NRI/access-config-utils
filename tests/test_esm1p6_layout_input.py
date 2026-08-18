@@ -117,7 +117,8 @@ def test_layout_search_config(layout_search_config):
         f"Expected (0.8480769230769231, 1.0), got {config.frac_mom_ncores_over_atm_ncores}"
     )
 
-    # Test that ValueError is raised if both tol_around_ctrl_ratio and frac_mom_ncores_over_atm_ncores are None
+    # Test that ValueError is raised if both tol_around_ctrl_ratio and
+    # frac_mom_ncores_over_atm_ncores are None
     with pytest.raises(ValueError):
         layout_search_config(
             tol_around_ctrl_ratio=None,
@@ -238,7 +239,8 @@ def test_generate_esm1p6_layout_from_core_counts(layout_tuple, layout_search_con
         f"atm and ocn: {ncores_for_atm_and_ocn}, Max ncores used: {max([x.ncores_used for x in layouts])}"
     )
 
-    # Test that setting min_ncores_needed less than ncores_for_atm_and_ocn produces larger number of layouts
+    # Test that setting min_ncores_needed less than ncores_for_atm_and_ocn produces a
+    # larger number of layouts
     layouts_without_min_ncores = _generate_esm1p6_layout_from_core_counts(
         max_atm_ncores=max_atm_ncores,
         min_atm_ncores=min_atm_ncores,
@@ -311,7 +313,8 @@ def test_generate_esm1p6_core_layouts_from_node_count(esm1p6_ctrl_layout, layout
     with pytest.raises(ValueError):
         generate_esm1p6_core_layouts_from_node_count(1, cores_per_node=-1)
 
-    # Test that with a very low node count, no layouts are returned (i.e. empty list of an empty list)
+    # Test that with a very low node count, no layouts are returned (i.e. empty list
+    # of an empty list)
     layouts = generate_esm1p6_core_layouts_from_node_count(
         0.2, cores_per_node=104, layout_search_config=layout_search_config(max_wasted_ncores_frac=0.2)
     )
@@ -411,7 +414,8 @@ def test_generate_esm1p6_perturb_block(esm1p6_ctrl_layout):
     assert len(perturb_block["branches"]) == 1, (
         f"Expected one branch in the perturb block, but got: {len(perturb_block['branches'])}"
     )
-    # Check that the branch name prefix is correctly included in the name of the first (and only) branch
+    # Check that the branch name prefix is correctly included in the name of the first
+    # (and only) branch
     assert branch_name_prefix in perturb_block["branches"][0], (
         f"Expected branch name prefix '{branch_name_prefix}' to be in perturb block, but got: {perturb_block}"
     )
