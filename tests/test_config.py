@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from access.config.parser import ConfigParser
+from access.config.parser import ConfigParser, _entry_matches, clear_grammar_cache
 
 grammar = """
     // Made-up grammar taylored to test the different building blocks
@@ -420,9 +420,356 @@ def test_config_invalid_operations(parser):
     """Test operations not supported by the configurations stored in a Config instance"""
     config = parser.parse("a=1")
 
-    # Adding a new item
+    # Reading or removing a key that does not exist. Assigning to one adds it.
     with pytest.raises(KeyError):
-        config["z"] = "a string"
+        config["z"]
+    with pytest.raises(KeyError):
+        del config["z"]
+
+    # A block can be created, but not replaced once it exists.
+    config = parser.parse("blk<a:2>")
+    with pytest.raises(SyntaxError):
+        config["blk"] = {"a": 3}
+
+
+def _check_added(parser, config, expected):
+    """Assert the text of *config*, and that reading it back gives the same values.
+
+    The text alone does not prove the values survive: several value types share a Python
+    type, so a value can be written with exactly the expected text and still read back as a
+    different type.
+    """
+    assert str(config) == expected
+    reparsed = parser.parse(expected)
+    assert dict(reparsed) == dict(config)
+    # Writing out what was just read back must not drift.
+    assert str(reparsed) == expected
+
+
+def test_config_add_key_value(parser):
+    """Test adding a new scalar key"""
+    config = parser.parse("a=1 b=2")
+    config["z"] = 3
+
+    assert config["z"] == 3
+    _check_added(parser, config, "a=1 b=2 z=3")
+
+
+def test_config_add_key_value_types(parser):
+    """Test the value type chosen for a new key, for every type the grammar admits.
+
+    This grammar admits both members of every ambiguous pair, so these expectations are the
+    specification of ``VALUE_RULE_PRIORITY``: ``logical`` over ``bool``, ``float`` over
+    ``double``, ``complex`` over ``double_complex`` and ``string`` over ``identifier``.
+    """
+    config = parser.parse("a=1")
+    config["t1"] = True
+    config["t2"] = 7
+    config["t3"] = 1.5
+    config["t4"] = 3 + 4j
+    config["t5"] = "word"
+    config["t6"] = Path("/x/y")
+
+    # Note the missing spaces: the reconstructor separates two items only when the
+    # characters either side of the join would otherwise run together into one word.
+    _check_added(parser, config, 'a=1 t1=.true.t2=7 t3=1.5 t4=(3.0, 4.0)t5="word"t6=/x/y')
+
+
+def test_config_add_key_list(parser):
+    """Test adding a new list key, and that its elements stay individually editable"""
+    config = parser.parse("a=1")
+    config["z"] = [1, 2, 3]
+    _check_added(parser, config, "a=1 z=1,2,3")
+
+    # The new list is a ConfigList over the new nodes, so element updates reach the tree.
+    config["z"][1] = 9
+    _check_added(parser, config, "a=1 z=1,9,3")
+
+    config["z"] = [4, 5, 6]
+    _check_added(parser, config, "a=1 z=4,5,6")
+
+    with pytest.raises(ValueError):
+        config["z"] = [1, 2]
+
+
+def test_config_add_heterogeneous_list(parser):
+    """Test adding a list whose elements are of different types"""
+    config = parser.parse("a=1")
+    config["z"] = [1, "two", 3.5]
+
+    assert config["z"] == [1, "two", 3.5]
+    _check_added(parser, config, 'a=1 z=1,"two",3.5')
+
+
+def test_config_add_key_null(parser):
+    """Test adding a new key with no value"""
+    config = parser.parse("a=1")
+    config["z"] = None
+
+    assert config["z"] is None
+    _check_added(parser, config, "a=1 z=")
+
+    # A valueless entry still cannot become a valued one.
+    with pytest.raises(TypeError):
+        config["z"] = 1
+
+    del config["z"]
+    assert "z" not in config
+    _check_added(parser, config, "a=1")
+
+
+def test_config_add_key_block(parser):
+    """Test creating a new block and filling it"""
+    config = parser.parse("a=1")
+    config["z"] = {"p": 1, "q": [2, 3]}
+
+    assert dict(config["z"]) == {"p": 1, "q": [2, 3]}
+    _check_added(parser, config, "a=1 z<p:1 q:2|3>")
+
+    # The block is a live Config, so it can be edited and added to afterwards.
+    config["z"]["p"] = 5
+    config["z"]["r"] = 6
+    _check_added(parser, config, "a=1 z<p:5 q:2|3 r:6>")
+
+
+def test_config_add_empty_key_block(parser):
+    """Test that a block can be created empty and filled later"""
+    config = parser.parse("a=1")
+    config["z"] = {}
+    _check_added(parser, config, "a=1 z<>")
+
+    config["z"]["p"] = 1
+    _check_added(parser, config, "a=1 z<p:1>")
+
+
+def test_config_add_into_block(parser):
+    """Test adding keys inside a block, which uses a different syntax from the top level"""
+    config = parser.parse("blk<a:2>")
+
+    config["blk"]["b"] = 3
+    assert str(config["blk"]) == "a:2 b:3"
+    _check_added(parser, config, "blk<a:2 b:3>")
+
+    config["blk"]["c"] = [3, 4]
+    _check_added(parser, config, "blk<a:2 b:3 c:3|4>")
+
+    # A key added at the top level of the same file uses the top-level syntax.
+    config["d"] = 0
+    _check_added(parser, config, "blk<a:2 b:3 c:3|4>d=0")
+
+
+def test_config_add_into_empty_block(parser):
+    """Test adding a key to an empty block, where there is no entry to copy a style from"""
+    config = parser.parse("blk< >")
+    assert dict(config["blk"]) == {}
+
+    config["blk"]["x"] = 1
+    _check_added(parser, config, "blk<x:1>")
+
+
+def test_config_add_after_delete(parser):
+    """Test that deleting a key and adding it again leaves exactly one entry"""
+    config = parser.parse("a=1 b=2")
+    del config["a"]
+    config["a"] = 9
+
+    # The re-added key goes to the end; what matters is that the original entry is gone.
+    _check_added(parser, config, "b=2 a=9")
+
+    # Deleting the only key of a block, then adding one back.
+    config = parser.parse("blk<a:2>")
+    del config["blk"]["a"]
+    config["blk"]["c"] = 3
+    _check_added(parser, config, "blk<c:3>")
+
+
+def test_config_add_into_emptied_config(parser):
+    """Test adding a key after every key has been deleted.
+
+    ``__str__`` reports an empty configuration as the empty string even though the parse
+    tree still holds whatever was not an entry, so the first addition brings that back.
+    """
+    config = parser.parse("a=1 b=2")
+    for key in list(config):
+        del config[key]
+    assert str(config) == ""
+
+    config["n"] = 1
+    _check_added(parser, config, "n=1")
+
+
+def test_config_add_string_quote_choice(parser):
+    """Test that a new string is quoted with a character it does not itself contain"""
+    config = parser.parse("a=1")
+
+    config["y"] = "plain"
+    config["z"] = 'has a " inside'
+
+    assert config["z"] == 'has a " inside'
+    _check_added(parser, config, 'a=1 y="plain"z=\'has a " inside\'')
+
+
+def test_config_add_key_errors(parser):
+    """Test the ways adding a key can fail"""
+    config = parser.parse("a=1")
+
+    # Keys have to be usable as a name in the file.
+    for key in ("", "a b", "2fast", "a-b", "a.b"):
+        with pytest.raises(ValueError):
+            config[key] = 1
+
+    # A list needs at least two elements to be written as one.
+    for value in ([], [1]):
+        with pytest.raises(ValueError):
+            config["z"] = value
+
+    # No value type can hold any of these.
+    for value in (object(), float("inf"), float("nan")):
+        with pytest.raises(TypeError):
+            config["z"] = value
+
+    # A quoted string cannot hold both quote characters, since values are not escaped.
+    with pytest.raises(TypeError):
+        config["z"] = "has 'one' and \"the other\""
+
+    # This grammar has no valueless assignment inside a block.
+    config = parser.parse("blk<a:2>")
+    with pytest.raises(TypeError):
+        config["blk"]["z"] = None
+
+    # None of the above may have changed the file.
+    assert str(config) == "blk<a:2>"
+
+
+def test_config_add_idempotent(parser):
+    """Test that writing a configuration out is repeatable and stable across a re-parse"""
+    config = parser.parse("a=1 blk<b:2>")
+    config["z"] = [1, 2]
+    config["blk"]["y"] = 3
+
+    first = str(config)
+    assert str(config) == first
+
+    reparsed = parser.parse(first)
+    reparsed["w"] = 4
+    again = parser.parse(str(reparsed))
+    assert str(again) == str(reparsed)
+
+
+def test_config_add_no_node_reuse(parser):
+    """Test that assigning one key's value to another does not make them share tree nodes"""
+    config = parser.parse("x=1 y=2,3")
+
+    config["p"] = config["x"]
+    config["q"] = config["y"]
+    assert config._refs["p"] is not config._refs["x"]
+    assert config._refs["q"] is not config._refs["y"]
+
+    config["p"] = 9
+    config["q"][0] = 9
+    assert config["x"] == 1
+    assert config["y"] == [2, 3]
+    _check_added(parser, config, "x=1 y=2,3 p=9 q=9,3")
+
+
+def test_config_dict_methods(parser):
+    """Test the dict methods ``dict`` implements without going through __setitem__.
+
+    Inheriting them would skip both key normalisation and the parse tree update. A ``pop``
+    followed by an assignment is the damaging case: the removed entry would stay in the tree
+    and a second one would be added, writing a file with the key twice.
+    """
+    config = parser.parse("a=1 b=2")
+
+    assert config.pop("a") == 1
+    assert str(config) == "b=2"
+    config["a"] = 5
+    _check_added(parser, config, "b=2 a=5")
+
+    assert config.get("a") == 5
+    assert config.get("nope") is None
+    assert config.get("nope", "fallback") == "fallback"
+
+    assert config.pop("nope", "fallback") == "fallback"
+    with pytest.raises(KeyError):
+        config.pop("nope")
+
+    config.update({"c": 3}, d=4)
+    _check_added(parser, config, "b=2 a=5 c=3 d=4")
+
+    assert config.setdefault("c", 99) == 3
+    assert config.setdefault("e", 5) == 5
+    _check_added(parser, config, "b=2 a=5 c=3 d=4 e=5")
+
+    config |= {"f": 6}
+    _check_added(parser, config, "b=2 a=5 c=3 d=4 e=5 f=6")
+
+    assert config.popitem() == ("f", 6)
+    _check_added(parser, config, "b=2 a=5 c=3 d=4 e=5")
+
+    config.clear()
+    assert str(config) == ""
+
+
+def test_config_list_unsupported_operations(parser):
+    """Test that list operations the parse tree cannot follow are refused"""
+    config = parser.parse("a=1,2,3")
+    values = config["a"]
+
+    for operation in (
+        lambda: values.append(4),
+        lambda: values.extend([4]),
+        lambda: values.insert(0, 4),
+        lambda: values.remove(1),
+        lambda: values.pop(),
+        lambda: values.clear(),
+        lambda: values.sort(),
+        lambda: values.reverse(),
+        lambda: values.__delitem__(0),
+        lambda: values.__iadd__([4]),
+        lambda: values.__imul__(2),
+    ):
+        with pytest.raises(NotImplementedError):
+            operation()
+
+    assert str(config) == "a=1,2,3"
+
+
+def test_config_grammar_cache(parser):
+    """Test that a grammar is compiled once and that the cache can be cleared"""
+    first = parser.parse("a=1")
+    second = parser.parse("a=1")
+    # Compiling costs far more than parsing, so the result is shared.
+    assert first._ctx.grammar is second._ctx.grammar
+
+    clear_grammar_cache()
+    assert parser.parse("a=1")._ctx.grammar is not first._ctx.grammar
+
+
+def test_config_entry_matches_rejections(parser):
+    """Test the checks that reject a candidate entry read back from its text"""
+    config = parser.parse("a=1")
+
+    # A candidate that produced the wrong key, or more than one entry.
+    assert not _entry_matches({"other": 1}, "z", 1)
+    assert not _entry_matches({"z": 1, "other": 2}, "z", 1)
+
+    # The value read back has to match in type as well as in value.
+    assert not _entry_matches({"z": 1}, "z", True)
+    assert not _entry_matches({"z": "1"}, "z", 1)
+    assert _entry_matches({"z": 1}, "z", 1)
+
+    # A valueless entry, and a list of the wrong length or element type.
+    assert not _entry_matches({"z": 1}, "z", None)
+    assert _entry_matches({"z": None}, "z", None)
+    assert not _entry_matches({"z": [1, 2]}, "z", [1, 2, 3])
+    assert not _entry_matches({"z": 1}, "z", [1, 2])
+    assert not _entry_matches({"z": [1, "2"]}, "z", [1, 2])
+
+    # A new block has to come back empty; its contents are added afterwards.
+    assert not _entry_matches({"z": 1}, "z", {"a": 1})
+    assert not _entry_matches({"z": config}, "z", {"a": 1})
+    assert _entry_matches({"z": parser.parse("blk< >")["blk"]}, "z", {"a": 1})
 
 
 class CaseParser(ConfigParser):
@@ -496,6 +843,118 @@ def test_config_wrong_key_rule(wrong_parser):
         wrong_parser.parse("10=.true.")
 
 
+class TemplateParser(ConfigParser):
+    """Parser overriding the text used for a new entry, to exercise the override path."""
+
+    @property
+    def case_sensitive_keys(self) -> bool:
+        return True
+
+    @property
+    def grammar(self) -> str:
+        return grammar
+
+    @property
+    def entry_templates(self):
+        # Deliberately different from what would be derived: no spaces around the separator.
+        return {("start", "key_value"): "{key}={value}", ("block", "key_value"): "{key}:{value}"}
+
+    @property
+    def value_rule_priority(self):
+        # Prefer the bare identifier over the quoted string, reversing the default.
+        return ["identifier", "string", "logical", "bool", "integer", "float", "double"]
+
+
+def test_config_entry_template_override():
+    """Test that a parser-declared template and value priority are used"""
+    parser = TemplateParser()
+
+    config = parser.parse("a=1")
+    config["z"] = "word"
+    # The overridden priority picks identifier, so the value is not quoted.
+    _check_added(parser, config, "a=1 z=word")
+
+    config = parser.parse("blk<a:2>")
+    config["blk"]["b"] = 3
+    _check_added(parser, config, "blk<a:2 b:3>")
+
+
+def test_config_add_value_rule_fallback():
+    """Test that a value whose preferred rendering reads back as another type falls back.
+
+    With ``identifier`` preferred over ``string``, the string ``"True"`` would be written as
+    the bare word ``True``, which this grammar reads back as a boolean. That candidate is
+    rejected and the quoted form is used instead, so the priority order can never produce a
+    wrong value.
+    """
+    parser = TemplateParser()
+
+    config = parser.parse("a=1")
+    config["z"] = "True"
+    assert config["z"] == "True"
+    _check_added(parser, config, 'a=1 z="True"')
+
+    # A string that is not a valid bare word likewise falls back to being quoted.
+    config = parser.parse("a=1")
+    config["z"] = "a string"
+    _check_added(parser, config, 'a=1 z="a string"')
+
+
+class BrokenTemplateParser(TemplateParser):
+    """Parser whose override does not fit the grammar, to exercise the fall-back."""
+
+    @property
+    def entry_templates(self):
+        return {("start", "key_value"): "{key} <<>> {value}"}
+
+
+def test_config_entry_template_fallback():
+    """Test that an override no longer fitting the grammar falls back to the derived text"""
+    parser = BrokenTemplateParser()
+
+    config = parser.parse("a=1")
+    config["z"] = 3
+    _check_added(parser, config, "a=1 z=3")
+
+
+class BlocklessParser(ConfigParser):
+    """Parser for a grammar with no block rule, so it keeps a single start symbol."""
+
+    @property
+    def case_sensitive_keys(self) -> bool:
+        return True
+
+    @property
+    def grammar(self) -> str:
+        return """
+    start: key_value+
+
+    key_value: key equal value
+    equal: "="
+
+    ?value: integer
+
+    %import config.key
+    %import config.integer
+
+    %import common.WS
+    %ignore WS
+"""
+
+
+def test_config_blockless_grammar():
+    """Test that a grammar without a block rule still compiles and accepts new keys.
+
+    The parser is built with ``block`` as a second start symbol only when the grammar has
+    such a rule, since Lark rejects a start symbol naming a rule that does not exist.
+    """
+    parser = BlocklessParser()
+    config = parser.parse("a=1")
+
+    config["z"] = 2
+    _check_added(parser, config, "a=1 z=2")
+
+
 def test_config_string_quote_switching(parser):
     """Test that updating a string picks a quote character the value does not contain.
 
@@ -510,17 +969,15 @@ def test_config_string_quote_switching(parser):
 
     # It is switched when the value contains it.
     config["a"] = "has ' inside"
-    assert str(config) == 'a="has \' inside"b="y"'
-    assert dict(parser.parse(str(config))) == dict(config)
+    _check_added(parser, config, 'a="has \' inside"b="y"')
 
     config["b"] = 'has " inside'
-    assert str(config) == "a=\"has ' inside\"b='has \" inside'"
-    assert dict(parser.parse(str(config))) == dict(config)
+    _check_added(parser, config, "a=\"has ' inside\"b='has \" inside'")
 
     # A value containing both cannot be written at all, and nothing is changed.
     with pytest.raises(TypeError):
         config["a"] = "has ' and \""
-    assert str(config) == "a=\"has ' inside\"b='has \" inside'"
+    _check_added(parser, config, "a=\"has ' inside\"b='has \" inside'")
 
 
 def test_config_non_finite_floats(parser):
