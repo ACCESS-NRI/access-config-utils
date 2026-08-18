@@ -26,7 +26,7 @@ Because ``Token`` inherits from ``str``, code that only needs the matched text
 can use a ``Token`` directly as a string without calling ``.value``.
 
 Grammar structure assumptions
-------------------------------
+-----------------------------
 All grammars used with this module must follow these conventions:
 
 - Key-value assignments use rules named (or aliased to) ``"key_value"``,
@@ -56,8 +56,9 @@ from access.config.parser_types import VALUE_TYPE_HANDLER_REGISTRY
 def update_node_value(rule_node: Tree, value: Any) -> None:
     """Updates the value stored in a value-type rule node.
 
-    The rule node must be a ``Tree`` whose ``.data`` is a key in ``VALUE_TYPE_HANDLER_REGISTRY``
-    (e.g. ``"integer"``, ``"float"``). The handler is looked up from that registry.
+    The rule node must be a ``Tree`` whose ``.data`` is a key in
+    ``VALUE_TYPE_HANDLER_REGISTRY`` (e.g. ``"integer"``, ``"float"``). The handler is
+    looked up from that registry.
 
     Args:
         rule_node (Tree): Value-type rule node to update.
@@ -89,8 +90,8 @@ def find_rule_node(ref: list[Tree] | Tree) -> Tree:
       rule node); the key rule node is its ``.parent``.
 
     Args:
-        ref: A value-type rule node, a list of value-type rule nodes, or a key rule node,
-            as stored in ``_refs``.
+        ref (list[Tree] | Tree): A value-type rule node, a list of value-type rule nodes,
+            or a key rule node, as stored in ``_refs``.
 
     Returns:
         Tree: The key rule node (``Tree`` whose ``.data`` starts with ``"key_"``).
@@ -98,8 +99,9 @@ def find_rule_node(ref: list[Tree] | Tree) -> Tree:
     if isinstance(ref, list):
         return ref[0].parent  # type: ignore[attr-defined]
     elif hasattr(ref, "data") and ref.data.startswith("key_"):
-        # Note that, although ``key_value`` and ``key_block`` contain ``key_`` in their names, the refs stored for these
-        # types are **children** of the key rule node, so their ``.data`` does not start with ``"key_"``.
+        # Note that, although ``key_value`` and ``key_block`` contain ``key_`` in their
+        # names, the refs stored for these types are **children** of the key rule node,
+        # so their ``.data`` does not start with ``"key_"``.
         return ref
     else:
         return ref.parent  # type: ignore[attr-defined]
@@ -121,16 +123,17 @@ class AddParent(Visitor):
 
 
 class ConfigToDict(Interpreter):
-    """Interpreter to be used by Lark to create a dict holding the config data and the corresponding dict of references
-    to rule nodes in the parse tree.
+    """Interpreter to be used by Lark to create a dict holding the config data and the
+    corresponding dict of references to rule nodes in the parse tree.
 
-    A Lark ``Transformer`` would be the usual choice, but it replaces rule nodes with transformed values, destroying
-    the original tree.  Using an ``Interpreter`` instead lets us retain references to the original rule nodes so that
-    they can be mutated later to support round-trip editing.  The ``Interpreter`` also skips visiting child rule nodes
+    A Lark ``Transformer`` would be the usual choice, but it replaces rule nodes with
+    transformed values, destroying the original tree. Using an ``Interpreter`` instead lets
+    us retain references to the original rule nodes so that they can be mutated later to
+    support round-trip editing. The ``Interpreter`` also skips visiting child rule nodes
     automatically, so each callback handles an entire key rule subtree in one call.
 
-    While processing blocks, instances of this class need extra information to instantiate a ``Config``. We store that
-    extra information as private class arguments.
+    While processing blocks, instances of this class need extra information to instantiate
+    a ``Config``. We store that extra information as private class arguments.
 
     Args:
         reconstructor (Reconstructor): Lark reconstructor created from the parser.
@@ -150,14 +153,18 @@ class ConfigToDict(Interpreter):
         super().__init__()
 
     def visit(self, tree: Tree) -> tuple[dict[str, Any], dict[str, list[Tree] | Tree]]:
-        """Visit the entire tree and return two dictionaries: one holding the parsed values and the other holding,
-        for each config key, a reference to the corresponding rule node (or list of rule nodes) in the parse tree.
+        """Visit the entire tree and return the parsed values and their tree references.
+
+        The first dictionary holds the parsed values; the second holds, for each config
+        key, a reference to the corresponding rule node (or list of rule nodes) in the
+        parse tree.
 
         Args:
             tree (Tree): Root rule node to visit.
 
         Returns:
-            tuple[dict[str, Any], dict[str, list[Tree] | Tree]]: Dict of parsed values, dict of rule node references.
+            tuple[dict[str, Any], dict[str, list[Tree] | Tree]]: Dict of parsed values,
+                dict of rule node references.
         """
         self._data = {}
         self._refs = {}
@@ -173,19 +180,19 @@ class ConfigToDict(Interpreter):
         Args:
             tree (Tree): A key rule node (e.g. ``Tree`` with ``.data == "key_value"``).
 
-        Raises:
-            TypeError: If no ``Token`` is found as the first child of the ``"key"`` rule node.
-
         Returns:
             str: The key name (uppercased if keys are case-insensitive).
 
+        Raises:
+            TypeError: If no ``Token`` is found as the first child of the ``"key"`` rule
+                node.
         """
         key_rules = [child.children for child in tree.children if child.data == "key"]
         if len(key_rules) == 0:
             raise ValueError("No 'key' rule nodes found among children of key rule node")
         else:
-            # Multiple "key" rule nodes are possible (e.g., if the tree is a key_block storing one of more key_values)
-            # but the correct one should always be the first one.
+            # Multiple "key" rule nodes are possible (e.g., if the tree is a key_block
+            # storing one of more key_values) but the correct one is always the first.
             key_rule = key_rules[0]
 
         # The token holding the key name is the first child of the "key" rule node.
@@ -201,21 +208,23 @@ class ConfigToDict(Interpreter):
             return key.upper()
 
     def _transform_values(self, children: list[Tree]) -> tuple[list[Any], list[Tree]]:
-        """Given the child nodes of a ``"key_value"`` or ``"key_list"`` rule node, extract and convert the values.
+        """Given the children of a ``key_value`` or ``key_list`` node, convert the values.
 
-        Filters *children* to those whose ``.data`` is registered in ``VALUE_TYPE_HANDLER_REGISTRY``
-        (i.e. value-type rule nodes such as ``"integer"`` or ``"float"``), then reads the ``Token``
-        child of each to obtain the matched text and converts it to a Python value.
+        Filters *children* to those whose ``.data`` is registered in
+        ``VALUE_TYPE_HANDLER_REGISTRY`` (i.e. value-type rule nodes such as ``"integer"``
+        or ``"float"``), then reads the ``Token`` child of each to obtain the matched text
+        and converts it to a Python value.
 
         Args:
-            children (List[Tree]): Child nodes of a ``"key_value"`` or ``"key_list"`` rule node.
+            children (list[Tree]): Child nodes of a ``"key_value"`` or ``"key_list"``
+                rule node.
+
+        Returns:
+            tuple[list[Any], list[Tree]]: List of Python values, list of the corresponding
+                value-type rule nodes (for storing in ``_refs``).
 
         Raises:
             ValueError: If no value-type rule nodes are found among the children.
-
-        Returns:
-            Tuple[List[Any], List[Tree]]: List of Python values, list of the corresponding
-                value-type rule nodes (for storing in ``_refs``).
         """
         value_rule_nodes = [child for child in children if child.data in VALUE_TYPE_HANDLER_REGISTRY]
         if len(value_rule_nodes) == 0:
@@ -224,16 +233,16 @@ class ConfigToDict(Interpreter):
         return values, value_rule_nodes
 
     def _transform_value(self, children: list[Tree]) -> tuple[Any, Tree]:
-        """Given the child nodes of a ``"key_value"`` rule node, extract and convert the single value.
+        """Given the children of a ``"key_value"`` rule node, convert the single value.
 
         Args:
-            children (List[Tree]): Child nodes of a ``"key_value"`` rule node.
+            children (list[Tree]): Child nodes of a ``"key_value"`` rule node.
+
+        Returns:
+            tuple[Any, Tree]: The Python value and the corresponding value-type rule node.
 
         Raises:
             ValueError: If more than one value-type rule node is found.
-
-        Returns:
-            Tuple[Any, Tree]: The Python value and the corresponding value-type rule node.
         """
         values, value_rule_nodes = self._transform_values(children)
         if len(value_rule_nodes) > 1:

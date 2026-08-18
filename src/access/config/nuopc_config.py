@@ -3,12 +3,14 @@
 
 """Parser for NUOPC configuration files.
 
-The `nuopc.runconfig` files used by the CESM driver, and thus by the NUOPC-based ACCESS models, are a mixture of
-formats. At the top-level, one has the Resource Files as implemented in ESMF. From the ESMF documentation:
+The `nuopc.runconfig` files used by the CESM driver, and thus by the NUOPC-based ACCESS
+models, are a mixture of formats. At the top-level, one has the Resource Files as
+implemented in ESMF. From the ESMF documentation:
 
-    A Resource File (RF) is a text file consisting of list of label-value pairs. There is a limit of 1024 characters per
-    line and the Resource File can contain a maximum of 200 records. Each label should be followed by some data, the
-    value. An example Resource File follows. It is the file used in the example below.
+    A Resource File (RF) is a text file consisting of list of label-value pairs. There
+    is a limit of 1024 characters per line and the Resource File can contain a maximum
+    of 200 records. Each label should be followed by some data, the value. An example
+    Resource File follows. It is the file used in the example below.
 
      # This is an example Resource File.
      # It contains a list of <label,value> pairs.
@@ -43,14 +45,15 @@ formats. At the top-level, one has the Resource Files as implemented in ESMF. Fr
         300     3000     295.8
       ::
 
-    Note that the colon after the label is required and that the double colon is required to declare tabular data.
+    Note that the colon after the label is required and that the double colon is
+    required to declare tabular data.
 
-See https://earthsystemmodeling.org/docs/release/ESMF_8_6_0/ESMF_refdoc/node6.html#SECTION06090000000000000000 for
-further details.
+For further details, see
+https://earthsystemmodeling.org/docs/release/ESMF_8_6_0/ESMF_refdoc/node6.html#SECTION06090000000000000000
 
 
-The CESM driver then uses tables as defined in Resource Files to store lists of key-value pairs instead of simple
-values:
+The CESM driver then uses tables as defined in Resource Files to store lists of key-value
+pairs instead of simple values:
 
     DRIVER_attributes::
      Verbosity = off
@@ -69,9 +72,10 @@ values:
      ocn2glc_levels = 1:10:19:26:30:33:35
     ::
 
-This format of key-value pairs does not seem to be documented and, although it resembles Fortran namelists, it is not.
-For example, the keys are case-sensitive, which is not the case in Fortran namelists. The format used to store arrays
-of values is also not the same as in Fortran namelists.
+This format of key-value pairs does not seem to be documented and, although it resembles
+Fortran namelists, it is not. For example, the keys are case-sensitive, which is not the
+case in Fortran namelists. The format used to store arrays of values is also not the same
+as in Fortran namelists.
 """
 
 from access.config.parser import ConfigParser

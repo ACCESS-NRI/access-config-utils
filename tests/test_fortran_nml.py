@@ -70,7 +70,7 @@ def fortran_nml_file():
 
 @pytest.fixture()
 def modified_fortran_nml_file():
-    """Fixture returning the content of the previous Fortran namelist file, but with some modifications."""
+    """Fixture returning the previous Fortran namelist file, with some modifications."""
     return """
 &LIST_A ! This is a comment
   Var = 6 , ! This is a comment after an assignment

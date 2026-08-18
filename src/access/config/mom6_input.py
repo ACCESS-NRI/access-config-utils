@@ -12,8 +12,8 @@ It has similarities with a Fortran namelist, but with some notable differences:
  - usage of an override directive ('#override')
  - some character, like '*', are allowed in the MOM6 parameter files, but not in namelists
  - keys are case-sensitive
-We have also found MOM6 parameter files with C-style comments in files used by CESM. These are ignored by MOM6, but
-are actually not part of the specifications.
+We have also found MOM6 parameter files with C-style comments in files used by CESM. These
+are ignored by MOM6, but are actually not part of the specifications.
 """
 
 from access.config.parser import ConfigParser

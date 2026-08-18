@@ -42,4 +42,9 @@ omit = ["src/access/config/__init__.py"]
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "F", "B", "C4", "SIM", "PTH", "UP", "I", "N", "C901"]
+select = ["E", "F", "B", "C4", "SIM", "PTH", "UP", "I", "N", "C901", "W505"]
+
+[tool.ruff.lint.pycodestyle]
+# Docstrings and standalone comments wrap narrower than code (which uses line-length above).
+# 92 rather than 88 so the one-line Apache-2.0 copyright header fits unchanged.
+max-doc-length = 92

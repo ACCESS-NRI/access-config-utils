@@ -1,6 +1,4 @@
-"""
-access-config-utils package.
-"""
+"""access-config-utils package."""
 
 from contextlib import suppress
 from importlib.metadata import PackageNotFoundError, version

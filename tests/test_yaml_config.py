@@ -82,7 +82,7 @@ input:
 
 @pytest.fixture()
 def modified_yaml_config_file():
-    """Fixture returning the contents the previous payu config file after introducing some modifications."""
+    """Fixture returning the previous payu config file, with some modifications."""
     return """# PBS configuration
 
 # If submitting to a different project to your default, uncomment line below

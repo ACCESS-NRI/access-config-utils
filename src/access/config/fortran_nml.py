@@ -3,8 +3,8 @@
 
 """Parser for Fortran namelists.
 
-Fortran namelists allow format-free I/O of variables by key-value assignements. Initially they were an extension to the
-languages, but became part of the standard in Fortran 90.
+Fortran namelists allow format-free I/O of variables by key-value assignements. Initially
+they were an extension to the languages, but became part of the standard in Fortran 90.
 """
 
 from access.config.parser import ConfigParser
@@ -13,7 +13,8 @@ from access.config.parser import ConfigParser
 class FortranNMLParser(ConfigParser):
     """Fortran Namelist parser.
 
-    Note: Currently array qualifiers, substrings and derived types are not implemented in the grammar.
+    Note: Currently array qualifiers, substrings and derived types are not implemented in
+    the grammar.
     """
 
     @property
