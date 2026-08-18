@@ -15,6 +15,42 @@ from pathlib import Path
 from typing import Any
 
 
+class UnsupportedEntryError(TypeError):
+    """Raised when a grammar admits no way to express a requested value or entry.
+
+    Subclasses ``TypeError`` because it reports that a Python value has no representation in
+    the target file format, which is the same category of problem as the type mismatches
+    reported by ``update_node_value``.
+    """
+
+
+def _string_to_str(value: str, token_text: str) -> str:
+    """Quote a string, keeping the quote character already in use where possible.
+
+    Values are wrapped verbatim rather than escaped, so the quote character has to be one
+    the value does not itself contain. The one already in use is preferred, so that
+    rewriting a value does not gratuitously change the quoting of the line.
+
+    Args:
+        value (str): The string to quote.
+        token_text (str): Text of the ``Token`` that previously held the string, whose first
+            character is the quote in use.
+
+    Returns:
+        str: The quoted string.
+
+    Raises:
+        UnsupportedEntryError: If *value* contains both quote characters, and so cannot be
+            written without escaping.
+    """
+    quote = token_text[0]
+    if quote in value:
+        quote = "'" if quote == '"' else '"'
+        if quote in value:
+            raise UnsupportedEntryError("Strings containing both quote characters cannot be represented")
+    return quote + value + quote
+
+
 def _float_to_str(value: float, token_text: str) -> str:
     """Convert a float to a string using the exponent notation of the original token.
 
@@ -28,6 +64,7 @@ def _float_to_str(value: float, token_text: str) -> str:
 
     Returns:
         str: The float as a string.
+
     """
     for c in token_text:
         if c in ["D", "d", "E", "e"]:
@@ -114,7 +151,7 @@ VALUE_TYPE_HANDLER_REGISTRY: dict[str | None, ValueTypeHandler] = {
     "string": ValueTypeHandler(
         type_check=lambda value: type(value) is str,
         from_token=lambda token: token[1:-1],
-        to_token=lambda value, token: token[0] + value + token[-1],
+        to_token=_string_to_str,
     ),
     "path": ValueTypeHandler(
         type_check=lambda value: isinstance(value, Path),
