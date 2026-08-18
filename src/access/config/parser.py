@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, SupportsIndex
 
 from lark import Lark, Tree
+from lark.exceptions import UnexpectedInput
 from lark.reconstruct import Reconstructor
 
 from access.config.parse_tree_ops import AddParent, ConfigToDict, find_rule_node, update_node_value
@@ -220,9 +221,18 @@ class Config(dict):
         del self._refs[key]
 
     def __str__(self) -> str:
-        """Override method to print dict contents to a string."""
+        """Override method to print dict contents to a string.
+
+        A configuration with no entries left is still written out, because the parse tree
+        may hold comments and blank lines that are genuinely part of the file. Only a
+        grammar that cannot derive a container without entries falls back to the empty
+        string, since for such a format there is no text left to write.
+        """
         if dict(self) == {}:
-            return ""
+            try:
+                return self._reconstruct()
+            except UnexpectedInput:
+                return ""
         return self._reconstruct()
 
 

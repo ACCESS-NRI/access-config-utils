@@ -134,3 +134,18 @@ def test_mom6_input_roundtrip_with_mutation(parser, mom6_input_file, modified_mo
     config["BLOCK"]["BVAR"] = 32
 
     assert str(config) == modified_mom6_input_file
+
+
+def test_mom6_input_delete_everything_keeps_comments(parser):
+    """Test that deleting every key still writes out the text that is not an entry.
+
+    The comments and blank lines are genuinely part of the file, so a configuration with no
+    entries left is not the same thing as an empty file.
+    """
+    config = parser.parse("A = 1\n\n  ! keep me\n\nB = 2\n")
+
+    for key in list(config):
+        del config[key]
+
+    assert str(config) == "\n  ! keep me\n\n"
+    assert dict(parser.parse(str(config))) == {}
