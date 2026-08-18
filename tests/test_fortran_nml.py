@@ -4,7 +4,7 @@
 from pathlib import Path
 
 import pytest
-from lark.exceptions import UnexpectedEOF, UnexpectedToken
+from lark.exceptions import UnexpectedEOF
 
 from access.config.fortran_nml import FortranNMLParser
 
@@ -364,17 +364,27 @@ def test_fortran_nml_addition_errors(parser):
     assert str(config) == "&L\n  X = 1\n/\n"
 
 
-@pytest.mark.xfail(
-    reason="Pre-existing: removing a whole namelist leaves two adjacent random_text nodes, "
-    "which the start rule cannot derive, so the reconstructor refuses to write the tree out. "
-    "Unrelated to key addition; adding a key back inside a namelist works.",
-    raises=UnexpectedToken,
-    strict=True,
-)
 def test_fortran_nml_delete_namelist(parser, fortran_nml_file):
-    """Test that a whole namelist group can be removed and the file written out again."""
+    """Test that a whole namelist group can be removed and the file written out again.
+
+    A namelist and the text around it alternate in the grammar, so removing one leaves two
+    runs of text side by side. They are rejoined on deletion, which keeps the tree in a
+    shape the grammar derives while preserving every comment.
+    """
     config = parser.parse(fortran_nml_file)
 
-    del config["LIST_A"]
+    del config["LIST_B"]
 
-    str(config)
+    output = str(config)
+    assert "LIST_B" not in output
+    # The comment and the free text that surrounded the deleted group are still there.
+    assert "! Yet another comment" in output
+    assert "This is some random text" in output
+    assert dict(parser.parse(output)) == dict(config)
+
+    # The remaining groups are untouched, and the rest can be deleted too. A namelist file
+    # needs at least one group, so once they are all gone there is no text left to write.
+    assert list(config) == ["LIST_A", "LIST_C"]
+    del config["LIST_A"]
+    del config["LIST_C"]
+    assert str(config) == ""

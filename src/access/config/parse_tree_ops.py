@@ -56,7 +56,7 @@ from typing import TYPE_CHECKING, Any
 from lark import Token, Tree, Visitor
 from lark.visitors import Interpreter
 
-from access.config.entry_synthesis import contains_entry, is_comment_line
+from access.config.entry_synthesis import GrammarInfo, contains_entry, is_comment_line
 from access.config.parser_types import VALUE_TYPE_HANDLER_REGISTRY
 
 if TYPE_CHECKING:
@@ -191,6 +191,41 @@ def parse_entry_nodes(lark: Lark, container: str, snippet: str) -> list[Tree | T
         if isinstance(node, Tree):
             AddParent().visit(node)
     return nodes
+
+
+def merge_adjacent_repetitions(container: Tree, info: GrammarInfo) -> None:
+    """Rejoin sibling nodes that became adjacent because an entry between them was removed.
+
+    A grammar can require entries and the text around them to alternate. Fortran's does:
+    the text between two namelists is one node, so removing a namelist leaves two such
+    nodes side by side, which the start rule cannot derive and the reconstructor therefore
+    refuses to write out. Merging them restores a shape the grammar accepts, and preserves
+    the text exactly, since the merged node holds both sets of children in order.
+
+    Only rules that are a plain repetition are merged, because only those accept the
+    combined children. Everything else is left alone.
+
+    Args:
+        container (Tree): The container rule node an entry was just removed from.
+        info (GrammarInfo): Views over the compiled grammar, used to identify the rules
+            that may be merged.
+    """
+    index = 1
+    while index < len(container.children):
+        previous, current = container.children[index - 1], container.children[index]
+        if (
+            isinstance(previous, Tree)
+            and isinstance(current, Tree)
+            and previous.data == current.data
+            and info.is_repetition_rule(str(current.data))
+        ):
+            for child in current.children:
+                if isinstance(child, Tree):
+                    child.parent = previous  # type: ignore[attr-defined]
+            previous.children.extend(current.children)
+            del container.children[index]
+        else:
+            index += 1
 
 
 def splice_entry_nodes(container: Tree, nodes: Sequence[Tree | Token], index: int) -> None:

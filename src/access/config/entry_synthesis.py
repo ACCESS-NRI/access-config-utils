@@ -213,6 +213,36 @@ class GrammarInfo:
                 return text
         return None
 
+    def is_repetition_rule(self, name: str) -> bool:
+        """Report whether a rule is a plain repetition of something, such as ``a: b*``.
+
+        Two adjacent nodes of such a rule can be merged into one holding both sets of
+        children, because the rule accepts any number of them. That is what lets the text
+        either side of a deleted entry be rejoined -- see ``merge_adjacent_repetitions``.
+
+        Recognised by shape: every alternative is either empty or the single repetition
+        helper rule Lark generates for this rule, as ``random_text: (/.+/|NEWLINE)*``
+        compiles to ``random_text: __random_text_star_5 |``.
+
+        Args:
+            name (str): Rule name.
+
+        Returns:
+            bool: True if the rule is a plain repetition.
+        """
+        rules = self.rules_by_origin.get(name)
+        if not rules:
+            return False
+        prefixes = (f"__{name}_star_", f"__{name}_plus_")
+        for rule in rules:
+            if not rule.expansion:
+                continue
+            if len(rule.expansion) != 1 or rule.expansion[0].is_term:
+                return False
+            if not str(rule.expansion[0].name).startswith(prefixes):
+                return False
+        return True
+
     def value_rules(self, name: str) -> frozenset[str]:
         """Return the value-type rules reachable from *name* by single-symbol rules only.
 

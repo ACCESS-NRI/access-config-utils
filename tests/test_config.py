@@ -4,7 +4,9 @@
 from pathlib import Path
 
 import pytest
+from lark import Tree
 
+from access.config.parse_tree_ops import AddParent, merge_adjacent_repetitions
 from access.config.parser import ConfigParser, _entry_matches, clear_grammar_cache
 
 grammar = """
@@ -995,3 +997,39 @@ def test_config_non_finite_floats(parser):
 
     # None of the refused assignments changed the file.
     assert str(config) == "a=1.0 b=(1.0, 2.0)c=1.0d0"
+
+
+def test_config_is_repetition_rule(parser):
+    """Test the shape test that decides which rules may be merged after a deletion"""
+    info = parser.parse("a=1")._ctx.info
+
+    # A rule that is a plain repetition of something.
+    assert info.is_repetition_rule("block")
+    # A rule whose alternative is a single terminal, and one with a longer expansion.
+    assert not info.is_repetition_rule("equal")
+    assert not info.is_repetition_rule("key_value")
+    # A name that is not a rule at all.
+    assert not info.is_repetition_rule("not_a_rule")
+
+
+def test_config_merge_adjacent_repetitions(parser):
+    """Test that merging rejoins the children of two adjacent nodes and re-parents them.
+
+    Exercised here with a repetition rule whose children are rule nodes rather than tokens,
+    so that the merged children end up owned by the node that survives.
+    """
+    config = parser.parse("a=1")
+    info = config._ctx.info
+
+    left, right = Tree("block", [Tree("x", [])]), Tree("block", [Tree("y", [])])
+    container = Tree("start", [left, right, Tree("equal", [])])
+    AddParent().visit(container)
+
+    merge_adjacent_repetitions(container, info)
+
+    assert len(container.children) == 2
+    assert [child.data for child in container.children[0].children] == ["x", "y"]
+    # The moved child now belongs to the node that absorbed it.
+    assert container.children[0].children[1].parent is left
+    # A rule that is not a repetition is left alone.
+    assert container.children[1].data == "equal"
