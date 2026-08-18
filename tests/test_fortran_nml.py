@@ -1,8 +1,10 @@
 # Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
+
 import pytest
-from lark.exceptions import UnexpectedEOF
+from lark.exceptions import UnexpectedEOF, UnexpectedToken
 
 from access.config.fortran_nml import FortranNMLParser
 
@@ -183,3 +185,196 @@ def test_fortran_nml_roundtrip_with_mutation(parser, fortran_nml_file, modified_
     config["LIST_B"]["STRING"] = "another string"
 
     assert str(config) == modified_fortran_nml_file
+
+
+@pytest.fixture()
+def extended_fortran_nml_file():
+    """Fixture returning the content of a Fortran namelist file with new keys added."""
+    return """
+&LIST_A ! This is a comment
+  Var = 4 , ! This is a comment after an assignment
+  LIST = 1, 2, 3
+
+! This is another comment
+
+  Float = 1800.0  ,
+  COMPLEX = (3.0, 4.0),
+
+  NOVALUE =
+  NEWVAR = 7
+  NEWNULL =
+  NEWSTR = "a string"
+  NEWBOOL = .true.
+  NEWCOMPLEX = (3.0, 4.0)
+/
+
+! Yet another comment
+ This is some random text 
+
+&LIST_B
+  Bool = .true.
+  LIST = "a", "b", "c", DOUBLE = 1d-10
+  STRING="a string"
+  ANOTHER_LIST = 1, 2,
+                 3,   ! Comment in line break
+                  4, 5, 6
+  NEWLIST = 1, 2, 3
+  NEWDOUBLE = 1e-10
+/
+
+&LIST_C
+NEWVAR3 = 9
+/
+&NEWNML
+A = 1
+/
+"""
+
+
+def test_fortran_nml_roundtrip_with_additions(parser, fortran_nml_file, extended_fortran_nml_file):
+    """Test adding new keys of every kind the format supports.
+
+    One byte-exact expectation covers indentation, where each new entry lands relative to
+    trailing blank lines and the namelist terminator, and the notation chosen per value.
+    """
+    config = parser.parse(fortran_nml_file)
+
+    # Each new key goes after the last assignment of its namelist and before the closing
+    # "/", indented to match its neighbours.
+    config["LIST_A"]["NEWVAR"] = 7
+    config["LIST_A"]["NEWNULL"] = None
+    config["LIST_A"]["NEWSTR"] = "a string"
+    config["LIST_A"]["NEWBOOL"] = True
+    config["LIST_A"]["NEWCOMPLEX"] = 3.0 + 4.0j
+
+    # LIST_B ends with a list continued over three physical lines; the new keys follow it.
+    config["LIST_B"]["NEWLIST"] = [1, 2, 3]
+    config["LIST_B"]["NEWDOUBLE"] = 1.0e-10
+
+    # LIST_C is empty, so there is no entry to copy a style from: the layout is canonical.
+    config["LIST_C"]["NEWVAR3"] = 9
+
+    # A whole new namelist group, created empty and then filled. Its contents copy the
+    # nearest group above it, which is the LIST_C just filled canonically, so they are not
+    # indented either. See test_fortran_nml_addition_block_indentation.
+    config["NEWNML"] = {"A": 1}
+
+    assert str(config) == extended_fortran_nml_file
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_fortran_nml_addition_block_indentation(parser):
+    """Test that the contents of a new namelist group follow the groups already there.
+
+    A group created by an assignment is empty, so it holds no entry of its own to copy a
+    style from and its contents would otherwise be written flush left, in a file whose other
+    groups are indented.
+    """
+    config = parser.parse("&L\n  X = 1\n/\n")
+    config["NEW"] = {"A": 1}
+
+    assert str(config) == "&L\n  X = 1\n/\n&NEW\n  A = 1\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    # Nothing is invented: a file that indents nothing gets an unindented group.
+    config = parser.parse("&L\nX = 1\n/\n")
+    config["NEW"] = {"A": 1}
+
+    assert str(config) == "&L\nX = 1\n/\n&NEW\nA = 1\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    # The style reaches keys added later, not just those in the dict the block was made
+    # from, since the block keeps it until it has an entry of its own to copy.
+    config = parser.parse("&L\n  X = 1\n/\n")
+    config["NEW"] = {}
+    config["NEW"]["A"] = 1
+
+    assert str(config) == "&L\n  X = 1\n/\n&NEW\n  A = 1\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_fortran_nml_addition_after_comment_run(parser):
+    """Test that a new key lands after a comment run inside a namelist group.
+
+    The comment on the assignment's own line is held by the ``nml_line`` the index is
+    measured past, so the position one past it is the second line of that comment.
+    """
+    config = parser.parse("&L\n  X = 1  ! what X is\n  ! ...continued\n/\n")
+
+    config["L"]["NEW"] = 2
+
+    assert str(config) == "&L\n  X = 1  ! what X is\n  ! ...continued\n  NEW = 2\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    # Between namelist groups the comment is not a node of its own: the grammar lumps every
+    # line there into one "random_text" blob, so a new group still goes above it. That is a
+    # known limitation of this format, not of the placement rule.
+    config = parser.parse("&L\n  X = 1\n/\n! a top-level comment\n")
+
+    config["NEW"] = {"A": 1}
+
+    assert str(config) == "&L\n  X = 1\n/\n&NEW\n  A = 1\n/\n! a top-level comment\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_fortran_nml_addition_values(parser):
+    """Test the notation a namelist uses for values written into new keys."""
+    config = parser.parse("&L\n  X = 1\n/\n")
+
+    config["L"]["B"] = True
+    config["L"]["S"] = "text"
+    config["L"]["N"] = None
+
+    # Fortran logicals, and a quoted string since the grammar has no bare-word value type.
+    assert str(config) == '&L\n  X = 1\n  B = .true.\n  S = "text"\n  N =\n/\n'
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_fortran_nml_addition_case_insensitive(parser):
+    """Test that a new key is written as given while the dict entry is upper-cased."""
+    config = parser.parse("&L\n  Var = 4\n/\n")
+
+    config["L"]["newvar"] = 1
+
+    assert "NEWVAR" in dict(config["L"])
+    assert config["L"]["NewVar"] == 1
+    assert str(config) == "&L\n  Var = 4\n  newvar = 1\n/\n"
+
+    # Assigning again finds the existing key rather than adding a second entry.
+    config["L"]["NEWVAR"] = 2
+    assert str(config) == "&L\n  Var = 4\n  newvar = 2\n/\n"
+
+
+def test_fortran_nml_addition_errors(parser):
+    """Test additions a Fortran namelist cannot express."""
+    config = parser.parse("&L\n  X = 1\n/\n")
+
+    # Assignments exist only inside a namelist group.
+    with pytest.raises(TypeError):
+        config["TOPLEVEL"] = 1
+
+    # Namelists do not nest.
+    with pytest.raises(TypeError):
+        config["L"]["NESTED"] = {"A": 1}
+
+    # The grammar has no value type for a path.
+    with pytest.raises(TypeError):
+        config["L"]["P"] = Path("/x/y")
+
+    assert str(config) == "&L\n  X = 1\n/\n"
+
+
+@pytest.mark.xfail(
+    reason="Pre-existing: removing a whole namelist leaves two adjacent random_text nodes, "
+    "which the start rule cannot derive, so the reconstructor refuses to write the tree out. "
+    "Unrelated to key addition; adding a key back inside a namelist works.",
+    raises=UnexpectedToken,
+    strict=True,
+)
+def test_fortran_nml_delete_namelist(parser, fortran_nml_file):
+    """Test that a whole namelist group can be removed and the file written out again."""
+    config = parser.parse(fortran_nml_file)
+
+    del config["LIST_A"]
+
+    str(config)

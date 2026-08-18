@@ -24,14 +24,17 @@ class FortranNMLParser(ConfigParser):
     @property
     def grammar(self) -> str:
         return """
-?start: namelists
+// "start" must be a non-transparent rule: the root node is the container that new entries
+// are added to, and a transparent rule collapses away for a single-namelist file.
+start: random_text? namelist (random_text? namelist)* random_text?
 
-?namelists: random_text? namelist (random_text? namelist)* random_text?
-
-namelist.2: nml_start key line_end? nml_lines nml_end -> key_block
+namelist.2: nml_start key line_end? block nml_end -> key_block
 nml_start: ws* "&"
 nml_end:  ws* ("/"|/&end/i) line_end
-nml_lines: (nml_line | empty_line)* -> block
+
+// The block contents rule must be *named* "block", not aliased to it, so that the name can
+// be used as a Lark start symbol when parsing the text of a new entry.
+block: (nml_line | empty_line)*
 
 ?nml_line: assignment (ws* "," assignment)* (ws* separator)? line_end?
 

@@ -1,6 +1,8 @@
 # Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
+
 import pytest
 from lark.exceptions import UnexpectedCharacters
 
@@ -136,6 +138,127 @@ def test_mom6_input_roundtrip_with_mutation(parser, mom6_input_file, modified_mo
     assert str(config) == modified_mom6_input_file
 
 
+@pytest.fixture()
+def extended_mom6_input_file():
+    """Fixture returning the content of a MOM6 input file with new keys added."""
+    return """
+BOOL = True ! This is a comment
+FLOAT1 = 1800.0
+
+  ! This is another comment
+
+FLOAT2 = 1e-10
+VAR1="test"
+Var2 = 2
+BLOCK%
+BVAR = 4
+ ! A comment inside a block
+BLIST = 1,2,3
+BNEW = 2
+%BLOCK ! Yet another comment
+
+List = 'a','b','c'
+NEW1 = 1
+NEWLIST = 1,2
+NEWSTR = "a"
+NEWBOOL = True
+NEWBLOCK%
+X = 1
+%NEWBLOCK
+"""
+
+
+def test_mom6_input_roundtrip_with_additions(parser, mom6_input_file, extended_mom6_input_file):
+    """Test adding new keys of every kind the format supports."""
+    config = parser.parse(mom6_input_file)
+
+    config["BLOCK"]["BNEW"] = 2
+    config["NEW1"] = 1
+    config["NEWLIST"] = [1, 2]
+    config["NEWSTR"] = "a"
+    # MOM6 uses Python-style booleans rather than Fortran logicals.
+    config["NEWBOOL"] = True
+    config["NEWBLOCK"] = {"X": 1}
+
+    assert str(config) == extended_mom6_input_file
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_mom6_input_addition_no_indentation(parser):
+    """Test that a new key is not indented, since the grammar does not allow it.
+
+    The file ends with a whitespace-only line, which is the trap: copying the indentation
+    from that line would produce a line the grammar cannot parse.
+    """
+    config = parser.parse("BOOL = True\n  \n")
+
+    config["NEW"] = 1
+
+    # The new entry follows the last assignment, so it precedes the trailing blank line, and
+    # it carries no indentation.
+    assert str(config) == "BOOL = True\nNEW = 1\n  \n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_mom6_input_addition_block_style(parser):
+    """Test that a new block copies the assignment spacing of the block above it.
+
+    MOM6 cannot indent an assignment at all, so the indentation a new block would inherit is
+    always empty here. The spacing around "=" is what carries over instead, and this file
+    writes it tight.
+    """
+    config = parser.parse("BLK%\nX=1\n%BLK\n")
+
+    config["NEWBLK"] = {"Y": 2}
+
+    assert str(config) == "BLK%\nX=1\n%BLK\nNEWBLK%\nY=2\n%NEWBLK\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_mom6_input_addition_after_comment_run(parser):
+    """Test that a new key lands after a parameter's documentation, not inside it.
+
+    This is the format where it matters most: a MOM6 parameter file documents nearly every
+    parameter in a comment that starts on the parameter's own line and carries on below it.
+    That trailing comment belongs to the entry, so the position one past the entry is the
+    second line of its documentation.
+    """
+    config = parser.parse("DT = 900.0  ! [s]\n            ! The dynamics time step.\n")
+
+    config["NEW"] = 1
+
+    assert str(config) == "DT = 900.0  ! [s]\n            ! The dynamics time step.\nNEW = 1\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    # The same inside a block, where the run is stepped over but "%BLK" is not.
+    config = parser.parse("BLK%\nA = 1  ! what A is\n ! ...continued\n%BLK\n")
+
+    config["BLK"]["B"] = 2
+
+    assert str(config) == "BLK%\nA = 1  ! what A is\n ! ...continued\nB = 2\n%BLK\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_mom6_input_addition_errors(parser):
+    """Test additions a MOM6 input file cannot express."""
+    config = parser.parse("A = 1\n")
+
+    # The grammar has no valueless assignment, and no complex or path value type.
+    with pytest.raises(TypeError):
+        config["Z"] = None
+    with pytest.raises(TypeError):
+        config["Z"] = 1 + 2j
+    with pytest.raises(TypeError):
+        config["Z"] = Path("/x/y")
+
+    # Blocks do not nest.
+    config = parser.parse("B%\nX = 1\n%B\n")
+    with pytest.raises(TypeError):
+        config["B"]["N"] = {"Y": 1}
+
+    assert str(config) == "B%\nX = 1\n%B\n"
+
+
 def test_mom6_input_delete_everything_keeps_comments(parser):
     """Test that deleting every key still writes out the text that is not an entry.
 
@@ -149,3 +272,7 @@ def test_mom6_input_delete_everything_keeps_comments(parser):
 
     assert str(config) == "\n  ! keep me\n\n"
     assert dict(parser.parse(str(config))) == {}
+
+    # Adding a key back does not resurrect anything: the text was never hidden.
+    config["C"] = 3
+    assert str(config) == "C = 3\n\n  ! keep me\n\n"
