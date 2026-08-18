@@ -36,6 +36,7 @@ from access.config.parse_tree_ops import (
     ConfigToDict,
     entry_insertion_index,
     find_rule_node,
+    merge_adjacent_repetitions,
     parse_entry_nodes,
     splice_entry_nodes,
     update_node_value,
@@ -528,7 +529,12 @@ class Config(dict):
 
         # Remove the key rule node from the parse tree
         key_rule_node = find_rule_node(self._refs[key])
-        key_rule_node.parent.children.remove(key_rule_node)  # type: ignore[attr-defined]
+        container = key_rule_node.parent  # type: ignore[attr-defined]
+        container.children.remove(key_rule_node)
+
+        # Removing an entry can leave the nodes either side of it adjacent, in a shape the
+        # grammar cannot derive; rejoin them so the tree can still be written out.
+        merge_adjacent_repetitions(container, self._ctx.info)
 
         # Remove the rule node reference
         del self._refs[key]
