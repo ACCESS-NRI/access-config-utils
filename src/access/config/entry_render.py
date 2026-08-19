@@ -123,7 +123,9 @@ def _ws_texts(template: EntryTemplate, style: EntryStyle) -> dict[int, str]:
     if style.indent and slots.leading:
         # The indentation sits immediately before the key.
         texts[slots.leading[-1]] = style.indent
-    for indices, pads in ((slots.key, style.key_pads), (slots.element, style.element_pads)):
+    # Only reproduce the key runs where the template puts them on the side they came from.
+    matched = style.key_pads is not None and slots.key_split == style.key_split
+    for indices, pads in ((slots.key if matched else (), style.key_pads), (slots.element, style.element_pads)):
         if pads is not None and len(indices) == len(pads):
             for index, pad in zip(indices, pads, strict=True):
                 texts[index] = pad

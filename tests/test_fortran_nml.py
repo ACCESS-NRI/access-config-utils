@@ -177,6 +177,28 @@ def test_fortran_nml_roundtrip(parser, fortran_nml_file):
     assert str(config) == fortran_nml_file
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "&L\nA = 1\n/\n",
+        "&L\nA= 1\n/\n",
+        "&L\nA =1\n/\n",
+        "&L\nA=1\n/\n",
+        "&L\nA  =  1\n/\n",
+        "&L\nA=  0 , 1 ,\n/\n",
+    ],
+)
+def test_fortran_nml_roundtrip_assignment_spacing(parser, text) -> None:
+    """Test that whitespace either side of "=" is written back on the side it came from.
+
+    The "=" is an anonymous literal, so Lark filters it out of the parse tree. With a bare
+    "ws*" on each side, the tree records that a whitespace run exists but not which side of
+    the "=" it fell on, and the reconstructor guesses -- writing "A= 1" back as "A =1". The
+    "eq" rule binds the leading whitespace to the "=" so the position survives.
+    """
+    assert str(parser.parse(text)) == text
+
+
 def test_fortran_nml_roundtrip_with_mutation(parser, fortran_nml_file, modified_fortran_nml_file):
     """Test round-trip parsing with mutation of the config."""
     config = parser.parse(fortran_nml_file)
@@ -390,6 +412,24 @@ def test_fortran_nml_delete_namelist(parser, fortran_nml_file):
     del config["LIST_A"]
     del config["LIST_C"]
     assert str(config) == ""
+
+
+@pytest.mark.parametrize(
+    ("donor", "added"),
+    [("  x =1", "  N =5"), ("  x= 1", "  N= 5"), ("  x = 1", "  N = 5"), ("  x=1", "  N=5")],
+)
+def test_fortran_nml_addition_copies_spacing_on_the_right_side(parser, donor, added) -> None:
+    """Test that a new entry puts the whitespace on the side of "=" its neighbour did.
+
+    A single run of whitespace is ambiguous -- ``x =1`` and ``x= 1`` both have one -- so the
+    style has to record which side of the assignment it fell on.
+    """
+    config = parser.parse(f"&L\n{donor}\n/\n")
+
+    config["L"]["N"] = 5
+
+    assert str(config) == f"&L\n{donor}\n{added}\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
 
 
 @pytest.mark.parametrize(("container", "category", "expected"), canonical_rows("fortran_nml"))

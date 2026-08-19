@@ -30,7 +30,8 @@ A grammar written against this package must:
   registered in ``VALUE_TYPE_HANDLER_REGISTRY``. Such a node has exactly one ``Token``
   child.
 - Capture whitespace that must survive a round trip in the explicit ``ws`` rule, never
-  discard it with ``%ignore``.
+  discard it with ``%ignore``, and bind the run *before* an assignment literal into an
+  ``eq`` rule with it -- see ``TRANSPARENT_RULES``.
 - Name the top-level rule ``start``, and leave it non-transparent.
 - Hold the contents of a ``key_block`` in a rule *named* ``block``, not one aliased to it.
 
@@ -82,6 +83,18 @@ COMMENT_RULES: Final = ("comment", "fortran_comment")
 The shared grammar defines one rule per comment character in use, and both are rules rather
 than terminals, so the name is what identifies a comment. The terminal each wraps is an
 anonymous regular expression, which Lark names ``__ANON_0``.
+"""
+
+TRANSPARENT_RULES: Final = frozenset({"eq"})
+"""Rules that group whitespace with a punctuation literal, and hold nothing else.
+
+A grammar needs one of these because an anonymous literal is filtered out of the parse tree,
+so ``ws* "=" ws*`` records which whitespace runs exist but not which side of the ``=`` each
+one fell on -- and the reconstructor then guesses, turning ``A= 1`` into ``A =1``. Binding
+the leading whitespace to the literal in a rule of its own fixes the position.
+
+Such a rule is a grouping device rather than structure, so reading an entry's whitespace
+looks through it: the runs inside it space out the same things as the runs beside it do.
 """
 
 KEY_VALUE: Final = "key_value"

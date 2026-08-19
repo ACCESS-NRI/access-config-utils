@@ -129,6 +129,17 @@ def test_mom6_input_roundtrip(parser, mom6_input_file):
     assert str(config) == mom6_input_file
 
 
+@pytest.mark.parametrize("text", ["A = 1\n", "A= 1\n", "A =1\n", "A=1\n", "A  =  1\n"])
+def test_mom6_input_roundtrip_assignment_spacing(parser, text) -> None:
+    """Test that whitespace either side of "=" is written back on the side it came from.
+
+    The "=" is an anonymous literal, so Lark filters it out of the parse tree. With a bare
+    "ws*" on each side, the tree records that a whitespace run exists but not which side of
+    the "=" it fell on, and the reconstructor guesses -- writing "A= 1" back as "A =1".
+    """
+    assert str(parser.parse(text)) == text
+
+
 def test_mom6_input_roundtrip_with_mutation(parser, mom6_input_file, modified_mom6_input_file):
     """Test round-trip parsing with mutation of the config."""
     config = parser.parse(mom6_input_file)

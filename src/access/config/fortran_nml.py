@@ -40,10 +40,15 @@ block: (nml_line | empty_line)*
 
 ?assignment: key_value | key_list | key_null
 
-key_value: ws* key ws* "=" ws* value
-key_list: ws* key ws* "=" ws* value ((line_break|ws* separator) ws* value)+
-key_null: ws* key ws* "=" ws*
+key_value: ws* key eq ws* value
+key_list: ws* key eq ws* value ((line_break|ws* separator) ws* value)+
+key_null: ws* key eq ws*
 line_break: ws* separator line_end
+
+// The whitespace before "=" belongs to a rule of its own. Left as a bare "ws*" beside the
+// "ws*" that follows "=", it is ambiguous which slot a single space falls in, and the
+// reconstructor moves it: "A= 1" is written back as "A =1".
+eq: ws* "="
 
 ?value: logical
       | integer

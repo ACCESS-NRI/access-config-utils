@@ -133,16 +133,14 @@ block: block_line*
            | block_key_list
            | empty_line
 
-// A table entry is written "key = value", a top-level one "key: value", and both are
-// aliased to the same rule name. The reconstructor picks the rule to write a node with by
-// matching the node's children, so the two shapes have to differ -- and an anonymous token
-// is filtered out of the tree, leaving both as a key, some "ws" and a value. Capturing the
-// "=" in a rule of its own is what keeps it in the tree, and so what stops a table entry
-// being written out in the top-level syntax.
-block_key_value : ws* key ws* assign ws* value line_end -> key_value
-block_key_list : ws* key ws* assign ws* value (":"value)+ line_end -> key_list
+block_key_value : ws* key eq ws* value line_end -> key_value
+block_key_list : ws* key eq ws* value (":"value)+ line_end -> key_list
 
-assign: "="
+// The whitespace before "=" belongs to a rule of its own. Left as a bare "ws*" beside the
+// "ws*" that follows "=", it is ambiguous which slot a single space falls in. Here that also
+// let the reconstructor confuse this rule with the resource-file one above, which is aliased
+// to the same name, and write "Verbosity: off" for "Verbosity= off".
+eq: ws* "="
 
 ?value: logical
       | integer

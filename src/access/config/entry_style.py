@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from lark import Tree
 
 from access.config.entry_fragments import EntryTemplate, neighbour_fragment
-from access.config.grammar_contract import BLOCK_RULE, KEY_BLOCK, KEY_RULE, WS_RULE
+from access.config.grammar_contract import BLOCK_RULE, KEY_BLOCK, KEY_RULE, TRANSPARENT_RULES, WS_RULE
 from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
 from access.config.tree_navigation import entries_of
 
@@ -35,6 +35,9 @@ class EntryStyle:
         indent (str): Whitespace before the key.
         key_pads (tuple[str, ...] | None): Whitespace runs between the key and the first
             value, in order, or ``None`` when no entry demonstrates it.
+        key_split (int): How many of *key_pads* fall before the assignment itself. A single
+            run is otherwise ambiguous -- ``x =1`` and ``x= 1`` both record one -- and the
+            new entry would take whichever side the chosen template's slot sits on.
         element_pads (tuple[str, ...] | None): Whitespace runs between the first and second
             values, in order, or ``None`` when no entry demonstrates it. That is the case
             whenever no entry holds two values, so a scalar neighbour does not dictate how a
@@ -45,6 +48,7 @@ class EntryStyle:
 
     indent: str = ""
     key_pads: tuple[str, ...] | None = None
+    key_split: int = 0
     element_pads: tuple[str, ...] | None = None
     has_donor: bool = False
 
@@ -90,11 +94,13 @@ class _Slots:
     Args:
         leading (tuple[int, ...]): Placeholders before the key, which carry the indentation.
         key (tuple[int, ...]): Stylable placeholders between the key and the first value.
+        key_split (int): How many of *key* precede the assignment literal.
         element (tuple[int, ...]): Stylable placeholders between the first two values.
     """
 
     leading: tuple[int, ...]
     key: tuple[int, ...]
+    key_split: int
     element: tuple[int, ...]
 
 
@@ -126,7 +132,13 @@ def classify_slots(template: EntryTemplate) -> _Slots:
         )
 
     leading = tuple(index for index in range(first_key) if template[index].kind == "ws")
-    return _Slots(leading, stylable(first_key, key_end), stylable(element_start, element_end))
+    key_slots = stylable(first_key, key_end)
+    # The assignment is the first fixed text after the key, so the slots before it space out
+    # the key and the ones after it space out the value.
+    literals = [index for index in range(first_key, key_end) if template[index].kind == "literal"]
+    boundary = literals[0] if literals else key_end
+    key_split = sum(1 for index in key_slots if index < boundary)
+    return _Slots(leading, key_slots, key_split, stylable(element_start, element_end))
 
 
 def style_matches(template: EntryTemplate, style: EntryStyle) -> bool:
@@ -139,7 +151,8 @@ def style_matches(template: EntryTemplate, style: EntryStyle) -> bool:
     for indices, pads in ((slots.key, style.key_pads), (slots.element, style.element_pads)):
         if pads is not None and len(indices) != len(pads):
             return False
-    return True
+    # The counts can agree while the runs sit on the wrong side of the assignment.
+    return style.key_pads is None or slots.key_split == style.key_split
 
 
 # --- Style probing ---
@@ -181,11 +194,16 @@ def probe_entry_style(container: Tree) -> EntryStyle:
         return EntryStyle()
 
     shapes = [_shape_of(entry) for entry in entries]
-    with_value = [shape for shape in shapes if shape[2]]
-    indent, key_pads, _ = with_value[-1] if with_value else shapes[-1]
-    with_elements = [shape for shape in shapes if len(shape[2]) > 1]
-    element_pads = with_elements[-1][2][1] if with_elements else None
-    return EntryStyle(indent, key_pads, element_pads, has_donor=True)
+    # A block entry shows the indentation but carries no assignment, so it says nothing
+    # about the spacing around one -- and taking its empty run would write "KEY=value". A
+    # valueless entry does show that spacing, just not how elements are set out.
+    with_value = [shape for shape in shapes if shape[3]]
+    with_assignment = [shape for entry, shape in zip(entries, shapes, strict=True) if entry.data != KEY_BLOCK]
+    donors = with_value or with_assignment
+    with_elements = [shape for shape in shapes if len(shape[3]) > 1]
+    element_pads = with_elements[-1][3][1] if with_elements else None
+    key_pads, split = (donors[-1][1], donors[-1][2]) if donors else (None, 0)
+    return EntryStyle(shapes[-1][0], key_pads, split, element_pads, has_donor=True)
 
 
 def probe_sibling_block_style(container: Tree) -> EntryStyle:
@@ -234,20 +252,34 @@ def probe_sibling_block_style(container: Tree) -> EntryStyle:
     return EntryStyle()
 
 
-def _shape_of(entry: Tree) -> tuple[str, tuple[str, ...], list[tuple[str, ...]]]:
+def _shape_of(entry: Tree) -> tuple[str, tuple[str, ...], int, list[tuple[str, ...]]]:
     """Split the whitespace runs of an entry rule node into the parts a style is built from.
+
+    The runs between the key and the first value come with a count of how many of them fall
+    *before* the assignment itself. Without it a single run is ambiguous: ``x =1`` and
+    ``x= 1`` both record one run, and a template with one whitespace slot would reproduce
+    whichever side its slot happens to be on.
 
     Args:
         entry (Tree): An entry rule node.
 
     Returns:
-        tuple[str, tuple[str, ...], list[tuple[str, ...]]]: The indentation, the runs
-            between the key and the first value, and the runs before each value in turn --
-            so the second element, when present, is the element separator.
+        tuple[str, tuple[str, ...], int, list[tuple[str, ...]]]: The indentation, the runs
+            between the key and the first value, how many of those precede the assignment,
+            and the runs before each value in turn -- so the second element, when present,
+            is the element separator.
     """
     kinds: list[tuple[str, str]] = []
     for child in (child for child in entry.children if isinstance(child, Tree)):
-        if child.data == WS_RULE:
+        if child.data in TRANSPARENT_RULES:
+            # A transparent rule groups whitespace with the assignment literal. Its runs
+            # count as though written beside the key, and the marker records where the
+            # literal fell so the two sides stay apart.
+            for grandchild in child.children:
+                if isinstance(grandchild, Tree) and grandchild.data == WS_RULE:
+                    kinds.append(("ws", "".join(str(token) for token in grandchild.children)))
+            kinds.append(("assign", ""))
+        elif child.data == WS_RULE:
             kinds.append(("ws", "".join(str(token) for token in child.children)))
         elif child.data == KEY_RULE:
             kinds.append((KEY_RULE, ""))
@@ -260,6 +292,7 @@ def _shape_of(entry: Tree) -> tuple[str, tuple[str, ...], list[tuple[str, ...]]]
     keys = [index for index, (kind, _) in enumerate(kinds) if kind == KEY_RULE]
     key_at = keys[0] if keys else len(kinds)
     values = [index for index, (kind, _) in enumerate(kinds) if kind == "value"]
+    assigns = [index for index, (kind, _) in enumerate(kinds) if kind == "assign"]
 
     # The run before each value, measured from the key for the first and from the previous
     # value thereafter. With no value at all, everything after the key spaces out the key.
@@ -270,4 +303,7 @@ def _shape_of(entry: Tree) -> tuple[str, tuple[str, ...], list[tuple[str, ...]]]
     else:
         gaps = []
         key_pads = runs(key_at, len(kinds))
-    return "".join(runs(0, key_at)), key_pads, gaps
+    # With no marker at all the grammar does not group whitespace with its assignment, so
+    # every run counts as preceding it and the split constrains nothing.
+    split = len(runs(key_at, assigns[0])) if assigns else len(key_pads)
+    return "".join(runs(0, key_at)), key_pads, split, gaps
