@@ -280,6 +280,21 @@ def test_mom6_input_delete_everything_keeps_comments(parser):
     assert str(config) == "C = 3\n\n  ! keep me\n\n"
 
 
+def test_mom6_input_delete_removes_every_entry_that_wrote_the_key(parser):
+    """Test that a key assigned more than once is deleted from every line assigning it.
+
+    Only the last assignment survives in the configuration, so removing only the entry it
+    came from left the earlier ones in the file, to reappear the next time it was read.
+    """
+    config = parser.parse("A = 1\nA = 2\nB = 3\n")
+    assert dict(config) == {"A": 2, "B": 3}
+
+    del config["A"]
+
+    assert str(config) == "B = 3\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
 @pytest.mark.parametrize(("container", "category", "expected"), canonical_rows("mom6_input"))
 def test_canonical_entry_text(parser, container, category, expected) -> None:
     """Test the text this format writes for a new entry with no neighbour to copy from.

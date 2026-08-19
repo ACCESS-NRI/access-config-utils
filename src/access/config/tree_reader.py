@@ -22,7 +22,7 @@ holding the value.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from lark import Token, Tree
@@ -45,17 +45,20 @@ class EntryRef:
 
     Args:
         category (str): One of ``ENTRY_CATEGORIES``, saying which shape this entry has.
-        entry_node (Tree): The node the whole entry hangs from, whose ``.data`` is
-            *category*. Removing the entry means unlinking this node.
+        entry_nodes (tuple[Tree, ...]): Every node that wrote this key, in the order the
+            file has them. Usually one. A file may assign a key more than once, and only
+            the last assignment reaches the configuration -- but *all* of them have to go
+            when the key is deleted, or it comes back the next time the file is read.
         value_nodes (tuple[Tree, ...]): The value-type rule nodes holding the entry's
             values, in order. One for ``key_value``, one per element for ``key_list``,
-            none for ``key_block`` and ``key_null``.
+            none for ``key_block`` and ``key_null``. These come from the last entry, the
+            one whose value the configuration holds.
         block_node (Tree | None): The ``block`` node holding the entry's contents, for a
             ``key_block``; ``None`` otherwise.
     """
 
     category: str
-    entry_node: Tree
+    entry_nodes: tuple[Tree, ...]
     value_nodes: tuple[Tree, ...] = ()
     block_node: Tree | None = None
 
@@ -141,6 +144,22 @@ class EntryReader(Interpreter):
         self.visit(container)
         return self._refs
 
+    def _record(self, key: str, ref: EntryRef) -> None:
+        """Store *ref* for *key*, keeping the entry nodes of any earlier assignment.
+
+        A later assignment wins: its category and its value nodes are what the
+        configuration reports. What it does not do is replace the record of which entries
+        wrote the key, since deleting the key has to remove every one of them.
+
+        Args:
+            key (str): The normalised key.
+            ref (EntryRef): The reference just read.
+        """
+        previous = self._refs.get(key)
+        if previous is not None:
+            ref = replace(ref, entry_nodes=previous.entry_nodes + ref.entry_nodes)
+        self._refs[key] = ref
+
     def _get_key(self, tree: Tree) -> str:
         """Given an entry rule node, extract and return the key name.
 
@@ -204,7 +223,7 @@ class EntryReader(Interpreter):
         nodes = self._value_nodes(tree)
         if len(nodes) > 1:
             raise ValueError("More than one value found in Tree")
-        self._refs[self._get_key(tree)] = EntryRef(KEY_VALUE, tree, nodes)
+        self._record(self._get_key(tree), EntryRef(KEY_VALUE, (tree,), nodes))
 
     def key_list(self, tree: Tree) -> None:
         """Interpreter callback for ``"key_list"`` rule nodes.
@@ -212,7 +231,7 @@ class EntryReader(Interpreter):
         Args:
             tree (Tree): Rule node produced by the ``"key_list"`` grammar rule.
         """
-        self._refs[self._get_key(tree)] = EntryRef(KEY_LIST, tree, self._value_nodes(tree))
+        self._record(self._get_key(tree), EntryRef(KEY_LIST, (tree,), self._value_nodes(tree)))
 
     def key_block(self, tree: Tree) -> None:
         """Interpreter callback for ``"key_block"`` rule nodes.
@@ -222,7 +241,7 @@ class EntryReader(Interpreter):
         """
         for child in tree.children:
             if child.data == BLOCK_RULE:
-                self._refs[self._get_key(tree)] = EntryRef(KEY_BLOCK, tree, block_node=child)
+                self._record(self._get_key(tree), EntryRef(KEY_BLOCK, (tree,), block_node=child))
                 return
 
     def key_null(self, tree: Tree) -> None:
@@ -231,4 +250,4 @@ class EntryReader(Interpreter):
         Args:
             tree (Tree): Rule node produced by the ``"key_null"`` grammar rule.
         """
-        self._refs[self._get_key(tree)] = EntryRef(KEY_NULL, tree)
+        self._record(self._get_key(tree), EntryRef(KEY_NULL, (tree,)))

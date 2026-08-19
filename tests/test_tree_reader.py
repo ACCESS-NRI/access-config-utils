@@ -31,18 +31,18 @@ class TestEntryValue:
     def test_a_scalar(self) -> None:
         """Test the single-value case, read through the handler its rule names."""
         node = entry_node("key_value", "a", value_node("integer", "42"))
-        assert entry_value(EntryRef("key_value", node, (node.children[1],))) == 42
+        assert entry_value(EntryRef("key_value", (node,), (node.children[1],))) == 42
 
     def test_a_list(self) -> None:
         """Test that a list comes back in the order written, each element converted."""
         values = (value_node("integer", "1"), value_node("float", "2.5"))
         node = entry_node("key_list", "a", *values)
 
-        assert entry_value(EntryRef("key_list", node, values)) == [1, 2.5]
+        assert entry_value(EntryRef("key_list", (node,), values)) == [1, 2.5]
 
     def test_a_valueless_entry(self) -> None:
         """Test that ``key_null`` reads as ``None``, having no value node at all."""
-        assert entry_value(EntryRef("key_null", entry_node("key_null", "a"))) is None
+        assert entry_value(EntryRef("key_null", (entry_node("key_null", "a"),))) is None
 
 
 class TestReadEntries:
@@ -76,7 +76,7 @@ class TestReadEntries:
 
         ref = read_entries(container(entry), FakeContext())["a"]
 
-        assert ref.entry_node is entry
+        assert ref.entry_nodes == (entry,)
         assert ref.value_nodes == (value,)
         assert ref.block_node is None
 
@@ -108,6 +108,33 @@ class TestReadEntries:
         )
 
         assert refs["a"].value_nodes == (second,)
+
+    def test_but_every_entry_that_wrote_the_key_is_remembered(self) -> None:
+        """Test that a key assigned twice records both entries, in the order written.
+
+        Only the last value reaches the configuration, but deleting the key has to take
+        both lines with it or the key returns the next time the file is read.
+        """
+        early = entry_node("key_value", "a", value_node("integer", "1"))
+        late = entry_node("key_value", "a", value_node("integer", "2"))
+
+        refs = read_entries(container(early, late), FakeContext())
+
+        assert refs["a"].entry_nodes == (early, late)
+
+    def test_entries_of_different_categories_accumulate_too(self) -> None:
+        """Test that the record spans categories, since the last assignment sets the shape.
+
+        A file may write a key as a scalar and then as a list. The reference is the list --
+        that is what the configuration holds -- and both entries still have to go.
+        """
+        scalar = entry_node("key_value", "a", value_node())
+        listed = entry_node("key_list", "a", value_node(), value_node())
+
+        refs = read_entries(container(scalar, listed), FakeContext())
+
+        assert refs["a"].category == "key_list"
+        assert refs["a"].entry_nodes == (scalar, listed)
 
     def test_an_empty_container_reads_as_no_entries(self) -> None:
         """Test the block that was empty in the file, and the file that is only comments."""

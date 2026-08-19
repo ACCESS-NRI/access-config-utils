@@ -136,12 +136,17 @@ class ConfigStore:
         return sibling if sibling.has_donor else self.fallback_style
 
     def remove(self, key: str) -> None:
-        """Unlink an entry from the tree and forget its reference.
+        """Unlink every entry that wrote a key, and forget its reference.
+
+        There is more than one when the file assigned the key twice. Only the last
+        assignment reached the configuration, so removing only that one would leave the
+        earlier entries in the file and the key would come back the next time it was read.
 
         Args:
             key (str): The normalised key.
         """
-        remove_entry_node(self.refs[key].entry_node, self.ctx.info)
+        for entry_node in self.refs[key].entry_nodes:
+            remove_entry_node(entry_node, self.ctx.info)
         del self.refs[key]
 
     def render(self) -> str:

@@ -135,7 +135,7 @@ class TestAdd:
         """Patch insertion, recording its arguments and returning a chosen reference."""
         calls: list[dict] = []
         node = entry_node("key_value", "z", value_node())
-        ref = EntryRef("key_value", node, (node.children[1],))
+        ref = EntryRef("key_value", (node,), (node.children[1],))
 
         def fake_insert(container, ctx, key, raw_key, value, style):
             calls.append({"container": container, "key": key, "raw_key": raw_key, "value": value, "style": style})
@@ -216,6 +216,21 @@ class TestRemove:
         assert list(store.refs) == ["b"]
         assert store.render() == "b = 2"
 
+    def test_unlinks_every_entry_that_wrote_the_key(self, ctx) -> None:
+        """Test the file that assigns a key twice, where only the last is in the dict.
+
+        Removing just that one would leave the earlier line behind, and the key would come
+        back the next time the file was read.
+        """
+        tree = ctx.lark.parse("a = 1\na = 2\nb = 3\n", start="start")
+        AddParent().visit(tree)
+        store = ConfigStore(tree, ctx)
+        assert len(store.refs["a"].entry_nodes) == 2
+
+        store.remove("a")
+
+        assert store.render() == "b = 3"
+
     def test_delegates_to_the_tree_edit(self, store, monkeypatch) -> None:
         """Test that removal goes through the repair path, not a bare list removal.
 
@@ -224,11 +239,11 @@ class TestRemove:
         """
         seen: list[Tree] = []
         monkeypatch.setattr(config_store, "remove_entry_node", lambda node, info: seen.append(node))
-        entry = store.refs["a"].entry_node
+        entries = list(store.refs["a"].entry_nodes)
 
         store.remove("a")
 
-        assert seen == [entry]
+        assert seen == entries
 
 
 class TestRender:

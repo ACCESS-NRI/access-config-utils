@@ -367,6 +367,17 @@ def test_nuopc_config_addition_multi_component_path(parser):
     assert dict(parser.parse(str(config))) == dict(config)
 
 
+def test_nuopc_config_delete_removes_every_entry_that_wrote_the_key(parser):
+    """Test that a label assigned more than once is deleted from every line assigning it."""
+    config = parser.parse("A: 1\nA: 2\nB: 3\n")
+    assert dict(config) == {"A": 2, "B": 3}
+
+    del config["A"]
+
+    assert str(config) == "B: 3\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
 def test_nuopc_config_new_table_body_is_indented(parser):
     """Test that a brand-new table indents its body, as the format conventionally does.
 

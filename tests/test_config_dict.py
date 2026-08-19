@@ -28,8 +28,8 @@ def ref(category: str = "key_value", key: str = "a", values: int = 1) -> EntryRe
     node = entry_node(category, key, *nodes)
     if category == "key_block":
         body = Tree("block", [])
-        return EntryRef(category, entry_node(category, key, body), block_node=body)
-    return EntryRef(category, node, nodes)
+        return EntryRef(category, (entry_node(category, key, body),), block_node=body)
+    return EntryRef(category, (node,), nodes)
 
 
 @pytest.fixture
