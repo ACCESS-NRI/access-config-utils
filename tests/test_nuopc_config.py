@@ -159,6 +159,33 @@ def test_nuopc_config_roundtrip(parser, nuopc_config_file):
     assert str(config) == nuopc_config_file
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A list of two is the shape a top-level list can take as well.
+        "TEST::\n a = 1:2\n::\n",
+        "TEST::\n a = 1.5:2.5\n::\n",
+        "TEST::\n a = x:y\n::\n",
+        # With no whitespace around the "=", so is a scalar, and a list of any length.
+        "TEST::\n a=1\n::\n",
+        "TEST::\n a=1:2:3\n::\n",
+        # The top-level syntax has to keep writing itself, too.
+        "TEST: 1 2\n",
+        "TEST:1 2\n",
+        "TEST:1\n",
+    ],
+)
+def test_nuopc_config_table_syntax_roundtrip(parser, text):
+    """Test that an entry is written back in the syntax of the level it sits at.
+
+    The two levels of the format alias their entries to the same rule names, so what tells
+    them apart when writing out is the ``=`` that a table entry keeps in the parse tree.
+    Without it a table entry can be written in the top-level syntax -- a file that does not
+    parse -- whenever the two levels admit the same sequence of children.
+    """
+    assert str(parser.parse(text)) == text
+
+
 def test_nuopc_config_roundtrip_with_mutation(parser, nuopc_config_file, modified_nuopc_config_file):
     """Test round-trip parsing with mutation of the config."""
     config = parser.parse(nuopc_config_file)
