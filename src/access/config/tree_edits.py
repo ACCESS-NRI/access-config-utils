@@ -381,32 +381,78 @@ def _entry_value_nodes(entry: Tree) -> list[Tree]:
     return [child for child in entry.children if is_value_node(child)]
 
 
-def write_values(refs: Sequence[Tree], values: Sequence[Any], lark: Lark) -> list[Tree]:
+def write_values(refs: Sequence[Tree | None], values: Sequence[Any], lark: Lark) -> list[Tree | None]:
     """Write a whole list of values through the nodes backing it.
 
-    Usually one value per node, written in place. A repeat is the exception: it backs
-    several elements at once, so writing one of them splits the run and that node has to be
-    replaced rather than updated.
+    Usually one value per node, written in place. Three things complicate that, and all come
+    from a list whose elements are not written one for one in the file:
+
+    - A repeat backs several elements at once, so writing one of them splits the run and
+      that node has to be replaced rather than updated.
+    - An array can be spread over several indexed entries, so the nodes are not contiguous
+      and each entry has to be dealt with on its own.
+    - An array can have positions no entry wrote, which have no node to write through.
 
     Args:
-        refs (Sequence[Tree]): The node backing each element, a repeat appearing once per
-            element it covers.
+        refs (Sequence[Tree | None]): The node backing each element, a repeat appearing once
+            per element it covers and ``None`` where the file wrote nothing.
         values (Sequence[Any]): The new value for each element.
         lark (Lark): The compiled parser.
 
     Returns:
-        list[Tree]: The node now backing each element.
+        list[Tree | None]: The node now backing each element.
+
+    Raises:
+        ValueError: If a value was assigned to a position the file never wrote, or to an
+            array position that another entry later overwrote.
     """
-    entry = _entry_of(refs[0])
+    for ref, value in zip(refs, values, strict=True):
+        if ref is None and value is not None:
+            raise ValueError("Cannot write to an array position the file leaves unset; assign a whole new list instead")
+
+    written: list[Tree | None] = list(refs)
+    for entry, occurrences in _by_entry(refs):
+        _write_entry(entry, occurrences, values, written, lark)
+    return written
+
+
+def _write_entry(
+    entry: Tree,
+    occurrences: list[tuple[int, Tree]],
+    values: Sequence[Any],
+    written: list[Tree | None],
+    lark: Lark,
+) -> None:
+    """Write the elements one entry holds, replacing its value nodes only where needed.
+
+    Args:
+        entry (Tree): The entry rule node.
+        occurrences (list[tuple[int, Tree]]): The list position and node of each element it
+            holds, in list order.
+        values (Sequence[Any]): The new value for every element of the list.
+        written (list[Tree | None]): Per-element nodes, updated in place for this entry.
+        lark (Lark): The compiled parser.
+
+    Raises:
+        ValueError: If the entry writes values that no longer appear in the list, so
+            rewriting it would change how many it holds.
+    """
+    by_node: dict[int, list[int]] = {}
+    for position, node in occurrences:
+        by_node.setdefault(id(node), []).append(position)
+
     nodes = _entry_value_nodes(entry)
     if not any(node.data == REPEAT_RULE for node in nodes):
-        for node, value in zip(refs, values, strict=True):
-            update_node_value(node, value)
-        return list(refs)
+        for position, node in occurrences:
+            update_node_value(node, values[position])
+        return
 
-    by_node: dict[int, list[int]] = {}
-    for position, node in enumerate(refs):
-        by_node.setdefault(id(node), []).append(position)
+    held = sum(len(node_values(node)) for node in nodes)
+    if held != len(occurrences):
+        raise ValueError(
+            "Cannot write this list: the file assigns some of its positions twice, so "
+            "rewriting one entry would change how many values it holds"
+        )
 
     # An entry that held a repeat where a single value goes becomes a list entry once the
     # repeat is split, and that is a change to the entry itself rather than to one node.
@@ -416,7 +462,34 @@ def write_values(refs: Sequence[Tree], values: Sequence[Any], lark: Lark) -> lis
     else:
         fresh = [new for node, texts in texts_by_node for new in replace_value_node(entry, node, texts, lark)]
 
-    return [node for node in fresh for _ in node_values(node)]
+    flat = [node for node in fresh for _ in node_values(node)]
+    for (position, _), node in zip(occurrences, flat, strict=True):
+        written[position] = node
+
+
+def _by_entry(refs: Sequence[Tree | None]) -> list[tuple[Tree, list[tuple[int, Tree]]]]:
+    """Group the nodes backing a list by the entry each belongs to, keeping list order.
+
+    Grouped by identity rather than by adjacency: an array written with indices can have its
+    entries interleaved, as ``v(1:3:2)`` and ``v(2)`` are, and an entry has to be rewritten
+    once with everything it holds rather than once per run of neighbouring positions.
+
+    Args:
+        refs (Sequence[Tree | None]): The node backing each element.
+
+    Returns:
+        list[tuple[Tree, list[tuple[int, Tree]]]]: For each entry, the list position and
+            node of every element it holds. Positions with no node are not represented.
+    """
+    # Keyed on identity: a Tree hashes by its contents, so two entries that happen to be
+    # written the same way would collide.
+    groups: dict[int, tuple[Tree, list[tuple[int, Tree]]]] = {}
+    for position, node in enumerate(refs):
+        if node is None:
+            continue
+        entry = _entry_of(node)
+        groups.setdefault(id(entry), (entry, []))[1].append((position, node))
+    return list(groups.values())
 
 
 def _entry_of(node: Tree) -> Tree:

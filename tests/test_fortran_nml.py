@@ -140,9 +140,12 @@ def test_invalid_fortran_nml(parser):
     with pytest.raises(UnexpectedEOF):
         parser.parse("&LIST\nTEST : 'a'\n/")
 
-    # "true" and "false" are logicals, not stray words -- see the logical spelling test.
+    # A bare word is a value, so what is left is text no value type can start with.
     with pytest.raises(UnexpectedEOF):
-        parser.parse("&LIST\nTEST = maybe\n/")
+        parser.parse("&LIST\nTEST = @maybe\n/")
+
+    with pytest.raises(UnexpectedEOF):
+        parser.parse("&LIST\nTEST = 'unterminated\n/")
 
     with pytest.raises(UnexpectedEOF):
         parser.parse("%TEST\na=1\n%TEST")
@@ -845,6 +848,263 @@ def test_fortran_nml_repeat_rewrite_keeps_what_is_between_the_values(parser):
 
     assert str(config) == "&L\n  x = 8.0, 9.0, ! keep me\n      1.0\n/\n"
     assert dict(parser.parse(str(config))) == dict(config)
+
+
+@pytest.mark.parametrize(
+    ("lines", "expected"),
+    [
+        (["v(1) = 1", "v(2) = 2"], [1, 2]),
+        (["v(1:4) = 1,2,3,4"], [1, 2, 3, 4]),
+        (["v(1:7:2) = 1, 3, 5, 7"], [1, None, 3, None, 5, None, 7]),
+        (["v(0:3) = 1, 2, 3, 4"], [1, 2, 3, 4]),
+        (["v(-2:2) = 1, 2, 3, 4, 5"], [1, 2, 3, 4, 5]),
+        (["v(2) = 2", "v(4) = 4", "v(3) = 3", "v(1) = 1"], [1, 2, 3, 4]),
+        (["v(1:) = 1,2,3,4"], [1, 2, 3, 4]),
+        (["v(:4) = 1,2,3,4"], [1, 2, 3, 4]),
+        (["v(1) = 1", "v(4) = 4"], [1, None, None, 4]),
+        (["v(1) = 1"], [1]),
+        (["v(2) = 2", "v = 1"], [1, 2]),
+        (["v = 1", "v(2) = 2"], [1, 2]),
+    ],
+)
+def test_fortran_nml_array_qualifier(parser, lines, expected) -> None:
+    """Test that indexed assignments to one key make up a single array.
+
+    An index writes part of an array, so the entries are gathered rather than overwriting
+    each other, wherever their lines are and in whatever order. A position no entry writes
+    -- skipped by a stride, or simply never mentioned -- reads as null. An unqualified
+    assignment joins the same array, from the first position Fortran numbers.
+    """
+    source = "&L\n" + "".join(f"{line}\n" for line in lines) + "/\n"
+    config = parser.parse(source)
+
+    assert config["L"]["V"] == expected
+    assert str(config) == source
+
+
+def test_fortran_nml_array_qualifier_edit_and_delete(parser):
+    """Test that an array spread over several lines is edited and deleted as one key.
+
+    Each element is still backed by the node that wrote it, so a write changes only that
+    line, and removing the key removes every line making it up.
+    """
+    source = "&L\n  latpnt(1)=90.0,\n  latpnt(2)=-65.0,\n  z = 5\n/\n"
+    config = parser.parse(source)
+
+    assert config["L"]["LATPNT"] == [90.0, -65.0]
+
+    config["L"]["LATPNT"][1] = -60.0
+    assert str(config) == source.replace("-65.0", "-60.0")
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    del config["L"]["LATPNT"]
+    assert str(config) == "&L\n  z = 5\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_fortran_nml_array_gap_is_not_writable(parser):
+    """Test that a position the file never wrote cannot be assigned to.
+
+    It reads as null because nothing set it, and there is no text behind it to change.
+    Refusing beats writing a value the file would not show.
+    """
+    config = parser.parse("&L\n  v(1) = 1\n  v(4) = 4\n/\n")
+
+    with pytest.raises(ValueError):
+        config["L"]["V"][1] = 9
+
+    assert str(config) == "&L\n  v(1) = 1\n  v(4) = 4\n/\n"
+
+
+@pytest.mark.parametrize(
+    ("lines", "keys"),
+    [
+        (["v(1,1) = 1", "v(3,3) = 2"], ["V(1,1)", "V(3,3)"]),
+        (["a(1)%b = 1", "a(2)%b = 2"], ["A(1)", "A(2)"]),
+    ],
+)
+def test_fortran_nml_unmodelled_qualifier_stays_in_the_key(parser, lines, keys) -> None:
+    """Test the qualifiers that are not gathered into an array keep theirs in the key.
+
+    A multidimensional index and an index on a derived type both address a shape this does
+    not build. Leaving the qualifier in the key is what stops two of them reading as the
+    same key, which would drop all but the last with no error.
+    """
+    source = "&L\n" + "".join(f"{line}\n" for line in lines) + "/\n"
+    config = parser.parse(source)
+
+    assert list(config["L"]) == keys
+    assert str(config) == source
+
+
+@pytest.mark.parametrize("qualifier", ["(1:2:3:4)", "(+)", "(1:3:0)"])
+def test_fortran_nml_malformed_qualifier_stays_in_the_key(parser, qualifier) -> None:
+    """Test that a qualifier naming no positions is kept in the key rather than guessed at.
+
+    Too many bounds, a bound that is not a number, and a stride of zero all describe no set
+    of positions, so there is nothing to gather the values into.
+    """
+    source = f"&L\n  v{qualifier} = 1\n/\n"
+    config = parser.parse(source)
+
+    assert list(config["L"]) == [f"V{qualifier}"]
+    assert str(config) == source
+
+
+def test_fortran_nml_array_whole_list_replacement_over_a_gap(parser):
+    """Test replacing a whole array that has a position the file never wrote.
+
+    The gap has no node behind it, so it can only stay a gap: the replacement has to leave
+    that position null, and the values around it are written through their own entries.
+    """
+    config = parser.parse("&L\n  v(1) = 1\n  v(4) = 4\n/\n")
+
+    config["L"]["V"] = [7, None, None, 9]
+
+    assert str(config) == "&L\n  v(1) = 7\n  v(4) = 9\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    with pytest.raises(ValueError):
+        config["L"]["V"] = [7, 8, None, 9]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("continue", "continue"),
+        ("none", "none"),
+        ("ocean_only", "ocean_only"),
+        ("'quoted'", "quoted"),
+        (".true.", True),
+        ("T", True),
+        ("12", 12),
+    ],
+)
+def test_fortran_nml_bare_word_value(parser, text, expected) -> None:
+    """Test that an unquoted word is a string value.
+
+    Real files write them: CICE has "runtype=continue" and the CESM data models have
+    "import_data_fields = none". The logical spellings still read as logicals, and a number
+    is still a number, so the bare word is the last thing tried rather than the first.
+    """
+    source = f"&L\n  X = {text}\n/\n"
+    config = parser.parse(source)
+
+    assert config["L"]["X"] == expected
+    assert str(config) == source
+
+
+def test_fortran_nml_bare_word_does_not_swallow_a_key(parser):
+    """Test that a bare word cannot be read as the key of the assignment that follows it.
+
+    A continuation comma leaves the parser expecting another value where the next line
+    starts with a key, so without the lookahead "a = 'x',\\n b = 1" would read "b" as a
+    second value of "a".
+    """
+    config = parser.parse("&L\n  a = 'x',\n  b = 1\n/\n")
+
+    assert dict(config["L"]) == {"A": "x", "B": 1}
+    assert str(config) == "&L\n  a = 'x',\n  b = 1\n/\n"
+
+
+# --- Regressions
+#
+# Each of these was a defect found by review after the suite was already green at 100% line
+# coverage, so they assert behaviour rather than reach code.
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("n_aero(1) = 1, 2, 3", [1, 2, 3]),
+        ("n_aero(3) = 1, 2, 3", [1, 2, 3]),
+        ("n_aero(2) = 2*7", [7, 7]),
+    ],
+)
+def test_fortran_nml_single_index_fills_onwards(parser, line, expected) -> None:
+    """Test that a single-position qualifier says where the values start, not how many.
+
+    Fortran's ``v(3) = 1, 2, 3`` fills three positions from the third. Reading it as one
+    position and three values raised before the configuration was even built.
+    """
+    source = f"&L\n  {line}\n/\n"
+    config = parser.parse(source)
+
+    assert config["L"]["N_AERO"] == expected
+    assert str(config) == source
+
+
+def test_fortran_nml_interleaved_indexed_entries(parser):
+    """Test writing an array whose entries alternate with each other.
+
+    ``v(1:3:2)`` holds positions 1 and 3 and ``v(2)`` holds position 2, so the elements of
+    one entry are not next to each other in the list. Grouping them by where they sit rather
+    than by which entry wrote them rewrote the first entry twice, losing a value each time.
+    """
+    config = parser.parse("&L\n  v(1:3:2) = 2*1\n  v(2) = 7\n/\n")
+    assert config["L"]["V"] == [1, 7, 1]
+
+    config["L"]["V"] = [9, 8, 7]
+
+    assert str(config) == "&L\n  v(1:3:2) = 9, 7\n  v(2) = 8\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_fortran_nml_overlapping_entries_refuse_writes(parser):
+    """Test that a list whose positions are written twice is refused rather than mangled.
+
+    Rewriting one entry means writing every value it holds, and an entry whose values are
+    partly overridden by a later one no longer appears in the list in full. Writing it would
+    silently shorten the line.
+    """
+    config = parser.parse("&L\n  a = 1, 3*7\n  a(1) = 0\n/\n")
+    assert config["L"]["A"] == [0, 7, 7, 7]
+
+    with pytest.raises(ValueError):
+        config["L"]["A"] = [0, 7, 7, 7]
+
+    assert str(config) == "&L\n  a = 1, 3*7\n  a(1) = 0\n/\n"
+
+
+def test_fortran_nml_indexed_null_joins_its_array(parser):
+    """Test that a valueless assignment carrying an index sets one position of an array."""
+    config = parser.parse("&L\n  v(2) = 3\n  v(1) =\n/\n")
+
+    assert config["L"]["V"] == [None, 3]
+    assert str(config) == "&L\n  v(2) = 3\n  v(1) =\n/\n"
+
+
+@pytest.mark.parametrize("value", ["true", "t", "F", "false", "café"])
+def test_fortran_nml_bare_word_refuses_values_that_change_type(parser, value) -> None:
+    """Test that a string is refused when writing it bare would change its type.
+
+    An unquoted value has nothing marking where it starts and ends, so the word ``true``
+    written into one is not the string but a logical. A value the grammar cannot write
+    unquoted at all, such as a non-ASCII word, is refused for the same reason.
+    """
+    config = parser.parse("&L\n  w = continue\n/\n")
+
+    with pytest.raises(TypeError):
+        config["L"]["W"] = value
+
+    assert str(config) == "&L\n  w = continue\n/\n"
+
+
+@pytest.mark.parametrize(
+    ("qualifier", "key"),
+    [("( )", "V( )"), ("(1,2)", "V(1,2)")],
+)
+def test_fortran_nml_valueless_entry_with_an_unmodelled_qualifier(parser, qualifier, key) -> None:
+    """Test that a valueless assignment keeps a qualifier this cannot place.
+
+    A qualifier naming no positions -- empty, or multidimensional -- stays in the key so
+    two of them cannot be read as one, whether or not the assignment has a value.
+    """
+    source = f"&L\n  v{qualifier} =\n/\n"
+    config = parser.parse(source)
+
+    assert dict(config["L"]) == {key: None}
+    assert str(config) == source
 
 
 @pytest.mark.parametrize(("container", "category", "expected"), canonical_rows("fortran_nml"))

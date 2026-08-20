@@ -85,6 +85,14 @@ than terminals, so the name is what identifies a comment. The terminal each wrap
 anonymous regular expression, which Lark names ``__ANON_0``.
 """
 
+INDEX_RULE: Final = "index"
+"""Name of the rule holding an array qualifier, the ``(3)`` of ``v(3) = 1``.
+
+An indexed assignment writes part of an array, so several entries on several lines can make
+up one value: ``v(1) = 1`` beside ``v(2) = 2`` is the two-element ``v``. ``place_indexed``
+works out where each entry's values land.
+"""
+
 REPEAT_RULE: Final = "repeat"
 """Name of the rule holding a repeat count, ``n*v`` for *v* repeated *n* times.
 

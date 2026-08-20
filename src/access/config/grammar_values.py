@@ -19,6 +19,7 @@ admitted rule can express.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -78,6 +79,17 @@ def _fortran_string_to_str(value: str, token_text: str) -> str:
     """
     quote = token_text[0]
     return quote + value.replace(quote, quote * 2) + quote
+
+
+def _is_fortran_bare_word(value: Any) -> bool:
+    """Report whether a value can be written as an unquoted word in a Fortran namelist.
+
+    Narrower than a Python identifier in two ways. The word has to be ASCII, since that is
+    all the grammar's terminal matches, and it must not be one of Fortran's logical
+    spellings: written bare, ``true`` is not the string "true" but ``.true.``, so a value
+    that reads back as a logical has to be refused rather than silently change type.
+    """
+    return type(value) is str and re.fullmatch(r"(?!(?i:t|f|true|false)\Z)[A-Za-z_][A-Za-z0-9_]*", value) is not None
 
 
 def _logical_to_str(value: bool, token_text: str) -> str:
@@ -230,6 +242,12 @@ VALUE_TYPE_HANDLER_REGISTRY: dict[str, ValueTypeHandler] = {
         ),
         seed_token=lambda value: "(0.0d0, 0.0d0)",
     ),
+    "fortran_identifier": ValueTypeHandler(
+        type_check=_is_fortran_bare_word,
+        from_token=lambda token: str(token),
+        to_token=lambda value, token: value,
+        seed_token=lambda value: "",
+    ),
     "identifier": ValueTypeHandler(
         type_check=lambda value: type(value) is str and value.isidentifier(),
         from_token=lambda token: str(token),
@@ -275,6 +293,7 @@ VALUE_RULE_PRIORITY: tuple[str, ...] = (
     "double_complex",
     "fortran_string",
     "string",
+    "fortran_identifier",
     "identifier",
     "path",
 )

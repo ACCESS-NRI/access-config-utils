@@ -17,7 +17,14 @@ import pytest
 from conftest import FakeContext, entry_node, key_node, value_node, ws_node
 from lark import Token, Tree
 
-from access.config.tree_reader import EntryReader, EntryRef, entry_value, merge_blocks, read_entries
+from access.config.tree_reader import (
+    EntryReader,
+    EntryRef,
+    element_values,
+    entry_value,
+    merge_blocks,
+    read_entries,
+)
 
 
 def container(*entries: Tree) -> Tree:
@@ -205,6 +212,197 @@ class TestBlocksWrittenMoreThanOnce:
 
         with pytest.raises(ValueError, match="assigned a value and used as a block"):
             read_entries(container(scalar, block), FakeContext())
+
+
+def indexed(category: str, key: str, spec: str, *children: Tree) -> Tree:
+    """Return an entry node carrying an array qualifier, the ``(3)`` of ``v(3) = 1``."""
+    return Tree(category, [key_node(key), Tree("index", [Token("INDEX", spec)]), *children])
+
+
+def repeat(count: int, inner: Tree | None = None) -> Tree:
+    """Return a repeat node: ``n*v``, or ``n*`` when nothing is repeated."""
+    children: list[Tree | Token] = [Token("REPEAT_COUNT", f"{count}*")]
+    if inner is not None:
+        children.append(inner)
+    return Tree("repeat", children)
+
+
+class TestElementValues:
+    """One value per element, from the node backing each."""
+
+    def test_a_repeat_expands_once_however_often_it_appears(self) -> None:
+        """Test that a run written once is read once, not once per element it covers."""
+        node = repeat(3, value_node("integer", "1"))
+
+        assert element_values([node, node, node]) == [1, 1, 1]
+
+    def test_a_hole_is_a_null(self) -> None:
+        """Test the array position no entry wrote, which has no node behind it."""
+        assert element_values([value_node(text="1"), None, value_node(text="3")]) == [1, None, 3]
+
+
+class TestGatheringAnIndexedArray:
+    """Several indexed entries making up one array."""
+
+    def test_two_entries_become_one_list(self) -> None:
+        """Test the case the whole feature exists for: ``v(1) = 1`` beside ``v(2) = 2``."""
+        first = indexed("key_value", "v", "1", value_node(text="1"))
+        second = indexed("key_value", "v", "2", value_node(text="2"))
+
+        refs = read_entries(container(first, second), FakeContext())
+
+        assert list(refs) == ["v"]
+        assert refs["v"].category == "key_list"
+        assert entry_value(refs["v"]) == [1, 2]
+        # Deleting the key has to take both lines with it.
+        assert refs["v"].entry_nodes == (first, second)
+
+    def test_the_lines_need_not_be_in_order(self) -> None:
+        """Test that position comes from the qualifier, not from where the line sits."""
+        later = indexed("key_value", "v", "2", value_node(text="2"))
+        earlier = indexed("key_value", "v", "1", value_node(text="1"))
+
+        refs = read_entries(container(later, earlier), FakeContext())
+
+        assert entry_value(refs["v"]) == [1, 2]
+
+    def test_a_position_no_entry_wrote_reads_as_null(self) -> None:
+        """Test the gap a sparse set of indices leaves."""
+        refs = read_entries(
+            container(
+                indexed("key_value", "v", "1", value_node(text="1")),
+                indexed("key_value", "v", "3", value_node(text="3")),
+            ),
+            FakeContext(),
+        )
+
+        assert entry_value(refs["v"]) == [1, None, 3]
+        assert refs["v"].value_nodes[1] is None
+
+    def test_a_qualifier_says_where_the_values_begin(self) -> None:
+        """Test that ``v(3) = 1, 2, 3`` fills three positions from the third."""
+        entry = indexed("key_list", "v", "3", value_node(text="1"), value_node(text="2"), value_node(text="3"))
+
+        refs = read_entries(container(entry), FakeContext())
+
+        assert entry_value(refs["v"]) == [1, 2, 3]
+
+    def test_an_unqualified_entry_joins_the_same_array(self) -> None:
+        """Test that a plain assignment beside indexed ones starts at position one."""
+        refs = read_entries(
+            container(
+                indexed("key_value", "v", "2", value_node(text="2")),
+                entry_node("key_value", "v", value_node(text="1")),
+            ),
+            FakeContext(),
+        )
+
+        assert entry_value(refs["v"]) == [1, 2]
+
+    def test_an_unqualified_entry_first_is_seeded_into_the_array(self) -> None:
+        """Test the other order: the values already read take their positions first."""
+        refs = read_entries(
+            container(
+                entry_node("key_list", "v", value_node(text="1"), value_node(text="2")),
+                indexed("key_value", "v", "3", value_node(text="3")),
+            ),
+            FakeContext(),
+        )
+
+        assert entry_value(refs["v"]) == [1, 2, 3]
+
+    def test_a_valueless_entry_sets_one_position(self) -> None:
+        """Test that ``v(1) =`` beside ``v(2) = 3`` is ``[None, 3]``, not a bare null.
+
+        Storing the null as the whole value would discard the 3.
+        """
+        refs = read_entries(
+            container(
+                indexed("key_value", "v", "2", value_node(text="3")),
+                indexed("key_null", "v", "1"),
+            ),
+            FakeContext(),
+        )
+
+        assert entry_value(refs["v"]) == [None, 3]
+
+    def test_a_valueless_entry_joins_an_array_already_started(self) -> None:
+        """Test the unqualified valueless assignment to a key written with indices."""
+        refs = read_entries(
+            container(
+                indexed("key_value", "v", "2", value_node(text="3")),
+                entry_node("key_null", "v"),
+            ),
+            FakeContext(),
+        )
+
+        assert entry_value(refs["v"]) == [None, 3]
+
+    def test_a_valueless_entry_read_first_becomes_position_one(self) -> None:
+        """Test ``v =`` followed by ``v(2) = 3``, where the null is seeded into the array.
+
+        The valueless assignment was read as an ordinary entry, so its value has to take the
+        position it would have occupied before the indexed one can be placed beside it.
+        """
+        refs = read_entries(
+            container(
+                entry_node("key_null", "v"),
+                indexed("key_value", "v", "2", value_node(text="3")),
+            ),
+            FakeContext(),
+        )
+
+        assert entry_value(refs["v"]) == [None, 3]
+
+    def test_a_repeat_spread_across_positions_is_not_multiplied(self) -> None:
+        """Test the case that makes a gathered array carry its own values.
+
+        The repeat backs positions 1 and 3 with something else at 2, so reading it at each
+        appearance would give five values instead of three.
+        """
+        run = repeat(2, value_node("integer", "1"))
+        # One repeat child covering two elements, as "v(1:3:2) = 2*1" parses.
+        strided = indexed("key_value", "v", "1:3:2", run)
+        middle = indexed("key_value", "v", "2", value_node(text="7"))
+
+        refs = read_entries(container(strided, middle), FakeContext())
+
+        assert entry_value(refs["v"]) == [1, 7, 1]
+
+
+class TestQualifiersLeftInTheKey:
+    """The three shapes not gathered, which keep their text in the key instead."""
+
+    def test_a_multidimensional_index(self) -> None:
+        """Test that ``a(1,1)`` and ``a(3,3)`` stay two keys rather than becoming one."""
+        refs = read_entries(
+            container(
+                indexed("key_value", "a", "1,1", value_node(text="1")),
+                indexed("key_value", "a", "3,3", value_node(text="2")),
+            ),
+            FakeContext(),
+        )
+
+        assert sorted(refs) == ["a(1,1)", "a(3,3)"]
+
+    def test_an_index_on_a_derived_type(self) -> None:
+        """Test that ``a(1)%b`` keeps its qualifier, so ``a(2)%b`` is a different key."""
+        refs = read_entries(
+            container(
+                indexed("key_block", "a", "1", Tree("block", [])),
+                indexed("key_block", "a", "2", Tree("block", [])),
+            ),
+            FakeContext(),
+        )
+
+        assert sorted(refs) == ["a(1)", "a(2)"]
+
+    def test_a_valueless_entry_with_a_qualifier_it_cannot_model(self) -> None:
+        """Test that the decorated key is used for a valueless assignment too."""
+        refs = read_entries(container(indexed("key_null", "a", "1,1")), FakeContext())
+
+        assert list(refs) == ["a(1,1)"]
+        assert refs["a(1,1)"].category == "key_null"
 
 
 class TestKeyNormalisation:

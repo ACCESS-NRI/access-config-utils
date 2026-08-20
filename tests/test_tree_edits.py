@@ -482,3 +482,46 @@ class TestWritingRepeats:
         write_values([node] * 3, [1, 2, 3], lark)
 
         assert str(entry.data) == "key_list"
+
+    def test_refuses_a_value_for_a_position_the_file_never_wrote(self, lark) -> None:
+        """Test the hole in a gathered array, which has no node to write through.
+
+        A position no indexed entry mentioned is read as null and stays that way; giving it
+        a value would mean inventing a line to hold it.
+        """
+        entry = self._entry(lark, "x = 1\n")
+        node = next(child for child in entry.children if is_value_node(child))
+
+        with pytest.raises(ValueError, match="leaves unset"):
+            write_values([node, None], [1, 2], lark)
+
+        # Leaving it unset is fine; nothing is being written there.
+        assert write_values([node, None], [1, None], lark) == [node, None]
+
+    def test_refuses_an_entry_whose_positions_another_overrode(self, lark) -> None:
+        """Test the array whose entries overlap, where one line cannot be rewritten alone.
+
+        The repeat holds three values but only two of its positions survive in the list, so
+        re-spelling that entry would change how many values it writes.
+        """
+        entry = self._entry(lark, "x = 3*1\n")
+        node = next(child for child in entry.children if is_value_node(child))
+
+        with pytest.raises(ValueError, match="assigns some of its positions twice"):
+            write_values([node, node], [1, 2], lark)
+
+    def test_groups_interleaved_entries_by_the_entry_that_wrote_them(self, lark) -> None:
+        """Test that an entry is rewritten once with everything it holds.
+
+        An array written with indices can have its entries interleaved, so grouping by
+        adjacency would rewrite the first entry twice and lose a value each time.
+        """
+        first = self._entry(lark, "x = 1, 3\n")
+        second = self._entry(lark, "y = 2\n")
+        outer = [child for child in first.children if is_value_node(child)]
+        inner = next(child for child in second.children if is_value_node(child))
+
+        # Positions 0 and 2 come from one entry, position 1 from another.
+        written = write_values([outer[0], inner, outer[1]], [7, 8, 9], lark)
+
+        assert [str(node.children[0]) for node in written] == ["7", "8", "9"]

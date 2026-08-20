@@ -32,6 +32,7 @@ from ``grammar_contract``, which states in full what a grammar has to provide.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from lark import Token, Tree, Visitor
@@ -217,3 +218,93 @@ def node_values(node: Tree) -> list[Any]:
 def token_value(node: Tree) -> Any:
     """Convert the token of a value-type rule node into a Python value."""
     return VALUE_TYPE_HANDLER_REGISTRY[str(node.data)].from_token(str(node.children[0]))
+
+
+def index_positions(node: Tree | None, count: int) -> list[int] | None:
+    """Return the position each of *count* values takes, or ``None`` if they follow on.
+
+    Reads the qualifier's own text: ``(3)`` names where the values start, ``(2:5)`` a range,
+    and ``(1:7:2)`` a strided one, which leaves gaps between the values it places. An
+    implicit bound (``(2:)``, ``(:5)``, ``(:)``) is filled in from how many values there
+    are. Positions are as written, so they may start anywhere, including at zero or below.
+
+    A qualifier names where an entry's values *begin*, not how many it may have: Fortran's
+    ``v(3) = 1, 2, 3`` fills three positions from the third.
+
+    Args:
+        node (Tree | None): The index rule node, or ``None`` for an unqualified assignment.
+        count (int): How many values the entry holds.
+
+    Returns:
+        list[int] | None: The position of each value, or ``None`` when there is no qualifier
+            or it is one this does not model.
+    """
+    if node is None:
+        return None
+    spec = str(node.children[0])
+    if "," in spec:
+        # A multidimensional qualifier addresses an array of arrays, which is a shape this
+        # flat model cannot hold. Left alone, it stays part of the key.
+        return None
+    bounds = spec.split(":")
+    if len(bounds) > 3:
+        return None
+    try:
+        start = int(bounds[0]) if bounds[0].strip() else None
+        stop = int(bounds[1]) if len(bounds) > 1 and bounds[1].strip() else None
+        step = int(bounds[2]) if len(bounds) > 2 and bounds[2].strip() else 1
+    except ValueError:
+        return None
+    if step == 0:
+        return None
+    if len(bounds) == 1:
+        if start is None:
+            return None
+        first, step = start, 1
+    else:
+        first = start if start is not None else (stop - (count - 1) * step if stop is not None else 1)
+    return [first + offset * step for offset in range(count)]
+
+
+def place_indexed(
+    slots: dict[int, tuple[Any, Tree | None]],
+    positions: list[int] | None,
+    values: Sequence[Any],
+    refs: Sequence[Tree | None],
+) -> None:
+    """Record where an entry's values sit in the array its key names.
+
+    Args:
+        slots (dict[int, tuple[Any, Tree | None]]): Value and backing node by position,
+            added to in place. A position already taken is overwritten, as the later
+            assignment wins.
+        positions (list[int] | None): Where the values go, or ``None`` to follow on from the
+            first position Fortran numbers.
+        values (Sequence[Any]): The entry's values.
+        refs (Sequence[Tree | None]): The node backing each value, ``None`` where the entry
+            wrote the position without a value.
+    """
+    if positions is None:
+        # An unqualified assignment to an array otherwise written with indices starts at the
+        # first position Fortran numbers, which is one.
+        positions = [1 + offset for offset in range(len(values))]
+    for position, value, ref in zip(positions, values, refs, strict=True):
+        slots[position] = (value, ref)
+
+
+def flatten_slots(slots: dict[int, tuple[Any, Tree | None]]) -> tuple[list[Any], list[Tree | None]]:
+    """Lay the recorded positions out as a list, filling any gap with a null.
+
+    Positions are as the file wrote them, so they can start at any number and a stride or a
+    sparse set of indices leaves holes. The holes become ``None``, backed by no node at all,
+    which is what makes them unwritable.
+
+    Args:
+        slots (dict[int, tuple[Any, Tree | None]]): Value and backing node by position.
+
+    Returns:
+        tuple[list[Any], list[Tree | None]]: The values in order, and the node behind each.
+    """
+    order = range(min(slots), max(slots) + 1)
+    filled = [slots.get(position, (None, None)) for position in order]
+    return [value for value, _ in filled], [ref for _, ref in filled]
