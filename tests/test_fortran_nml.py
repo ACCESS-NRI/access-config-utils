@@ -9,6 +9,7 @@ from lark.exceptions import UnexpectedEOF
 
 from access.config.fortran_nml import FortranNMLParser
 from access.config.grammar_compiled import compile_grammar
+from access.config.grammar_values import UnsupportedEntryError
 
 
 @pytest.fixture(scope="module")
@@ -463,6 +464,127 @@ def test_fortran_nml_delete_removes_every_entry_that_wrote_the_key(parser):
 
     assert str(config) == "&L\n/\n"
     assert dict(parser.parse(str(config))) == dict(config)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("&L\nA%B = 1\n/\n", {"A": {"B": 1}}),
+        ("&L\nA%B%C = 2\n/\n", {"A": {"B": {"C": 2}}}),
+        ("&L\nA%B = 1, 2, 3\n/\n", {"A": {"B": [1, 2, 3]}}),
+        ("&L\nA%B =\n/\n", {"A": {"B": None}}),
+        ("&L\n  filename%met = 'x'\n/\n", {"FILENAME": {"MET": "x"}}),
+    ],
+)
+def test_fortran_nml_derived_type(parser, text, expected) -> None:
+    """Test that a derived-type component assignment reads as a nested block.
+
+    ``a%b = 1`` is the block ``a`` holding ``b = 1``, so it goes through the same key_block
+    machinery as a namelist group and nests to any depth for free.
+    """
+    config = parser.parse(text)
+
+    assert dict(config)["L"] == expected
+    assert str(config) == text
+
+
+def test_fortran_nml_derived_type_merges_across_lines(parser):
+    """Test that the components of one derived type merge, wherever their lines are.
+
+    A derived type spells one component per line, and the lines need not be adjacent. Each
+    is a separate entry in the tree under the same key, so without merging only the last
+    would survive -- losing the others with no error.
+    """
+    text = "&L\n  filename%met = 'x'\n  z = 1\n  filename%out = 'y'\n/\n"
+    config = parser.parse(text)
+
+    assert dict(config["L"]) == {"FILENAME": {"MET": "x", "OUT": "y"}, "Z": 1}
+    assert str(config) == text
+
+
+def test_fortran_nml_repeated_group_merges(parser):
+    """Test that a namelist group named twice in one file merges rather than overwriting."""
+    text = "&L\n V = 1\n/\n&L\n W = 2\n/\n"
+    config = parser.parse(text)
+
+    assert dict(config["L"]) == {"V": 1, "W": 2}
+    assert str(config) == text
+
+
+def test_fortran_nml_merged_block_edit_and_delete(parser):
+    """Test that a merged block is editable in place and deletes every line it occupies.
+
+    The merged block is a node the parse tree does not contain, but its children are the
+    real ones, so writing a value rewrites just that line and leaves the rest -- including a
+    comment on a sibling line -- exactly as it was.
+    """
+    text = "&L\n  filename%met = 'x.nc'   ! met file\n  z = 1\n  filename%out = 'y.nc'\n/\n"
+    config = parser.parse(text)
+
+    config["L"]["FILENAME"]["OUT"] = "z.nc"
+    assert str(config) == text.replace("'y.nc'", "'z.nc'")
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    del config["L"]["FILENAME"]
+    assert str(config) == "&L\n  z = 1\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_fortran_nml_derived_type_refuses_additions(parser):
+    """Test that a key cannot be added to a block with no body to add it to.
+
+    A derived type has no delimited body: it is written one component per line, so there is
+    nowhere inside it for an entry to go, and a merged block's root is not in the parse tree
+    at all. Splicing into either would change nothing that gets written out, so both refuse
+    rather than silently dropping the addition. The namelist group around them still
+    accepts new keys.
+    """
+    config = parser.parse("&L\n A%B = 1\n A%C = 2\n/\n")
+
+    with pytest.raises(UnsupportedEntryError):
+        config["L"]["A"]["D"] = 3
+
+    # A single, unmerged derived type has no body to add to either.
+    single = parser.parse("&L\n A%B = 1\n/\n")
+    with pytest.raises(UnsupportedEntryError):
+        single["L"]["A"]["C"] = 2
+
+    # The namelist group is a real block, so it still takes new keys.
+    single["L"]["NEW"] = 2
+    assert str(single) == "&L\n A%B = 1\n NEW = 2\n/\n"
+    assert dict(parser.parse(str(single))) == dict(single)
+
+
+def test_fortran_nml_delete_derived_type_component(parser):
+    """Test that a derived type survives losing one component, and goes when it loses all.
+
+    A derived type is written a component per line, so removing the last one leaves nothing
+    to write: the key goes from the file, and has to go from the configuration with it.
+    """
+    config = parser.parse("&L\n  grid%nx = 96\n  grid%ny = 72\n  z = 1\n/\n")
+
+    del config["L"]["GRID"]["NX"]
+    assert str(config) == "&L\n  grid%ny = 72\n  z = 1\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    del config["L"]["GRID"]["NY"]
+    assert str(config) == "&L\n  z = 1\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    # An empty namelist group is still a namelist group, so that one stays.
+    del config["L"]["Z"]
+    assert str(config) == "&L\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_fortran_nml_key_used_as_both_value_and_block(parser):
+    """Test that a key assigned a value and also used as a block is refused.
+
+    Merging the two would build a block around the value node and drop the value with no
+    error, and deleting the key afterwards left the configuration disagreeing with the file.
+    """
+    with pytest.raises(ValueError):
+        parser.parse("&L\n  a = 1\n  a%b = 2\n/\n")
 
 
 @pytest.mark.parametrize(("container", "category", "expected"), canonical_rows("fortran_nml"))

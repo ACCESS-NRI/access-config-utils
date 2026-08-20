@@ -7,19 +7,31 @@ Fortran namelists allow format-free I/O of variables by key-value assignements. 
 they were an extension to the languages, but became part of the standard in Fortran 90.
 """
 
-from access.config.parser import ConfigParser
+from collections.abc import Sequence
+
+from access.config.parser import BLOCK_RULE, ConfigParser
 
 
 class FortranNMLParser(ConfigParser):
     """Fortran Namelist parser.
 
-    Note: Currently array qualifiers, substrings and derived types are not implemented in
-    the grammar.
+    Note: Currently array qualifiers and substrings are not implemented in the grammar.
     """
 
     @property
     def case_sensitive_keys(self) -> bool:
         return False
+
+    @property
+    def block_rules(self) -> Sequence[str]:
+        """Sequence[str]: Rules holding block contents: a namelist body and a derived type.
+
+        A derived type is a block written one component per line rather than as a delimited
+        body, so its contents rule is named separately. Keeping the two distinguishable is
+        what lets a new key be added to a namelist but refused inside a derived type, where
+        there is no body for it to go in.
+        """
+        return (BLOCK_RULE, "dtype_body")
 
     @property
     def grammar(self) -> str:
@@ -38,7 +50,15 @@ block: (nml_line | empty_line)*
 
 ?nml_line: assignment (ws* "," assignment)* (ws* separator)? line_end?
 
-?assignment: key_value | key_list | key_null
+?assignment: key_value | key_list | key_null | key_derived
+
+// A derived-type component assignment: "a%b = 1" is the block "a" holding "b = 1", so it
+// reuses the key_block machinery and nests for free ("a%b%c" is a block in a block).
+// "dtype_body" holds exactly one assignment. Reusing the namelist's own "block" rule here
+// instead would be greedy -- it swallows the lines that follow, mis-nests them, and costs an
+// order of magnitude in parse time.
+key_derived: ws* key "%" dtype_body -> key_block
+dtype_body: key_value | key_list | key_null | key_derived
 
 key_value: ws* key eq ws* value
 key_list: ws* key eq ws* value ((line_break|ws* separator) ws* value)+

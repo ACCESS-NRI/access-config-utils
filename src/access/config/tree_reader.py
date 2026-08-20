@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 from lark import Token, Tree
 from lark.visitors import Interpreter
 
-from access.config.grammar_contract import BLOCK_RULE, KEY_BLOCK, KEY_LIST, KEY_NULL, KEY_RULE, KEY_VALUE
+from access.config.grammar_contract import KEY_BLOCK, KEY_LIST, KEY_NULL, KEY_RULE, KEY_VALUE
 from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
 
 if TYPE_CHECKING:
@@ -55,12 +55,38 @@ class EntryRef:
             one whose value the configuration holds.
         block_node (Tree | None): The ``block`` node holding the entry's contents, for a
             ``key_block``; ``None`` otherwise.
+        addable (bool): Whether a new entry can be spliced into *block_node*. False for a
+            block merged from several in the file, whose node is not itself in the parse
+            tree, and for one held by a rule that is not a Lark start symbol.
     """
 
     category: str
     entry_nodes: tuple[Tree, ...]
     value_nodes: tuple[Tree, ...] = ()
     block_node: Tree | None = None
+    addable: bool = True
+
+
+def merge_blocks(first: Tree, second: Tree) -> Tree:
+    """Combine two block nodes into one that reads as though they were written together.
+
+    The result is a node the parse tree does not contain, holding the *real* children of
+    both. That is what makes it safe: the entries inside it are the ones Lark built, so
+    updating a value through this node mutates the original tree, and the file is written
+    back with only that value changed. Nothing is copied, and the two source blocks stay
+    exactly where they were.
+
+    It is deliberately never given to ``AddParent``: its children keep the ``.parent`` they
+    already had, pointing into the real tree, so an edit through this node reaches the file.
+
+    Args:
+        first (Tree): Block node seen first, or a merged node built from earlier ones.
+        second (Tree): Block node to merge into it.
+
+    Returns:
+        Tree: A block node holding the children of both, in order.
+    """
+    return Tree(first.data, [*first.children, *second.children])
 
 
 def entry_value(ref: EntryRef) -> Any:
@@ -236,12 +262,29 @@ class EntryReader(Interpreter):
     def key_block(self, tree: Tree) -> None:
         """Interpreter callback for ``"key_block"`` rule nodes.
 
+        A key can name more than one block. A derived type spells one component per line, so
+        ``a%b = 1`` and ``a%c = 2`` are two entries under the single key ``A``, and the same
+        happens when a file repeats a namelist group name. The blocks are merged rather than
+        the last one winning, since dropping the earlier ones loses data silently.
+
         Args:
             tree (Tree): Rule node produced by the ``"key_block"`` grammar rule.
+
+        Raises:
+            ValueError: If the key was already given a value. Merging would build a block
+                out of a value node and quietly drop the value.
         """
+        key = self._get_key(tree)
         for child in tree.children:
-            if child.data == BLOCK_RULE:
-                self._record(self._get_key(tree), EntryRef(KEY_BLOCK, (tree,), block_node=child))
+            if isinstance(child, Tree) and str(child.data) in self._ctx.block_rules:
+                previous = self._refs.get(key)
+                if previous is not None and previous.category != KEY_BLOCK:
+                    raise ValueError(f"'{key}' is assigned a value and used as a block")
+                merged = child if previous is None else merge_blocks(previous.block_node, child)
+                # Only an unmerged block held by the format's primary block rule has a body
+                # a new entry can be written into: that is the only Lark start symbol.
+                addable = merged is child and str(child.data) == self._ctx.block_rules[0]
+                self._record(key, EntryRef(KEY_BLOCK, (tree,), block_node=merged, addable=addable))
                 return
 
     def key_null(self, tree: Tree) -> None:

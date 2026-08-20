@@ -190,6 +190,55 @@ class TestDeleting:
         assert store.asked("remove") == []
 
 
+class TestDroppingAnEmptiedBlock:
+    """A block that cannot be written empty goes when its last entry does."""
+
+    @staticmethod
+    def _nested(block_rule: str, repetition: bool):
+        """Return a parent config whose one key is a block held by *block_rule*."""
+
+        class Info:
+            def is_repetition_rule(self, name: str) -> bool:
+                return repetition
+
+        inner = FakeStore({"x": ref("key_value", "x")}, ctx=FakeContext(info=Info()))
+        inner.tree = Tree(block_rule, [])
+        outer = FakeStore({"blk": ref("key_block", "blk")}, ctx=FakeContext(info=Info()))
+        outer.child = lambda reference: inner  # type: ignore[method-assign]
+        return Config(outer), outer
+
+    def test_a_derived_type_goes_when_its_last_component_does(self) -> None:
+        """Test the block whose rule is not a repetition, so an empty one cannot be written.
+
+        A derived type is spelled a component per line; once the last one goes there is
+        nothing left to write, and the lines are already out of the tree.
+        """
+        config, store = self._nested("dtype_body", repetition=False)
+
+        del config["blk"]["x"]
+
+        assert "blk" not in config
+        assert "blk" not in store.refs
+
+    def test_an_empty_namelist_group_stays(self) -> None:
+        """Test the block whose rule *is* a repetition: an empty group is still a group."""
+        config, _ = self._nested("block", repetition=True)
+
+        del config["blk"]["x"]
+
+        assert "blk" in config
+        assert dict(config["blk"]) == {}
+
+    def test_the_configuration_of_a_whole_file_is_never_dropped(self) -> None:
+        """Test that a top-level configuration has no parent to be removed from."""
+        store = FakeStore({"a": ref("key_value", "a")})
+        config = Config(store)
+
+        del config["a"]
+
+        assert dict(config) == {}
+
+
 class TestKeyCase:
     """Matching keys the way the format matches them."""
 

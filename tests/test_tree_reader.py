@@ -17,7 +17,7 @@ import pytest
 from conftest import FakeContext, entry_node, key_node, value_node, ws_node
 from lark import Token, Tree
 
-from access.config.tree_reader import EntryReader, EntryRef, entry_value, read_entries
+from access.config.tree_reader import EntryReader, EntryRef, entry_value, merge_blocks, read_entries
 
 
 def container(*entries: Tree) -> Tree:
@@ -139,6 +139,72 @@ class TestReadEntries:
     def test_an_empty_container_reads_as_no_entries(self) -> None:
         """Test the block that was empty in the file, and the file that is only comments."""
         assert read_entries(Tree("block", []), FakeContext()) == {}
+
+
+class TestBlocksWrittenMoreThanOnce:
+    """A key naming several blocks, as a derived type spread over lines does."""
+
+    def test_merge_blocks_holds_the_children_of_both(self) -> None:
+        """Test that the merged node is a view, holding the real children in order.
+
+        Nothing is copied: an edit through this node reaches the nodes Lark built, so the
+        file is written back with only the value that changed.
+        """
+        first = Tree("block", [entry_node("key_value", "b", value_node())])
+        second = Tree("block", [entry_node("key_value", "c", value_node())])
+
+        merged = merge_blocks(first, second)
+
+        assert merged.data == "block"
+        assert merged.children == [*first.children, *second.children]
+        # The sources are untouched, and the children are the same objects.
+        assert merged.children[0] is first.children[0]
+        assert len(first.children) == 1
+
+    def test_two_blocks_under_one_key_are_merged(self) -> None:
+        """Test that both contribute their entries rather than the last one winning."""
+        first = entry_node("key_block", "a", Tree("block", [entry_node("key_value", "b", value_node())]))
+        second = entry_node("key_block", "a", Tree("block", [entry_node("key_value", "c", value_node())]))
+
+        refs = read_entries(container(first, second), FakeContext())
+
+        assert list(refs) == ["a"]
+        assert len(refs["a"].block_node.children) == 2
+        assert refs["a"].entry_nodes == (first, second)
+
+    def test_a_merged_block_cannot_be_added_to(self) -> None:
+        """Test that a node the parse tree does not contain is marked unaddable.
+
+        Splicing into it would change nothing that gets written out.
+        """
+        first = entry_node("key_block", "a", Tree("block", []))
+        second = entry_node("key_block", "a", Tree("block", []))
+
+        assert read_entries(container(first), FakeContext())["a"].addable
+        assert not read_entries(container(first, second), FakeContext())["a"].addable
+
+    def test_a_secondary_block_rule_cannot_be_added_to(self) -> None:
+        """Test that only the format's primary block rule accepts a new entry.
+
+        It is the only Lark start symbol, so it is the only body a synthesised entry can be
+        parsed into. A Fortran derived type is held by the other kind.
+        """
+        entry = entry_node("key_block", "a", Tree("dtype_body", []))
+        ctx = FakeContext(block_rules=("block", "dtype_body"))
+
+        assert not read_entries(container(entry), ctx)["a"].addable
+
+    def test_a_key_both_assigned_and_used_as_a_block_is_refused(self) -> None:
+        """Test that the two cannot be merged, since that would discard the value.
+
+        Building a block around a value node drops the value with no error, and deleting the
+        key afterwards leaves the configuration disagreeing with the file.
+        """
+        scalar = entry_node("key_value", "a", value_node())
+        block = entry_node("key_block", "a", Tree("block", []))
+
+        with pytest.raises(ValueError, match="assigned a value and used as a block"):
+            read_entries(container(scalar, block), FakeContext())
 
 
 class TestKeyNormalisation:

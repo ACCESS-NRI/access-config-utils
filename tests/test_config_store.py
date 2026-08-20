@@ -13,6 +13,8 @@ delegation is worth pinning: which style an addition is given, and which node a 
 unlinks.
 """
 
+from dataclasses import replace
+
 import pytest
 from conftest import entry_node, value_node
 from lark import Tree
@@ -22,6 +24,7 @@ from access.config import config_store
 from access.config.config_store import ConfigStore
 from access.config.entry_style import EntryStyle
 from access.config.grammar_compiled import ParseContext, compile_grammar
+from access.config.grammar_values import UnsupportedEntryError
 from access.config.tree_navigation import AddParent
 from access.config.tree_reader import EntryRef
 
@@ -184,6 +187,29 @@ class TestAdd:
         block.add("z", "z", 3)
 
         assert calls[0]["style"].indent == "    "
+
+
+class TestUnaddableBlocks:
+    """A container with no body in the file for a new entry to go into."""
+
+    def test_refuses_an_addition(self, ctx) -> None:
+        """Test that such a store says so rather than splicing where nothing is written."""
+        tree = ctx.lark.parse("a = 1\n", start="start")
+        AddParent().visit(tree)
+        store = ConfigStore(tree, ctx, addable=False)
+
+        with pytest.raises(UnsupportedEntryError, match="no body in the file"):
+            store.add("z", "z", 1)
+
+    def test_a_child_inherits_the_flag_from_its_reference(self, ctx) -> None:
+        """Test that ``child`` passes on what the reader decided about the block."""
+        tree = ctx.lark.parse("blk<\n>\n", start="start")
+        AddParent().visit(tree)
+        store = ConfigStore(tree, ctx)
+        ref = store.refs["blk"]
+
+        assert store.child(ref).addable
+        assert not store.child(replace(ref, addable=False)).addable
 
 
 class TestCreatedBlockStyle:

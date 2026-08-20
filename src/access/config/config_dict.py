@@ -131,12 +131,17 @@ class Config(dict):
     """
 
     _store: ConfigStore  # The parse tree behind this dict.
+    # The configuration this one is a block of, and the key it is stored under. None for the
+    # configuration of a whole file. Used to drop a block that has been emptied and cannot
+    # be written empty -- a derived type is one, since "a%" on its own means nothing.
+    _parent: tuple[Config, str] | None
 
     def __init__(self, store: ConfigStore) -> None:
         self._store = store
-        super().__init__({key: self._wrap(ref) for key, ref in store.refs.items()})
+        self._parent = None
+        super().__init__({key: self._wrap(key, ref) for key, ref in store.refs.items()})
 
-    def _wrap(self, ref: EntryRef) -> Any:
+    def _wrap(self, key: str, ref: EntryRef) -> Any:
         """Return the object standing for an entry in the dict.
 
         A list and a block are both handed out as something that keeps the parse tree in
@@ -144,13 +149,17 @@ class Config(dict):
         ``Config`` does the same for the entries of a block.
 
         Args:
+            key (str): The normalised key the entry is stored under.
             ref (EntryRef): The entry to represent.
 
         Returns:
             Any: The scalar, a ``ConfigList``, a nested ``Config``, or ``None``.
         """
         if ref.category == KEY_BLOCK:
-            return Config(self._store.child(ref))
+            block = Config(self._store.child(ref))
+            # Tell it where it lives, so emptying it can remove it from here.
+            block._parent = (self, key)
+            return block
         value = entry_value(ref)
         return ConfigList(value, ref.value_nodes) if ref.category == KEY_LIST else value
 
@@ -215,7 +224,7 @@ class Config(dict):
             value (Any): The value to store.
         """
         ref = self._store.add(key, raw_key, value)
-        stored = self._wrap(ref)
+        stored = self._wrap(key, ref)
         super().__setitem__(key, stored)
 
         if ref.category == KEY_BLOCK:
@@ -229,6 +238,25 @@ class Config(dict):
         key = self._store.ctx.normalise_key(key)
         super().__delitem__(key)
         self._store.remove(key)
+        self._drop_if_unwritable()
+
+    def _drop_if_unwritable(self) -> None:
+        """Remove this configuration from its parent if it is empty and unwritable.
+
+        A block whose rule is a plain repetition may hold nothing -- an empty namelist group
+        is still a namelist group. A derived type may not: it is written a component per
+        line, so once the last component goes there is nothing left to write, and the lines
+        have already been removed from the tree. Leaving the empty block in the parent's
+        dict would make it disagree with the file.
+        """
+        if self or self._parent is None:
+            return
+        if self._store.ctx.info.is_repetition_rule(str(self._store.tree.data)):
+            return
+        parent, key = self._parent
+        dict.__delitem__(parent, key)
+        parent._store.refs.pop(key, None)
+        self._parent = None
 
     # --- Remaining mapping protocol ---
     #

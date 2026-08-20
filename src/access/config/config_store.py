@@ -27,6 +27,7 @@ from lark.exceptions import UnexpectedInput
 from access.config.config_insert import insert_entry
 from access.config.entry_style import EntryStyle, probe_entry_style, probe_sibling_block_style
 from access.config.grammar_contract import KEY_LIST, KEY_VALUE
+from access.config.grammar_values import UnsupportedEntryError
 from access.config.tree_edits import remove_entry_node, update_node_value
 from access.config.tree_reader import EntryRef, read_entries
 
@@ -40,6 +41,9 @@ class ConfigStore:
     Args:
         tree (Tree): The container rule node: the root of a parsed file, or a ``block``.
         ctx (ParseContext): The compiled grammar and the per-parser settings.
+        addable (bool): Whether a new entry can be spliced into *tree*. False for a block
+            merged from several in the file, whose root is not itself in the parse tree, so
+            splicing into it would change nothing that gets written out.
     """
 
     tree: Tree  # The container rule node this store owns.
@@ -48,10 +52,12 @@ class ConfigStore:
     # Whitespace for a new entry when this container holds none to copy from. Set on a block
     # created by an assignment, which is empty and so has no style of its own yet.
     fallback_style: EntryStyle
+    addable: bool  # Whether a new entry can be spliced into this container
 
-    def __init__(self, tree: Tree, ctx: ParseContext) -> None:
+    def __init__(self, tree: Tree, ctx: ParseContext, addable: bool = True) -> None:
         self.tree = tree
         self.ctx = ctx
+        self.addable = addable
         self.fallback_style = EntryStyle()
         self.refs = read_entries(tree, ctx)
 
@@ -65,7 +71,7 @@ class ConfigStore:
             ConfigStore: A store over the block's own contents.
         """
         assert ref.block_node is not None
-        return ConfigStore(ref.block_node, self.ctx)
+        return ConfigStore(ref.block_node, self.ctx, addable=ref.addable)
 
     def replace(self, key: str, value: Any) -> tuple[Tree, ...]:
         """Write a new value into the nodes of an entry that already exists.
@@ -112,8 +118,14 @@ class ConfigStore:
 
         Raises:
             ValueError: If *raw_key* is unusable, or *value* is a list too short to write.
-            UnsupportedEntryError: If the format cannot express *value* here.
+            UnsupportedEntryError: If the format cannot express *value* here, or this
+                container has no body in the file for a new entry to go in.
         """
+        if not self.addable:
+            raise UnsupportedEntryError(
+                f"Cannot add '{key}': this block has no body in the file for a new entry to go in. "
+                "It is either merged from several blocks, or written one component per line"
+            )
         style = probe_entry_style(self.tree)
         if not style.has_donor:
             style = self.fallback_style

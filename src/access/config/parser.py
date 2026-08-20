@@ -17,7 +17,7 @@ from collections.abc import Mapping, Sequence
 from access.config.config_dict import Config
 from access.config.config_store import ConfigStore
 from access.config.grammar_compiled import ParseContext, compile_grammar
-from access.config.grammar_contract import START_RULE
+from access.config.grammar_contract import BLOCK_RULE, START_RULE
 from access.config.grammar_values import VALUE_RULE_PRIORITY
 from access.config.tree_navigation import AddParent
 
@@ -85,6 +85,21 @@ class ConfigParser(ABC):
         return {}
 
     @property
+    def block_rules(self) -> Sequence[str]:
+        """Names of the rules that hold the contents of a block.
+
+        Nearly always just ``"block"``. A format with more than one kind of block declares
+        them all, most-addable first: the first name is the one new entries are written
+        into, and a block held by any of the others is read and edited but not added to.
+        A Fortran derived type is one, written a component per line rather than as a
+        delimited body.
+
+        Returns:
+            Sequence[str]: The rule names.
+        """
+        return (BLOCK_RULE,)
+
+    @property
     def value_rule_priority(self) -> Sequence[str]:
         """Order in which value-type rules are tried when writing a value for a new key.
 
@@ -111,6 +126,7 @@ class ConfigParser(ABC):
             self.case_sensitive_keys,
             self.entry_templates,
             tuple(self.value_rule_priority),
+            tuple(self.block_rules),
         )
 
         # Parse text. Here we add a newline character to simplify the writting of the

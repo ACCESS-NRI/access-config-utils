@@ -60,12 +60,15 @@ class ParseContext:
             only where no neighbouring entry can supply a style.
         value_rule_priority (tuple[str, ...]): Order in which value-type rules are tried for
             a new value.
+        block_rules (tuple[str, ...]): Names of the rules holding block contents, the one
+            new entries are written into first.
     """
 
     grammar: CompiledGrammar
     case_sensitive_keys: bool
     entry_templates: Mapping[tuple[str, str], str]
     value_rule_priority: tuple[str, ...]
+    block_rules: tuple[str, ...] = (BLOCK_RULE,)
 
     @property
     def lark(self) -> Lark:

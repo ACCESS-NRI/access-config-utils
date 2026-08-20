@@ -239,12 +239,20 @@ def ws_node(text: str = " ") -> Tree:
 class FakeContext:
     """Stands in for a ``ParseContext`` where only its settings are needed."""
 
-    def __init__(self, *, case_sensitive: bool = True, info: Any = None, lark: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        case_sensitive: bool = True,
+        info: Any = None,
+        lark: Any = None,
+        block_rules: tuple[str, ...] = ("block",),
+    ) -> None:
         self.case_sensitive_keys = case_sensitive
         self.info = info
         self.lark = lark
         self.entry_templates: dict[tuple[str, str], str] = {}
         self.value_rule_priority: tuple[str, ...] = ()
+        self.block_rules = block_rules
 
     def normalise_key(self, key: str) -> str:
         """Normalise as a real ``ParseContext`` would."""
