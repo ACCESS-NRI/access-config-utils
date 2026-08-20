@@ -157,9 +157,10 @@ def render(template: EntryTemplate, key: str, value_texts: Sequence[str], style:
         Given a donor style, the runs it recorded are reproduced instead. One pad per
         stylable slot: this template has two between the key and the value, either side of
         the ``=``, and a style offering a different number is ignored rather than guessed
-        at.
+        at. ``key_split`` says how many of them fall before the ``=``, since a run recorded
+        on the wrong side of it would move the whitespace rather than reproduce it.
 
-        >>> style = EntryStyle(indent="", key_pads=("  ", "  "), has_donor=True)
+        >>> style = EntryStyle(key_pads=("  ", "  "), key_split=1, has_donor=True)
         >>> render(template, "A", ["1"], style)
         'A  =  1\\n'
     """

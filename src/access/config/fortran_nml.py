@@ -19,6 +19,10 @@ class FortranNMLParser(ConfigParser):
     one-dimensional qualifiers is gathered into a single list, with a null wherever no entry
     wrote a position.
 
+    A group whose body this cannot derive raises, rather than being read as the free text
+    that may surround a group: a file that round-trips with a whole group missing from the
+    configuration is worse than one that is refused.
+
     Note: three qualifiers are not gathered, and keep their text in the key instead, so that
     two of them cannot be read as one: a multidimensional index (``v(1,2)``), an index on a
     derived type (``a(1)%b``), and one naming no positions at all (a stride of zero). Nor
@@ -117,8 +121,11 @@ empty_line: line_end
 line_end: (fortran_comment|ws*) NEWLINE
 separator: ","
 
-random_text: (/.+/|NEWLINE)*
-ANYTHING: /.+/
+// Free text between namelist groups. A line starting with "&" is never part of it: without
+// that, a group whose body the grammar cannot derive is quietly read as text instead, and
+// the file round-trips with the whole group missing from the configuration.
+random_text: (ANYTHING|NEWLINE)*
+ANYTHING: /(?![ \\t]*&)[^\\n]+/
 
 // Fortran writes an infinity or a not-a-number as a bare word. Read as one, rather than as
 // the string "inf", which is what the bare-word rule below would otherwise make of it.

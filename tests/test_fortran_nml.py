@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from conftest import assert_canonical_entry, canonical_rows
-from lark.exceptions import UnexpectedEOF
+from lark.exceptions import UnexpectedInput
 
 from access.config.fortran_nml import FortranNMLParser
 from access.config.grammar_compiled import compile_grammar
@@ -136,33 +136,37 @@ def test_valid_fortran_nml(parser):
 
 
 def test_invalid_fortran_nml(parser):
-    """Test checking that the parser catches malformed expressions"""
-    with pytest.raises(UnexpectedEOF):
+    """Test checking that the parser catches malformed expressions.
+
+    The exception is only required to be an ``UnexpectedInput``: which one Lark raises
+    depends on how far it got, and that is not a promise the parser makes.
+    """
+    with pytest.raises(UnexpectedInput):
         parser.parse("&LIST\nTEST : 'a'\n/")
 
     # A bare word is a value, so what is left is text no value type can start with.
-    with pytest.raises(UnexpectedEOF):
+    with pytest.raises(UnexpectedInput):
         parser.parse("&LIST\nTEST = @maybe\n/")
 
-    with pytest.raises(UnexpectedEOF):
+    with pytest.raises(UnexpectedInput):
         parser.parse("&LIST\nTEST = 'unterminated\n/")
 
-    with pytest.raises(UnexpectedEOF):
+    with pytest.raises(UnexpectedInput):
         parser.parse("%TEST\na=1\n%TEST")
 
-    with pytest.raises(UnexpectedEOF):
+    with pytest.raises(UnexpectedInput):
         parser.parse("TEST%\na=1\nTEST%")
 
-    with pytest.raises(UnexpectedEOF):
+    with pytest.raises(UnexpectedInput):
         parser.parse("&TEST\na=1 2\n/")
 
-    with pytest.raises(UnexpectedEOF):
+    with pytest.raises(UnexpectedInput):
         parser.parse("&TEST\na=1 \n2\n/")
 
-    with pytest.raises(UnexpectedEOF):
+    with pytest.raises(UnexpectedInput):
         parser.parse("BLOCK\n TEST ='a'/")
 
-    with pytest.raises(UnexpectedEOF):
+    with pytest.raises(UnexpectedInput):
         parser.parse("&BLOCK\n VAR1=1\n&e")
 
 
@@ -1146,6 +1150,30 @@ def test_fortran_nml_nan_is_a_float(parser):
     assert isinstance(config["L"]["X"], float)
     assert config["L"]["X"] != config["L"]["X"]
     assert str(config) == "&L\n  x = nan\n/\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["&A\n  x = 1\n&B\n  y = 2\n/\n", "&L\n  nonsense @@@\n/\n", "&L\n  x = 1,,3\n/\n"],
+)
+def test_fortran_nml_unparseable_group_raises(parser, source) -> None:
+    """Test that a group this cannot read raises instead of being taken for free text.
+
+    Free text may surround a group, and a group whose body did not fit the grammar used to
+    be read as more of it -- so the file round-tripped byte for byte with the whole group
+    missing from the configuration.
+    """
+    with pytest.raises(UnexpectedInput):
+        parser.parse(source)
+
+
+def test_fortran_nml_free_text_between_groups_still_parses(parser):
+    """Test that the text a namelist file may carry between its groups is still allowed."""
+    source = "\n&A\n  x = 1\n/\n\n! a comment\n some free text \n\n&B\n  y = 2\n/\n"
+    config = parser.parse(source)
+
+    assert list(config) == ["A", "B"]
+    assert str(config) == source
 
 
 @pytest.mark.parametrize(("container", "category", "expected"), canonical_rows("fortran_nml"))
