@@ -76,7 +76,7 @@ eq: ws* "="
       | double
       | complex
       | double_complex
-      | string
+      | fortran_string
 
 empty_line: line_end
 line_end: (fortran_comment|ws*) NEWLINE
@@ -85,14 +85,23 @@ separator: ","
 random_text: (/.+/|NEWLINE)*
 ANYTHING: /.+/
 
+// Fortran writes a logical as an optional dot, T or F, and an optional rest of the word: all
+// of ".true.", "true", ".t.", ".t" and a bare "T" mean the same thing, in either case. This
+// is defined here rather than imported, because "config.lark"'s narrower version is shared
+// with nuopc.runconfig, where a bare "T" is a plain identifier.
+// The lookahead is what keeps a bare logical from claiming the start of a name: after a
+// continuation comma, "f_icedir" would otherwise read as .false. followed by "_icedir".
+logical: FTRUE | FFALSE
+FTRUE: /\\.?t(rue)?\\.?(?![A-Za-z0-9_])/i
+FFALSE: /\\.?f(alse)?\\.?(?![A-Za-z0-9_])/i
+
 %import config.key
-%import config.logical
 %import config.integer
 %import config.float
 %import config.double
 %import config.complex
 %import config.double_complex
-%import config.string
+%import config.fortran_string
 %import config.fortran_comment
 %import config.ws
 %import config.NEWLINE

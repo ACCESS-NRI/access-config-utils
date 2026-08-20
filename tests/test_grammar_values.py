@@ -38,6 +38,7 @@ ROUND_TRIPS = [
     ("double_complex", "(1.0d0, -2.0d0)", 1.0 - 2.0j, "(1.0, -2.0)"),
     ("identifier", "a_word", "a_word", "a_word"),
     ("string", "'quoted'", "quoted", '"quoted"'),
+    ("fortran_string", "'quoted'", "quoted", '"quoted"'),
     ("path", "/dir/file.nc", Path("/dir/file.nc"), "/dir/file.nc"),
 ]
 
@@ -120,6 +121,37 @@ class TestStringQuoting:
         """Test the seed, which decides the quoting of a string with no previous token."""
         assert VALUE_TYPE_HANDLER_REGISTRY["string"].to_new_token("fresh") == '"fresh"'
         assert VALUE_TYPE_HANDLER_REGISTRY["string"].to_new_token('has " inside') == "'has \" inside'"
+
+
+class TestFortranStringQuoting:
+    """Fortran escapes a quote by doubling it, so no value is out of reach."""
+
+    def test_reads_a_doubled_quote_as_one(self) -> None:
+        """Test the escape on the way in: ``'it''s'`` holds one apostrophe."""
+        handler = VALUE_TYPE_HANDLER_REGISTRY["fortran_string"]
+
+        assert handler.from_token("'it''s'") == "it's"
+        assert handler.from_token('"say ""hi"""') == 'say "hi"'
+
+    def test_doubles_a_quote_on_the_way_out(self) -> None:
+        """Test that the quote in use is kept and the value escaped against it."""
+        handler = VALUE_TYPE_HANDLER_REGISTRY["fortran_string"]
+
+        assert handler.to_token("it's", "'old'") == "'it''s'"
+        assert handler.to_token('say "hi"', '"old"') == '"say ""hi"""'
+
+    def test_a_value_holding_both_quotes_can_still_be_written(self) -> None:
+        """Test the difference from the general string type, which has to refuse this.
+
+        Doubling means the quote in use never has to change, so a value containing both is
+        representable rather than an error.
+        """
+        handler = VALUE_TYPE_HANDLER_REGISTRY["fortran_string"]
+        both = "has ' and \""
+
+        written = handler.to_token(both, "'old'")
+
+        assert handler.from_token(written) == both
 
 
 class TestFloatNotation:

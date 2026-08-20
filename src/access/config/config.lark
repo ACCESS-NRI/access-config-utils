@@ -28,9 +28,10 @@ _DOUBLE_EXP    : ("d"|"D") SIGNED_INT
 DOUBLE        : INT _DOUBLE_EXP | DECIMAL _DOUBLE_EXP?
 SIGNED_DOUBLE : ["+"|"-"] DOUBLE
 
-// Fortran complex floats
+// Fortran complex floats. Either component may be written as a plain integer.
 complex: CMPLX
-CMPLX: "(" WS_INLINE* SIGNED_FLOAT WS_INLINE* "," WS_INLINE* SIGNED_FLOAT WS_INLINE* ")"
+_CMPLX_PART: SIGNED_FLOAT | SIGNED_INT
+CMPLX: "(" WS_INLINE* _CMPLX_PART WS_INLINE* "," WS_INLINE* _CMPLX_PART WS_INLINE* ")"
 
 // Fortran complex doubles
 double_complex: DCMPLX
@@ -42,6 +43,12 @@ identifier: CNAME
 // Quoted strings
 string: STRING
 STRING: /(".*?(?<!\\)(\\\\)*?"|'(?!'').*?(?<!\\)(\\\\)*?')/
+
+// Fortran strings, where a quote inside a string is written twice rather than escaped:
+// 'it''s' is the five characters "it's". A separate rule from "string" because that
+// difference has to reach the value handler, which is chosen by rule name.
+fortran_string: FORTRAN_STRING
+FORTRAN_STRING: /'([^'\n]|'')*'|"([^"\n]|"")*"/
 
 // Unix-like filesystem paths
 path: PATH

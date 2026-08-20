@@ -140,11 +140,9 @@ def test_invalid_fortran_nml(parser):
     with pytest.raises(UnexpectedEOF):
         parser.parse("&LIST\nTEST : 'a'\n/")
 
+    # "true" and "false" are logicals, not stray words -- see the logical spelling test.
     with pytest.raises(UnexpectedEOF):
-        parser.parse("&LIST\nTEST = true\n/")
-
-    with pytest.raises(UnexpectedEOF):
-        parser.parse("&LIST\nTEST = false\n/")
+        parser.parse("&LIST\nTEST = maybe\n/")
 
     with pytest.raises(UnexpectedEOF):
         parser.parse("%TEST\na=1\n%TEST")
@@ -585,6 +583,125 @@ def test_fortran_nml_key_used_as_both_value_and_block(parser):
     """
     with pytest.raises(ValueError):
         parser.parse("&L\n  a = 1\n  a%b = 2\n/\n")
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (".true.", True),
+        (".TRUE.", True),
+        (".false.", False),
+        (".t.", True),
+        (".f.", False),
+        (".t", True),
+        (".f", False),
+        ("true", True),
+        ("FALSE", False),
+        ("T", True),
+        ("f", False),
+    ],
+)
+def test_fortran_nml_logical_spellings(parser, text, expected) -> None:
+    """Test the spellings Fortran accepts for a logical.
+
+    A logical is an optional dot, T or F, and an optional rest of the word, in either case.
+    All of these mean the same thing, and all appear in real namelists -- the WW3 ones use a
+    bare "T".
+    """
+    source = f"&L\nA = {text}\n/\n"
+    config = parser.parse(source)
+
+    assert config["L"]["A"] is expected
+    assert str(config) == source
+
+
+@pytest.mark.parametrize(
+    ("text", "rewritten"),
+    [(".true.", ".false."), (".TRUE.", ".FALSE."), ("T", "F"), ("t", "f")],
+)
+def test_fortran_nml_logical_keeps_notation(parser, text, rewritten) -> None:
+    """Test that rewriting a logical keeps the notation and case it was written in.
+
+    Fortran spells a logical several ways, so a file written with bare logicals should not
+    acquire dotted ones just because a value changed.
+    """
+    config = parser.parse(f"&L\nA = {text}\n/\n")
+
+    config["L"]["A"] = False
+
+    assert str(config) == f"&L\nA = {rewritten}\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("'plain'", "plain"),
+        ("''", ""),
+        ("'it''s'", "it's"),
+        ('"a ""quoted"" word"', 'a "quoted" word'),
+        ("'a!b'", "a!b"),
+        ("'a/b'", "a/b"),
+    ],
+)
+def test_fortran_nml_string_quoting(parser, text, expected) -> None:
+    """Test that a quote inside a string is written twice rather than escaped.
+
+    That is Fortran's rule, and it differs from the backslash escaping the shared "string"
+    rule assumes. A "!" or a "/" inside a string is data, not a comment or a terminator.
+    """
+    source = f"&L\nA = {text}\n/\n"
+    config = parser.parse(source)
+
+    assert config["L"]["A"] == expected
+    assert str(config) == source
+
+
+def test_fortran_nml_string_holding_both_quotes(parser):
+    """Test that a string containing both quote characters can be written.
+
+    Formats that wrap a value verbatim have to refuse this, since neither quote can delimit
+    it. Fortran doubles the quote instead, so nothing is out of reach.
+    """
+    config = parser.parse("&L\nA = 'x'\n/\n")
+
+    config["L"]["A"] = """he said "no" and it's fine"""
+
+    assert str(config) == "&L\nA = 'he said \"no\" and it''s fine'\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+@pytest.mark.parametrize("text", ["(1,2)", "(1.0, 2)", "(3.0, 4.0)", "(-1, +2)"])
+def test_fortran_nml_complex_components(parser, text) -> None:
+    """Test that either component of a complex may be written as a plain integer."""
+    source = f"&L\nA = {text}\n/\n"
+    config = parser.parse(source)
+
+    assert isinstance(config["L"]["A"], complex)
+    assert str(config) == source
+
+
+@pytest.mark.parametrize(
+    ("written", "value", "rewritten"),
+    [
+        (".true.", False, ".false."),
+        (".TRUE.", False, ".FALSE."),
+        ("T", False, "F"),
+        ("true", False, "false"),
+        ("TRUE", False, "FALSE"),
+        (".t.", False, ".f."),
+        (".t", False, ".f"),
+        ("f", True, "t"),
+    ],
+)
+def test_fortran_nml_logical_keeps_its_spelling(parser, written, value, rewritten) -> None:
+    """Test that rewriting a logical keeps the dots, the case and the length of the word."""
+    config = parser.parse(f"&L\n  b = {written}\n/\n")
+
+    config["L"]["B"] = value
+
+    assert str(config) == f"&L\n  b = {rewritten}\n/\n"
+    assert parser.parse(str(config))["L"]["B"] is value
 
 
 @pytest.mark.parametrize(("container", "category", "expected"), canonical_rows("fortran_nml"))

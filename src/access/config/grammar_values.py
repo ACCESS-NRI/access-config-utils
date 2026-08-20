@@ -61,6 +61,47 @@ def _string_to_str(value: str, token_text: str) -> str:
     return quote + value + quote
 
 
+def _fortran_string_to_str(value: str, token_text: str) -> str:
+    """Quote a string the Fortran way, doubling any quote character it contains.
+
+    Unlike ``_string_to_str``, no value is out of reach: Fortran escapes a quote by writing
+    it twice, so a string holding both quote characters can still be written. The quote
+    already in use is kept, so rewriting a value does not restyle the line.
+
+    Args:
+        value (str): The string to quote.
+        token_text (str): Text of the ``Token`` that previously held the string, whose first
+            character is the quote in use.
+
+    Returns:
+        str: The quoted string.
+    """
+    quote = token_text[0]
+    return quote + value.replace(quote, quote * 2) + quote
+
+
+def _logical_to_str(value: bool, token_text: str) -> str:
+    """Convert a bool to a string, keeping the notation of the original token.
+
+    Fortran spells a logical several ways, so rewriting one should not also restyle it. The
+    dots, the case and the length of the word are all kept: ``.TRUE.`` stays dotted, upper
+    and spelled out, a bare ``t`` stays a bare letter, and ``true`` stays a whole word.
+
+    Args:
+        value (bool): The value to write.
+        token_text (str): Text of the ``Token`` that previously held the logical.
+
+    Returns:
+        str: The logical as a string.
+    """
+    stripped = token_text.strip(".")
+    word = ("true" if value else "false") if len(stripped) > 1 else ("t" if value else "f")
+    text = token_text[: len(token_text) - len(token_text.lstrip("."))] + word
+    if token_text.endswith("."):
+        text += "."
+    return text.upper() if token_text.isupper() else text
+
+
 def _float_to_str(value: float, token_text: str) -> str:
     """Convert a float to a string using the exponent notation of the original token.
 
@@ -142,8 +183,9 @@ class ValueTypeHandler:
 VALUE_TYPE_HANDLER_REGISTRY: dict[str, ValueTypeHandler] = {
     "logical": ValueTypeHandler(
         type_check=lambda value: type(value) is bool,
-        from_token=lambda token: str(token).lower() == ".true.",
-        to_token=lambda value, token: ".true." if value else ".false.",
+        # Every Fortran spelling is an optional dot then T or F, so the letter decides.
+        from_token=lambda token: str(token).lstrip(".")[:1].lower() == "t",
+        to_token=_logical_to_str,
         seed_token=lambda value: ".true.",
     ),
     "bool": ValueTypeHandler(
@@ -201,6 +243,13 @@ VALUE_TYPE_HANDLER_REGISTRY: dict[str, ValueTypeHandler] = {
         # The quote is chosen by _string_to_str; this only states the preference.
         seed_token=lambda value: '""',
     ),
+    "fortran_string": ValueTypeHandler(
+        type_check=lambda value: type(value) is str,
+        from_token=lambda token: token[1:-1].replace(token[0] * 2, token[0]),
+        to_token=_fortran_string_to_str,
+        # The quote is chosen by _fortran_string_to_str; this only states the preference.
+        seed_token=lambda value: '""',
+    ),
     "path": ValueTypeHandler(
         type_check=lambda value: isinstance(value, Path),
         from_token=lambda token: Path(token),
@@ -224,6 +273,7 @@ VALUE_RULE_PRIORITY: tuple[str, ...] = (
     "double",
     "complex",
     "double_complex",
+    "fortran_string",
     "string",
     "identifier",
     "path",
