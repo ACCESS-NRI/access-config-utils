@@ -494,3 +494,47 @@ def test_config_wrong_key_rule(wrong_parser):
     """Test incorrect case where keys are not terminals"""
     with pytest.raises(TypeError):
         wrong_parser.parse("10=.true.")
+
+
+def test_config_string_quote_switching(parser):
+    """Test that updating a string picks a quote character the value does not contain.
+
+    Values are wrapped verbatim rather than escaped, so keeping the original quote would
+    produce a line that no longer parses.
+    """
+    config = parser.parse("a='x'b=\"y\"")
+
+    # The quote already in use is kept when the value allows it.
+    config["a"] = "plain"
+    assert str(config) == "a='plain'b=\"y\""
+
+    # It is switched when the value contains it.
+    config["a"] = "has ' inside"
+    assert str(config) == 'a="has \' inside"b="y"'
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    config["b"] = 'has " inside'
+    assert str(config) == "a=\"has ' inside\"b='has \" inside'"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    # A value containing both cannot be written at all, and nothing is changed.
+    with pytest.raises(TypeError):
+        config["a"] = "has ' and \""
+    assert str(config) == "a=\"has ' inside\"b='has \" inside'"
+
+
+def test_config_non_finite_floats(parser):
+    """Test that infinities and NaNs are refused rather than written as bare words.
+
+    Python writes them as ``inf`` and ``nan``, which no supported format reads back as a
+    number, so writing one would silently produce a file that no longer means the same.
+    """
+    config = parser.parse("a=1.0 b=(1.0, 2.0) c=1.0d0")
+
+    for key in ("a", "b", "c"):
+        for value in (float("inf"), float("-inf"), float("nan")):
+            with pytest.raises(TypeError):
+                config[key] = value if key != "b" else complex(value, 0.0)
+
+    # None of the refused assignments changed the file.
+    assert str(config) == "a=1.0 b=(1.0, 2.0)c=1.0d0"
