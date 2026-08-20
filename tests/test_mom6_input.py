@@ -9,6 +9,8 @@ from lark.exceptions import UnexpectedCharacters
 
 from access.config.grammar_compiled import compile_grammar
 from access.config.mom6_input import MOM6InputParser
+from access.config.tree_edits import _parse_values
+from access.config.tree_navigation import is_value_node
 
 
 @pytest.fixture(scope="module")
@@ -304,6 +306,20 @@ def test_mom6_input_delete_removes_every_entry_that_wrote_the_key(parser):
 
     assert str(config) == "B = 3\n"
     assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_mom6_input_value_snippet_parses_for_a_line_ending_rule(parser):
+    """Test that values can be re-parsed for a format whose entry rule ends with its line.
+
+    Rewriting an entry's values hands the text back to Lark with an entry rule as the start
+    symbol. MOM6's ``key_value`` ends with ``line_end``, so a snippet without a trailing
+    newline does not parse in it, where Fortran's does not accept one *with*. Only Fortran
+    has repeat counts, so nothing reaches this through the public API yet -- which is why it
+    is pinned here rather than left as a trap for the next grammar.
+    """
+    nodes = _parse_values(compile_grammar(parser.grammar).lark, ["1", "2"])
+
+    assert [node.data for node in nodes if is_value_node(node)] == ["integer", "integer"]
 
 
 @pytest.mark.parametrize(("container", "category", "expected"), canonical_rows("mom6_input"))

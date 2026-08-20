@@ -70,7 +70,14 @@ line_break: ws* separator line_end
 // reconstructor moves it: "A= 1" is written back as "A =1".
 eq: ws* "="
 
-?value: logical
+// "n*v" is v repeated n times, and a bare "n*" is n null values. The count and the value it
+// repeats are separate children, so the value is an ordinary value-type node that the usual
+// handler reads -- the repetition is the only thing this rule adds.
+?value: repeat | scalar
+repeat: REPEAT_COUNT scalar?
+REPEAT_COUNT: /[0-9]+\\*/
+
+?scalar: logical
       | integer
       | float
       | double

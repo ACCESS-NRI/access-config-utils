@@ -18,9 +18,17 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from lark import Token, Tree
+from lark.exceptions import UnexpectedInput
 
+from access.config.grammar_contract import KEY_LIST, KEY_VALUE, REPEAT_RULE
 from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
-from access.config.tree_navigation import AddParent, contains_entry
+from access.config.tree_navigation import (
+    AddParent,
+    contains_entry,
+    is_value_node,
+    node_values,
+    repeat_parts,
+)
 
 if TYPE_CHECKING:
     from lark import Lark
@@ -199,3 +207,229 @@ def merge_adjacent_repetitions(container: Tree, info: GrammarInfo) -> None:
             del container.children[index]
         else:
             index += 1
+
+
+# --- Writing a list through the nodes backing it ---
+#
+# Usually one value per node, written in place. A repeat is the exception: it backs several
+# elements at once, so writing one of them splits the run and the node has to be replaced.
+
+
+def _runs_of(values: Sequence[Any]) -> list[tuple[int, Any]]:
+    """Group equal neighbouring values, so they can be written back as repeat counts.
+
+    Args:
+        values (Sequence[Any]): The values to group.
+
+    Returns:
+        list[tuple[int, Any]]: The length and value of each run, in order.
+    """
+    runs: list[tuple[int, Any]] = []
+    for value in values:
+        if runs and type(runs[-1][1]) is type(value) and runs[-1][1] == value:
+            runs[-1] = (runs[-1][0] + 1, value)
+        else:
+            runs.append((1, value))
+    return runs
+
+
+def _source_token(node: Tree) -> tuple[str, str]:
+    """Return the value rule and token text a value was written with.
+
+    Args:
+        node (Tree): A value-type rule node or a repeat node.
+
+    Returns:
+        tuple[str, str]: The rule name and the token text.
+
+    Raises:
+        TypeError: If *node* is a repeat of null values, which names no type to write in.
+    """
+    if node.data == REPEAT_RULE:
+        _, inner = repeat_parts(node)
+        if inner is None:
+            raise TypeError("Trying to change value type")
+        node = inner
+    return str(node.data), str(node.children[0])
+
+
+def _value_texts(node: Tree, values: Sequence[Any]) -> list[str]:
+    """Write the values one node holds as token text, regrouping equal ones into repeats.
+
+    The values are written in the notation of the node they replace, so an edit does not
+    restyle what is around it, and a run that stays constant stays written as ``n*v`` rather
+    than being expanded.
+
+    Args:
+        node (Tree): The node currently holding the values.
+        values (Sequence[Any]): The values to write in its place.
+
+    Returns:
+        list[str]: The text of each run, in order.
+
+    Raises:
+        TypeError: If a value does not match the type of the node it replaces.
+    """
+    if all(value is None for value in values):
+        # A run of nulls needs no notation, and a repeat of them is the only way to write
+        # one: there is no value type involved, so nothing has to be preserved.
+        return [f"{len(values)}*"]
+
+    rule, token_text = _source_token(node)
+    handler = VALUE_TYPE_HANDLER_REGISTRY[rule]
+    texts = []
+    for count, value in _runs_of(values):
+        if not handler.type_check(value):
+            raise TypeError("Trying to change value type")
+        text = handler.to_token(value, token_text)
+        texts.append(f"{count}*{text}" if count > 1 else text)
+    return texts
+
+
+def _parse_values(lark: Lark, texts: Sequence[str]) -> list[Tree | Token]:
+    """Parse value texts into the nodes and separators an entry would hold them in.
+
+    The nodes are not built by hand: the text is handed back to Lark with an entry rule as
+    the start symbol, exactly as adding a key does, so rule inlining and aliasing take care
+    of themselves.
+
+    Args:
+        lark (Lark): The compiled parser.
+        texts (Sequence[str]): Token text for each value, in the notation wanted.
+
+    Returns:
+        list[Tree | Token]: The value nodes, with the grammar's own separator between them.
+    """
+    rule = KEY_LIST if len(texts) > 1 else KEY_VALUE
+    # Whether an entry rule ends at its last value or takes the rest of the line with it is
+    # up to the format -- Fortran's stops, MOM6's and NUOPC's do not -- so offer both.
+    assignment = f"K = {', '.join(texts)}"
+    try:
+        fresh = lark.parse(assignment, start=rule)
+    except UnexpectedInput:
+        fresh = lark.parse(assignment + "\n", start=rule)
+
+    lo, hi = _value_span(fresh)
+    region = fresh.children[lo:hi]
+    for node in region:
+        if isinstance(node, Tree):
+            AddParent().visit(node)
+    return region
+
+
+def replace_value_node(entry: Tree, node: Tree, texts: Sequence[str], lark: Lark) -> list[Tree]:
+    """Replace one value node of an entry with the nodes needed to hold *texts*.
+
+    Writing one element of ``6*9.0`` splits the run, so a single node becomes three
+    (``2*9.0, 8.0, 3*9.0``). Only that node is replaced, so whatever the entry writes
+    between its other values -- a comment, a line break -- is left exactly as it was.
+
+    Args:
+        entry (Tree): The entry rule node holding *node*.
+        node (Tree): The value node to replace.
+        texts (Sequence[str]): Token text for each value that takes its place.
+        lark (Lark): The compiled parser.
+
+    Returns:
+        list[Tree]: The value nodes now standing in for it, in order.
+    """
+    region = _parse_values(lark, texts)
+    position = entry.children.index(node)
+    for fresh in region:
+        if isinstance(fresh, Tree):
+            fresh.parent = entry  # type: ignore[attr-defined]
+    entry.children[position : position + 1] = region
+    return [fresh for fresh in region if is_value_node(fresh)]
+
+
+def recategorise_entry(entry: Tree, texts: Sequence[str], lark: Lark) -> list[Tree]:
+    """Replace an entry's whole value region, changing what kind of entry it is.
+
+    One value is a scalar assignment and several are a list one, so an entry that held a
+    repeat in the position of a single value becomes a list entry once that repeat is split
+    into different values. Only the value region is taken from the freshly parsed entry, so
+    the indentation, key, separator and anything after the values stay as they were.
+
+    Args:
+        entry (Tree): The entry rule node to rewrite.
+        texts (Sequence[str]): Token text for each value, in the notation wanted.
+        lark (Lark): The compiled parser.
+
+    Returns:
+        list[Tree]: The value nodes now in the entry, in order.
+    """
+    region = _parse_values(lark, texts)
+    lo, hi = _value_span(entry)
+    for fresh in region:
+        if isinstance(fresh, Tree):
+            fresh.parent = entry  # type: ignore[attr-defined]
+    entry.children[lo:hi] = region
+    # The children are the ones Lark built for that rule, so the node is the shape the
+    # grammar and the reconstructor expect of it.
+    entry.data = KEY_LIST if len(texts) > 1 else KEY_VALUE
+    return [fresh for fresh in region if is_value_node(fresh)]
+
+
+def _value_span(entry: Tree) -> tuple[int, int]:
+    """Return the half-open range of *entry*'s children from its first value to its last."""
+    positions = [index for index, child in enumerate(entry.children) if is_value_node(child)]
+    return positions[0], positions[-1] + 1
+
+
+def _entry_value_nodes(entry: Tree) -> list[Tree]:
+    """Return the value nodes an entry holds, in the order it writes them."""
+    return [child for child in entry.children if is_value_node(child)]
+
+
+def write_values(refs: Sequence[Tree], values: Sequence[Any], lark: Lark) -> list[Tree]:
+    """Write a whole list of values through the nodes backing it.
+
+    Usually one value per node, written in place. A repeat is the exception: it backs
+    several elements at once, so writing one of them splits the run and that node has to be
+    replaced rather than updated.
+
+    Args:
+        refs (Sequence[Tree]): The node backing each element, a repeat appearing once per
+            element it covers.
+        values (Sequence[Any]): The new value for each element.
+        lark (Lark): The compiled parser.
+
+    Returns:
+        list[Tree]: The node now backing each element.
+    """
+    entry = _entry_of(refs[0])
+    nodes = _entry_value_nodes(entry)
+    if not any(node.data == REPEAT_RULE for node in nodes):
+        for node, value in zip(refs, values, strict=True):
+            update_node_value(node, value)
+        return list(refs)
+
+    by_node: dict[int, list[int]] = {}
+    for position, node in enumerate(refs):
+        by_node.setdefault(id(node), []).append(position)
+
+    # An entry that held a repeat where a single value goes becomes a list entry once the
+    # repeat is split, and that is a change to the entry itself rather than to one node.
+    texts_by_node = [(node, _value_texts(node, [values[at] for at in by_node[id(node)]])) for node in nodes]
+    if str(entry.data) == KEY_VALUE and sum(len(texts) for _, texts in texts_by_node) > 1:
+        fresh = recategorise_entry(entry, [text for _, texts in texts_by_node for text in texts], lark)
+    else:
+        fresh = [new for node, texts in texts_by_node for new in replace_value_node(entry, node, texts, lark)]
+
+    return [node for node in fresh for _ in node_values(node)]
+
+
+def _entry_of(node: Tree) -> Tree:
+    """Return the entry rule node a value node belongs to.
+
+    A value node is always a direct child of its entry, so this is just its parent. Which
+    entries hold a key is tracked by the reader rather than derived here, since a key can be
+    written by several of them.
+
+    Args:
+        node (Tree): A value-type rule node or a repeat node.
+
+    Returns:
+        Tree: The entry rule node holding it.
+    """
+    return node.parent  # type: ignore[attr-defined]

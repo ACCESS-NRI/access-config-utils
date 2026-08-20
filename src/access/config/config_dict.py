@@ -25,13 +25,14 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, NoReturn, SupportsIndex
 
 from access.config.grammar_contract import KEY_BLOCK, KEY_LIST
-from access.config.tree_edits import update_node_value
+from access.config.tree_edits import write_values
 from access.config.tree_reader import entry_value
 
 if TYPE_CHECKING:
     from lark import Tree
 
     from access.config.config_store import ConfigStore
+    from access.config.grammar_compiled import ParseContext
     from access.config.tree_reader import EntryRef
 
 
@@ -50,15 +51,25 @@ class ConfigList(list):
     (``config["key"] = [...]``), which rewrites every element.
 
     Args:
+    A repeat count is the one case where a node backs more than one element: ``6*9.0`` is
+    six elements written once. Assigning to any of them splits the run, so the notation
+    survives an edit -- the six become ``2*9.0, 8.0, 3*9.0``, not six separate values.
+
+    Args:
         data (list[Any]): The list data.
-        nodes (Sequence[Tree]): The value-type rule nodes, one per list element.
+        nodes (Sequence[Tree]): The node backing each element. A repeat node appears once
+            per element it covers, so this is one entry per element, not per node.
+        ctx (ParseContext): The compiled grammar, needed to parse the replacement for a
+            repeat run that an assignment has split.
     """
 
-    _nodes: list[Tree]  # Value-type rule nodes from the parse tree, one per list element.
+    _nodes: list[Tree]  # The parse tree node backing each list element.
+    _ctx: ParseContext  # Compiled grammar and per-parser settings.
 
-    def __init__(self, data: list[Any], nodes: Sequence[Tree]) -> None:
+    def __init__(self, data: list[Any], nodes: Sequence[Tree], ctx: ParseContext) -> None:
         super().__init__(data)
         self._nodes = list(nodes)
+        self._ctx = ctx
 
     def __setitem__(self, index: SupportsIndex | slice, value: Any) -> None:
         """Override to update both the list element(s) and the parse tree node(s).
@@ -77,17 +88,24 @@ class ConfigList(list):
         Raises:
             ValueError: If a slice assignment would change the list length.
         """
+        updated = list(self)
         if isinstance(index, slice):
-            nodes = self._nodes[index]
             values = list(value)
-            if len(values) != len(nodes):
-                raise ValueError(f"Slice assignment would change list length from {len(nodes)} to {len(values)}")
-            for node, item in zip(nodes, values, strict=True):
-                update_node_value(node, item)
-            super().__setitem__(index, values)
+            if len(values) != len(self._nodes[index]):
+                raise ValueError(
+                    f"Slice assignment would change list length from {len(self._nodes[index])} to {len(values)}"
+                )
+            updated[index] = values
         else:
-            update_node_value(self._nodes[index], value)
-            super().__setitem__(index, value)
+            updated[index] = value
+
+        # The whole list is written, not just the elements assigned to: a repeat node backs
+        # several of them at once, so the run it covers is rewritten as a unit. Writing a
+        # value back over itself reproduces its own token, so untouched ones do not move.
+        self._nodes[:] = write_values(self._nodes, updated, self._ctx.lark)
+        # Not *value*: for a slice it may have been a one-shot iterable, already drained
+        # above, and taking it a second time would leave the list short.
+        super().__setitem__(index, values if isinstance(index, slice) else value)
 
     def _unsupported(self, *args: Any, **kwargs: Any) -> NoReturn:
         """Reject a list operation the parse tree cannot follow.
@@ -161,7 +179,7 @@ class Config(dict):
             block._parent = (self, key)
             return block
         value = entry_value(ref)
-        return ConfigList(value, ref.value_nodes) if ref.category == KEY_LIST else value
+        return ConfigList(value, ref.value_nodes, self._store.ctx) if ref.category == KEY_LIST else value
 
     def __getitem__(self, key: str) -> Any:
         """Override method to get item from dict.
@@ -208,7 +226,16 @@ class Config(dict):
             raise SyntaxError("Trying to assign a new value to an entire block")
         else:
             nodes = self._store.replace(key, value)
-            stored = ConfigList(value, nodes) if isinstance(value, list) else value
+            if isinstance(value, list):
+                # Update the list already stored rather than making a new one. Writing a
+                # list can replace the nodes behind it, and a caller holding the old one
+                # would otherwise go on writing through nodes no longer in the tree.
+                stored = dict.get(self, key)
+                assert isinstance(stored, ConfigList)
+                list.__setitem__(stored, slice(None), value)
+                stored._nodes[:] = nodes
+            else:
+                stored = value
             super().__setitem__(key, stored)
 
     def _add(self, key: str, raw_key: str, value: Any) -> None:

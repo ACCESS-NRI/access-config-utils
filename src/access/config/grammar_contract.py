@@ -85,6 +85,15 @@ than terminals, so the name is what identifies a comment. The terminal each wrap
 anonymous regular expression, which Lark names ``__ANON_0``.
 """
 
+REPEAT_RULE: Final = "repeat"
+"""Name of the rule holding a repeat count, ``n*v`` for *v* repeated *n* times.
+
+Unlike a value-type rule it is not in ``VALUE_TYPE_HANDLER_REGISTRY``: it holds a count
+token and, unless the repeat is of null values, the value-type rule node being repeated. One
+such node therefore backs several list elements, which is what ``write_values`` has to undo
+when one of them is written.
+"""
+
 TRANSPARENT_RULES: Final = frozenset({"eq"})
 """Rules that group whitespace with a punctuation literal, and hold nothing else.
 

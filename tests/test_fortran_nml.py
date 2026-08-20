@@ -704,6 +704,149 @@ def test_fortran_nml_logical_keeps_its_spelling(parser, written, value, rewritte
     assert parser.parse(str(config))["L"]["B"] is value
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("2*2.0", [2.0, 2.0]),
+        ("3*", [None, None, None]),
+        ("4*.true.", [True, True, True, True]),
+        ("3*'ab'", ["ab", "ab", "ab"]),
+        ("3*1, 2, 3", [1, 1, 1, 2, 3]),
+        ("3*1, 2*2, 3", [1, 1, 1, 2, 2, 3]),
+        ("1, 3*, 3, 4", [1, None, None, None, 3, 4]),
+        ("2*(1.0, 2.0)", [1 + 2j, 1 + 2j]),
+    ],
+)
+def test_fortran_nml_repeat_count(parser, text, expected) -> None:
+    """Test that "n*v" reads as v repeated n times, and a bare "n*" as n nulls.
+
+    A repeat is written where one value goes but means several, so even "x = 3*1" is a list.
+    CABLE's parameter files are written almost entirely this way.
+    """
+    source = f"&L\nX = {text}\n/\n"
+    config = parser.parse(source)
+
+    assert config["L"]["X"] == expected
+    assert str(config) == source
+
+
+def test_fortran_nml_repeat_reflow_on_write(parser):
+    """Test that writing one element of a repeat splits the run and keeps the notation.
+
+    The six values of "6*9.0" are backed by a single node, so writing one of them has to
+    rewrite the run. Neighbouring equal values are regrouped, which keeps the line in the
+    notation it was written in instead of expanding it, and the rest of the line is left
+    alone -- including the comment.
+    """
+    config = parser.parse("&L\n  X = 6*9.0, 4.0   ! keep me\n/\n")
+
+    config["L"]["X"][2] = 8.0
+
+    assert config["L"]["X"] == [9.0, 9.0, 8.0, 9.0, 9.0, 9.0, 4.0]
+    assert str(config) == "&L\n  X = 2*9.0, 8.0, 3*9.0, 4.0   ! keep me\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+@pytest.mark.parametrize(
+    ("values", "written"),
+    [([5, 5, 5], "3*5"), ([1, 2, 3], "1, 2, 3"), ([1, 1, 2], "2*1, 2")],
+)
+def test_fortran_nml_repeat_whole_list_replacement(parser, values, written) -> None:
+    """Test replacing a whole list that was written as a repeat.
+
+    Holding a different number of values than before makes it a different kind of entry --
+    one value is a scalar assignment and several are a list one -- so the entry rule itself
+    changes with the values.
+    """
+    config = parser.parse("&L\n  X = 3*1\n/\n")
+
+    config["L"]["X"] = values
+
+    assert str(config) == f"&L\n  X = {written}\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_fortran_nml_repeat_type_errors(parser):
+    """Test that a repeat is as strict about types as any other value.
+
+    A repeat of nulls names no type at all, so there is no notation to write a value in.
+    """
+    nulls = parser.parse("&L\n  X = 3*\n/\n")
+    with pytest.raises(TypeError):
+        nulls["L"]["X"][0] = 1
+
+    integers = parser.parse("&L\n  X = 3*1\n/\n")
+    with pytest.raises(TypeError):
+        integers["L"]["X"][0] = "a"
+
+    assert str(integers) == "&L\n  X = 3*1\n/\n"
+
+
+def test_fortran_nml_slice_assignment_from_an_iterator(parser):
+    """Test that a slice can be assigned from a one-shot iterable.
+
+    The values were taken twice: once to write the file and once to store, and the second
+    pass got nothing, leaving the list shorter than the nodes behind it.
+    """
+    config = parser.parse("&L\n  x = 1.0, 2.0, 3.0, 4.0\n/\n")
+    values = config["L"]["X"]
+
+    values[1:3] = (value for value in [8.0, 9.0])
+
+    assert list(values) == [1.0, 8.0, 9.0, 4.0]
+    assert str(config) == "&L\n  x = 1.0, 8.0, 9.0, 4.0\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_fortran_nml_list_handle_stays_valid_after_replacement(parser):
+    """Test that a list handed out earlier still writes to the file after replacement.
+
+    Replacing a list that was written as a repeat replaces the nodes behind it, and the list
+    object the caller was holding went on writing through the ones no longer in the tree.
+    """
+    config = parser.parse("&L\n  x = 3*1\n/\n")
+    values = config["L"]["X"]
+
+    config["L"]["X"] = [1, 2, 3]
+    values[0] = 99
+
+    assert str(config) == "&L\n  x = 99, 2, 3\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_fortran_nml_null_repeat_does_not_block_writing(parser):
+    """Test that a list holding a null repeat can still have its real values written.
+
+    A run of nulls names no type, so it has no notation to write a value in -- but that is
+    only true of the run itself, and demanding one for every run made the whole list
+    unwritable.
+    """
+    config = parser.parse("&L\n  x = 2*, 1\n/\n")
+    assert config["L"]["X"] == [None, None, 1]
+
+    config["L"]["X"][2] = 5
+    assert str(config) == "&L\n  x = 2*, 5\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    # Writing *into* a null is still refused: there is no value there to change.
+    with pytest.raises(TypeError):
+        config["L"]["X"][0] = 5
+
+
+def test_fortran_nml_repeat_rewrite_keeps_what_is_between_the_values(parser):
+    """Test that splitting a repeat leaves the rest of the entry alone.
+
+    Only the node being split is replaced, so a comment or a line break between the entry's
+    other values survives.
+    """
+    config = parser.parse("&L\n  x = 2*9.0, ! keep me\n      1.0\n/\n")
+
+    config["L"]["X"][0] = 8.0
+
+    assert str(config) == "&L\n  x = 8.0, 9.0, ! keep me\n      1.0\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
 @pytest.mark.parametrize(("container", "category", "expected"), canonical_rows("fortran_nml"))
 def test_canonical_entry_text(parser, container, category, expected) -> None:
     """Test the text this format writes for a new entry with no neighbour to copy from.

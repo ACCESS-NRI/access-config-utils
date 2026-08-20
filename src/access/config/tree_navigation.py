@@ -32,9 +32,12 @@ from ``grammar_contract``, which states in full what a grammar has to provide.
 
 from __future__ import annotations
 
+from typing import Any
+
 from lark import Token, Tree, Visitor
 
-from access.config.grammar_contract import BLOCK_RULE, COMMENT_RULES, ENTRY_CATEGORIES
+from access.config.grammar_contract import BLOCK_RULE, COMMENT_RULES, ENTRY_CATEGORIES, REPEAT_RULE
+from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
 
 
 class AddParent(Visitor):
@@ -157,3 +160,60 @@ def entry_insertion_index(container: Tree) -> int:
     while index < len(container.children) and is_comment_line(container.children[index]):
         index += 1
     return index
+
+
+# --- Values ---
+#
+# A value node is usually one value, but a repeat is several: "6*9.0" is six elements
+# written once. Reading that out is a question about a node, so it lives here; undoing it
+# when one of those elements is written is a change, and lives in ``tree_edits``.
+
+
+def is_value_node(node: Tree | Token) -> bool:
+    """Report whether a node holds one or more values of an entry.
+
+    Args:
+        node (Tree | Token): A child of an entry rule node.
+
+    Returns:
+        bool: True for a value-type rule node or a repeat of one.
+    """
+    return isinstance(node, Tree) and (node.data in VALUE_TYPE_HANDLER_REGISTRY or node.data == REPEAT_RULE)
+
+
+def repeat_parts(node: Tree) -> tuple[int, Tree | None]:
+    """Split a repeat node into its count and the value-type node it repeats.
+
+    Args:
+        node (Tree): A repeat rule node.
+
+    Returns:
+        tuple[int, Tree | None]: The count, and the repeated node or ``None`` for ``n*``.
+    """
+    count = int(str(node.children[0]).rstrip("*"))
+    inner = node.children[1] if len(node.children) > 1 else None
+    assert inner is None or isinstance(inner, Tree)
+    return count, inner
+
+
+def node_values(node: Tree) -> list[Any]:
+    """Return the values a value node contributes to its entry, in order.
+
+    One for an ordinary value-type node, and *n* for ``n*v`` -- all equal, and all ``None``
+    when the repeat names no value.
+
+    Args:
+        node (Tree): A value-type rule node or a repeat node.
+
+    Returns:
+        list[Any]: The values.
+    """
+    if node.data == REPEAT_RULE:
+        count, inner = repeat_parts(node)
+        return [None if inner is None else token_value(inner)] * count
+    return [token_value(node)]
+
+
+def token_value(node: Tree) -> Any:
+    """Convert the token of a value-type rule node into a Python value."""
+    return VALUE_TYPE_HANDLER_REGISTRY[str(node.data)].from_token(str(node.children[0]))

@@ -11,7 +11,7 @@ all -- without a grammar contrived to produce each one.
 """
 
 import pytest
-from conftest import entry_node, value_node
+from conftest import entry_node, value_node, ws_node
 from lark import Token, Tree
 
 from access.config.tree_navigation import (
@@ -21,6 +21,10 @@ from access.config.tree_navigation import (
     entry_insertion_index,
     entry_nodes,
     is_comment_line,
+    is_value_node,
+    node_values,
+    repeat_parts,
+    token_value,
 )
 
 
@@ -183,3 +187,51 @@ class TestEntryInsertionIndex:
         """Test that the run ends at an entry, so the index is one past the *last* entry."""
         container = Tree("start", [scalar("a"), comment_line(), scalar("b"), line()])
         assert entry_insertion_index(container) == 3
+
+
+def repeat(count: int, inner: Tree | None = None) -> Tree:
+    """Return a repeat node: ``n*v``, or ``n*`` when nothing is repeated."""
+    children: list[Tree | Token] = [Token("REPEAT_COUNT", f"{count}*")]
+    if inner is not None:
+        children.append(inner)
+    return Tree("repeat", children)
+
+
+class TestReadingValues:
+    """What a value node contributes to its entry.
+
+    One value for an ordinary node, and *n* for ``n*v`` -- which is why a node and a list
+    element are no longer one to one.
+    """
+
+    def test_a_plain_value_node_is_one_value(self) -> None:
+        """Test the ordinary case, where the node and the element correspond."""
+        node = value_node("integer", "7")
+
+        assert is_value_node(node)
+        assert token_value(node) == 7
+        assert node_values(node) == [7]
+
+    def test_a_repeat_is_the_value_that_many_times(self) -> None:
+        """Test ``3*1``, which is written where one value goes and means three."""
+        node = repeat(3, value_node("integer", "1"))
+
+        assert is_value_node(node)
+        assert node_values(node) == [1, 1, 1]
+
+    def test_a_repeat_of_nulls_names_no_value(self) -> None:
+        """Test the bare ``n*`` form, which stands for that many unset elements."""
+        assert node_values(repeat(2)) == [None, None]
+
+    def test_repeat_parts_splits_the_count_from_what_it_repeats(self) -> None:
+        """Test the two shapes a repeat node comes in."""
+        inner = value_node("float", "9.0")
+
+        assert repeat_parts(repeat(6, inner)) == (6, inner)
+        assert repeat_parts(repeat(4)) == (4, None)
+
+    def test_what_is_not_a_value_node(self) -> None:
+        """Test that only a value-type rule or a repeat counts."""
+        assert not is_value_node(Tree("key", [Token("CNAME", "a")]))
+        assert not is_value_node(ws_node())
+        assert not is_value_node(Token("NEWLINE", "\n"))

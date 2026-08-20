@@ -19,6 +19,7 @@ whitespace is handed down. That is the only reason a store knows about its neigh
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from lark import Tree
@@ -28,7 +29,7 @@ from access.config.config_insert import insert_entry
 from access.config.entry_style import EntryStyle, probe_entry_style, probe_sibling_block_style
 from access.config.grammar_contract import KEY_LIST, KEY_VALUE
 from access.config.grammar_values import UnsupportedEntryError
-from access.config.tree_edits import remove_entry_node, update_node_value
+from access.config.tree_edits import remove_entry_node, update_node_value, write_values
 from access.config.tree_reader import EntryRef, read_entries
 
 if TYPE_CHECKING:
@@ -93,8 +94,9 @@ class ConfigStore:
                 raise TypeError(f"Trying to change the type of variable '{key}'")
             if len(ref.value_nodes) != len(value):
                 raise ValueError(f"Trying to change the length of list '{key}'")
-            for node, item in zip(ref.value_nodes, value, strict=True):
-                update_node_value(node, item)
+            written = tuple(write_values(ref.value_nodes, value, self.ctx.lark))
+            self.refs[key] = replace(ref, value_nodes=written)
+            return written
         else:
             if ref.category != KEY_VALUE:
                 raise TypeError(f"Trying to change the type of variable '{key}'")

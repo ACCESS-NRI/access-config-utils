@@ -22,8 +22,17 @@ from pathlib import Path
 from lark import Lark
 from lark.reconstruct import Reconstructor
 
-from access.config.grammar_contract import BLOCK_RULE, START_RULE
+from access.config.grammar_contract import BLOCK_RULE, KEY_LIST, KEY_VALUE, START_RULE
 from access.config.grammar_info import GrammarInfo
+
+OPTIONAL_START_RULES: tuple[str, ...] = (BLOCK_RULE, KEY_VALUE, KEY_LIST)
+"""Rules made start symbols as well, when the grammar defines them under those names.
+
+Text is handed back to Lark rather than turned into nodes by hand wherever nodes are needed,
+and the start symbol says what the text has to be valid as: a block for a new entry, an
+entry for the values written into one. A rule reached only through an alias is not included,
+since Lark resolves start symbols against rule names.
+"""
 
 GRAMMAR_DIR: Path = Path(__file__).parent
 """Directory holding ``config.lark``, the shared grammar every format grammar imports from.
@@ -139,8 +148,10 @@ def compile_grammar(grammar: str) -> CompiledGrammar:
     compiled = _GRAMMAR_CACHE.get(grammar)
     if compiled is None:
         lark = _build(grammar, [START_RULE])
-        if any(str(rule.origin.name) == BLOCK_RULE for rule in lark.rules):
-            lark = _build(grammar, [START_RULE, BLOCK_RULE])
+        defined = {str(rule.origin.name) for rule in lark.rules}
+        extra = [name for name in OPTIONAL_START_RULES if name in defined]
+        if extra:
+            lark = _build(grammar, [START_RULE, *extra])
         compiled = CompiledGrammar(lark, Reconstructor(lark), GrammarInfo.from_lark(lark))
         _GRAMMAR_CACHE[grammar] = compiled
     return compiled

@@ -372,10 +372,19 @@ class TestConfigList:
 
     @pytest.fixture
     def values(self, nodes, monkeypatch) -> tuple[ConfigList, list]:
-        """Return a list over those nodes, the tree update recorded rather than made."""
-        written: list[tuple[Tree, object]] = []
-        monkeypatch.setattr(config_dict, "update_node_value", lambda node, value: written.append((node, value)))
-        return ConfigList([0, 1, 2], nodes), written
+        """Return a list over those nodes, the tree write recorded rather than made.
+
+        ``write_values`` takes the whole list, because a repeat node backs several elements
+        at once and the run it covers is rewritten as a unit.
+        """
+        written: list[list] = []
+
+        def record(refs, new_values, lark):
+            written.append(list(new_values))
+            return list(refs)
+
+        monkeypatch.setattr(config_dict, "write_values", record)
+        return ConfigList([0, 1, 2], nodes, FakeContext()), written
 
     def test_an_element_update_reaches_its_node(self, values, nodes) -> None:
         """Test the pairing: element *i* writes to the node holding element *i*."""
@@ -384,7 +393,7 @@ class TestConfigList:
         listed[1] = 20
 
         assert listed == [0, 20, 2]
-        assert written == [(nodes[1], 20)]
+        assert written == [[0, 20, 2]]
 
     def test_a_negative_index(self, values, nodes) -> None:
         """Test that indexing from the end reaches the same node the list does."""
@@ -392,7 +401,7 @@ class TestConfigList:
 
         listed[-1] = 30
 
-        assert written == [(nodes[-1], 30)]
+        assert written == [[0, 1, 30]]
 
     def test_a_slice(self, values, nodes) -> None:
         """Test that a slice writes each of its elements, in order."""
@@ -401,7 +410,7 @@ class TestConfigList:
         listed[0:2] = [10, 11]
 
         assert listed == [10, 11, 2]
-        assert written == [(nodes[0], 10), (nodes[1], 11)]
+        assert written == [[10, 11, 2]]
 
     def test_a_slice_with_a_step(self, values, nodes) -> None:
         """Test that the nodes are selected by the same slice as the elements."""
@@ -410,7 +419,7 @@ class TestConfigList:
         listed[::2] = [10, 30]
 
         assert listed == [10, 1, 30]
-        assert written == [(nodes[0], 10), (nodes[2], 30)]
+        assert written == [[10, 1, 30]]
 
     def test_a_slice_of_the_wrong_length(self, values) -> None:
         """Test that a slice assignment cannot change how many elements there are."""

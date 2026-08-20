@@ -29,7 +29,7 @@ from lark import Token, Tree
 from lark.visitors import Interpreter
 
 from access.config.grammar_contract import KEY_BLOCK, KEY_LIST, KEY_NULL, KEY_RULE, KEY_VALUE
-from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
+from access.config.tree_navigation import is_value_node, node_values
 
 if TYPE_CHECKING:
     from access.config.grammar_compiled import ParseContext
@@ -104,13 +104,13 @@ def entry_value(ref: EntryRef) -> Any:
     """
     if ref.category == KEY_NULL:
         return None
-    values = [_token_value(node) for node in ref.value_nodes]
+    # A repeat node appears once per element it covers, so reading it once per appearance
+    # would multiply the values. Take each distinct node's values in order instead.
+    values: list[Any] = []
+    for index, node in enumerate(ref.value_nodes):
+        if index == 0 or node is not ref.value_nodes[index - 1]:
+            values.extend(node_values(node))
     return values if ref.category == KEY_LIST else values[0]
-
-
-def _token_value(node: Tree) -> Any:
-    """Convert a value-type rule node into the Python value its ``Token`` spells."""
-    return VALUE_TYPE_HANDLER_REGISTRY[str(node.data)].from_token(str(node.children[0]))
 
 
 def read_entries(container: Tree, ctx: ParseContext) -> dict[str, EntryRef]:
@@ -231,10 +231,12 @@ class EntryReader(Interpreter):
         Raises:
             ValueError: If there are none.
         """
-        nodes = tuple(child for child in tree.children if child.data in VALUE_TYPE_HANDLER_REGISTRY)
-        if not nodes:
+        found = [child for child in tree.children if is_value_node(child)]
+        if not found:
             raise ValueError("No values found in Tree")
-        return nodes
+        # A repeat node holds several values at once, so it appears once per value it
+        # covers and the references are no longer one-to-one with the nodes in the tree.
+        return tuple(node for node in found for _ in node_values(node))
 
     def key_value(self, tree: Tree) -> None:
         """Interpreter callback for ``"key_value"`` rule nodes.
@@ -247,9 +249,13 @@ class EntryReader(Interpreter):
                 aliased it to the wrong category.
         """
         nodes = self._value_nodes(tree)
-        if len(nodes) > 1:
+        distinct = {id(node) for node in nodes}
+        if len(distinct) > 1:
             raise ValueError("More than one value found in Tree")
-        self._record(self._get_key(tree), EntryRef(KEY_VALUE, (tree,), nodes))
+        # "x = 3*1" is written where a single value goes but means three, so it reads as a
+        # list: the category follows the number of values, not the rule that wrote them.
+        category = KEY_VALUE if len(nodes) == 1 else KEY_LIST
+        self._record(self._get_key(tree), EntryRef(category, (tree,), nodes))
 
     def key_list(self, tree: Tree) -> None:
         """Interpreter callback for ``"key_list"`` rule nodes.
