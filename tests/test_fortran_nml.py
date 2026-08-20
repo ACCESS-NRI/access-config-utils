@@ -1126,6 +1126,28 @@ def test_fortran_nml_value_on_the_next_line(parser):
 # coverage, so they assert behaviour rather than reach code.
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [("inf", float("inf")), ("-inf", float("-inf")), ("Infinity", float("inf"))],
+)
+def test_fortran_nml_ieee_values(parser, text, expected) -> None:
+    """Test that an infinity is read as a float rather than as the bare word spelling it."""
+    source = f"&L\n  x = {text}\n/\n"
+    config = parser.parse(source)
+
+    assert config["L"]["X"] == expected
+    assert str(config) == source
+
+
+def test_fortran_nml_nan_is_a_float(parser):
+    """Test that a not-a-number reads as a float. It needs its own test: NaN != NaN."""
+    config = parser.parse("&L\n  x = nan\n/\n")
+
+    assert isinstance(config["L"]["X"], float)
+    assert config["L"]["X"] != config["L"]["X"]
+    assert str(config) == "&L\n  x = nan\n/\n"
+
+
 @pytest.mark.parametrize(("container", "category", "expected"), canonical_rows("fortran_nml"))
 def test_canonical_entry_text(parser, container, category, expected) -> None:
     """Test the text this format writes for a new entry with no neighbour to copy from.

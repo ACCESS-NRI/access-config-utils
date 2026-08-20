@@ -25,6 +25,11 @@ class FortranNMLParser(ConfigParser):
     are character substrings implemented, a list cannot yet hold a null element written as
     ``x = 1,,3``, values cannot be separated by whitespace alone, and a group has to be
     closed -- the next ``&`` does not end it.
+
+    Note: ``inf`` and ``nan`` are read as the floats they are, but cannot be written. Python
+    spells them as bare words that no format reads back as a number, so assigning one raises
+    ``UnsupportedEntryError``. Reading and round-tripping a file that contains one is fine,
+    since its text is left alone.
     """
 
     @property
@@ -115,6 +120,11 @@ separator: ","
 random_text: (/.+/|NEWLINE)*
 ANYTHING: /.+/
 
+// Fortran writes an infinity or a not-a-number as a bare word. Read as one, rather than as
+// the string "inf", which is what the bare-word rule below would otherwise make of it.
+float: SIGNED_FLOAT | IEEE
+IEEE.2: /[-+]?(inf(inity)?|nan)(?![A-Za-z0-9_])/i
+
 // Fortran writes a logical as an optional dot, T or F, and an optional rest of the word: all
 // of ".true.", "true", ".t.", ".t" and a bare "T" mean the same thing, in either case. This
 // is defined here rather than imported, because "config.lark"'s narrower version is shared
@@ -135,7 +145,7 @@ BAREWORD.-1: /[A-Za-z_][A-Za-z0-9_]*(?![A-Za-z0-9_])(?![ \\t]*=)/
 
 %import config.key
 %import config.integer
-%import config.float
+%import config.SIGNED_FLOAT
 %import config.double
 %import config.complex
 %import config.double_complex
