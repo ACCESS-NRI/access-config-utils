@@ -21,6 +21,7 @@ from access.config.grammar_compiled import compile_grammar
 from access.config.tree_edits import (
     merge_adjacent_repetitions,
     parse_entry_nodes,
+    prune_empty_wrappers,
     remove_entry_node,
     splice_entry_nodes,
     update_node_value,
@@ -147,6 +148,66 @@ class TestRemoveEntryNode:
 
         assert len(container.children) == 1
         assert [str(child) for child in container.children[0].children] == ["x", "y"]
+
+
+class TestPruneEmptyWrappers:
+    """Dropping the nodes that existed only to hold an entry now deleted."""
+
+    def test_removes_a_wrapper_the_grammar_cannot_derive_empty(self) -> None:
+        """Test the Fortran line rule: an assignment plus an optional comment and newline.
+
+        Once the assignment goes there is nothing the rule can derive, so the line goes with
+        it -- taking the trailing comment, which described the line that has gone.
+        """
+        line = Tree("nml_line", [Tree("fortran_comment", [Token("C", "! note")])])
+        container = Tree("block", [line, entry_node("key_value", "kept", value_node())])
+        AddParent().visit(container)
+
+        surviving = prune_empty_wrappers(line, FakeInfo("block"))
+
+        assert container.children == [container.children[0]]
+        assert surviving is container
+
+    def test_keeps_a_wrapper_that_still_holds_an_entry(self) -> None:
+        """Test the line holding two assignments, which keeps the one that remains."""
+        kept = entry_node("key_value", "b", value_node())
+        line = Tree("nml_line", [kept])
+        container = Tree("block", [line])
+        AddParent().visit(container)
+
+        assert prune_empty_wrappers(line, FakeInfo("block")) is line
+        assert line.children == [kept]
+
+    def test_never_prunes_a_repetition_rule(self) -> None:
+        """Test that a container accepting any number of children is left alone.
+
+        Those hold the blank lines and free text that belong to the file rather than to any
+        one entry, so an empty one is not a shape the grammar rejects.
+        """
+        empty = Tree("block", [])
+        container = Tree("start", [empty])
+        AddParent().visit(container)
+
+        assert prune_empty_wrappers(empty, FakeInfo("block")) is empty
+        assert container.children == [empty]
+
+    def test_climbs_until_something_survives(self) -> None:
+        """Test that a wrapper emptied by pruning its own child goes too."""
+        inner = Tree("nml_line", [])
+        outer = Tree("group_body", [inner])
+        container = Tree("start", [outer])
+        AddParent().visit(container)
+
+        surviving = prune_empty_wrappers(inner, FakeInfo("start"))
+
+        assert container.children == []
+        assert surviving is container
+
+    def test_stops_at_a_node_with_no_parent(self) -> None:
+        """Test the top of the tree, which has nothing to be removed from."""
+        root = Tree("start", [])
+
+        assert prune_empty_wrappers(root, FakeInfo()) is root
 
 
 class TestMergeAdjacentRepetitions:

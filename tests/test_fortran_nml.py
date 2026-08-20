@@ -432,6 +432,39 @@ def test_fortran_nml_addition_copies_spacing_on_the_right_side(parser, donor, ad
     assert dict(parser.parse(str(config))) == dict(config)
 
 
+def test_fortran_nml_delete_entry_removes_its_line(parser):
+    """Test that deleting an entry alone on its line removes the line.
+
+    A namelist line is an assignment followed by an optional comment, so the line rule
+    cannot derive what is left once the assignment goes. The wrapper is removed with it,
+    taking the trailing comment, which described the line that has gone. A line holding two
+    assignments keeps the one that remains.
+    """
+    config = parser.parse("&L\n  X = 1  ! note\n  Y = 2\n/\n")
+    del config["L"]["X"]
+    assert str(config) == "&L\n  Y = 2\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    shared = parser.parse("&L\n X = 1, Y = 2\n/\n")
+    del shared["L"]["X"]
+    assert dict(shared["L"]) == {"Y": 2}
+    assert dict(parser.parse(str(shared))) == dict(shared)
+
+
+def test_fortran_nml_delete_removes_every_entry_that_wrote_the_key(parser):
+    """Test that a key written more than once is deleted from every line that writes it.
+
+    Only the last assignment survives in the configuration, so removing only that one left
+    the key behind in the file, to reappear the next time it was read.
+    """
+    config = parser.parse("&L\n  x = 1\n  x = 2\n/\n")
+
+    del config["L"]["X"]
+
+    assert str(config) == "&L\n/\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
 @pytest.mark.parametrize(("container", "category", "expected"), canonical_rows("fortran_nml"))
 def test_canonical_entry_text(parser, container, category, expected) -> None:
     """Test the text this format writes for a new entry with no neighbour to copy from.

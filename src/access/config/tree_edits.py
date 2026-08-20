@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from lark import Token, Tree
 
 from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
-from access.config.tree_navigation import AddParent
+from access.config.tree_navigation import AddParent, contains_entry
 
 if TYPE_CHECKING:
     from lark import Lark
@@ -112,9 +112,10 @@ def splice_entry_nodes(container: Tree, nodes: Sequence[Tree | Token], index: in
 def remove_entry_node(entry_node: Tree, info: GrammarInfo) -> None:
     """Unlink an entry from the tree, repairing the shape its removal leaves behind.
 
-    A grammar can require entries and the text around them to alternate, so taking one out
-    can leave the tree underivable -- see ``merge_adjacent_repetitions``, which is what
-    repairs it.
+    Two repairs, because a grammar can be underivable in two ways once an entry goes. A
+    wrapper that *required* the entry cannot derive what is left, so it goes too
+    (``prune_empty_wrappers``); and text either side of the entry may now be adjacent where
+    the grammar wants it to alternate, so it is rejoined (``merge_adjacent_repetitions``).
 
     Args:
         entry_node (Tree): The entry rule node to remove.
@@ -122,7 +123,47 @@ def remove_entry_node(entry_node: Tree, info: GrammarInfo) -> None:
     """
     container: Tree = entry_node.parent  # type: ignore[attr-defined]
     container.children.remove(entry_node)
+    container = prune_empty_wrappers(container, info)
     merge_adjacent_repetitions(container, info)
+
+
+def prune_empty_wrappers(node: Tree, info: GrammarInfo) -> Tree:
+    """Remove the nodes that existed only to wrap an entry that has just been deleted.
+
+    A grammar can require an entry where it puts one. Fortran's line rule does: it is an
+    assignment followed by an optional comment and newline, so deleting the assignment
+    leaves a line the rule cannot derive, and the reconstructor refuses to write the file
+    out. Such a wrapper is dropped along with the entry, taking that entry's trailing
+    comment with it, since the comment described the line that has gone.
+
+    A repetition rule is never pruned. Those accept any number of children, including none,
+    and hold the blank lines and free text that are genuinely part of the file rather than
+    part of any one entry. Nor is a node without a parent, which is as far up as the tree
+    goes -- pruning does continue past the root a nested configuration was built on, since
+    that root sits inside a larger tree that has to stay derivable.
+
+    Args:
+        node (Tree): The node the entry was removed from.
+        info (GrammarInfo): Views over the compiled grammar, used to spot repetition rules.
+
+    Returns:
+        Tree: The nearest surviving container, which is where a repair pass should run.
+    """
+    while hasattr(node, "parent") and not info.is_repetition_rule(str(node.data)) and not _holds_entry(node):
+        parent: Tree = node.parent  # type: ignore[attr-defined]
+        parent.children.remove(node)
+        node = parent
+    return node
+
+
+def _holds_entry(node: Tree) -> bool:
+    """Report whether any of *node*'s children still holds an entry.
+
+    Asked of the children rather than of the node, because a wrapper that is itself an entry
+    can still have been emptied: a derived type is a ``key_block`` whose body has just lost
+    its only assignment, and ``a%`` on its own is not something the grammar can derive.
+    """
+    return any(contains_entry(child) for child in node.children)
 
 
 def merge_adjacent_repetitions(container: Tree, info: GrammarInfo) -> None:
