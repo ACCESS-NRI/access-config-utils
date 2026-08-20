@@ -59,7 +59,7 @@ block: (nml_line | empty_line)*
 
 ?nml_line: assignment (ws* "," assignment)* (ws* separator)? line_end?
 
-?assignment: key_value | key_list | key_null | key_derived
+?assignment: key_value | key_list | key_null | key_derived | wrapped_value | wrapped_list
 
 // A derived-type component assignment: "a%b = 1" is the block "a" holding "b = 1", so it
 // reuses the key_block machinery and nests for free ("a%b%c" is a block in a block).
@@ -72,6 +72,13 @@ dtype_body: key_value | key_list | key_null | key_derived
 key_value: ws* key index? eq ws* value
 key_list: ws* key index? eq ws* value ((line_break|ws* separator) ws* value)+
 key_null: ws* key index? eq ws*
+
+// The value may also start on the line after the "=", which MOM6's test inputs do for their
+// longer lists. Separate rules with a *required* line_end rather than an optional one in the
+// rules above: optional, it doubles the derivations Earley explores for every assignment in
+// the file, and costs five times the parse time on a large namelist.
+wrapped_value: ws* key index? eq line_end ws* value -> key_value
+wrapped_list: ws* key index? eq line_end ws* value ((line_break|ws* separator) ws* value)+ -> key_list
 line_break: ws* separator line_end
 
 // An array qualifier: "v(3)", "v(2:5)", "v(1:7:2)" or "v(1,2)". Deliberately one opaque

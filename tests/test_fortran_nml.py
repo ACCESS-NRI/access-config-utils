@@ -1107,6 +1107,25 @@ def test_fortran_nml_valueless_entry_with_an_unmodelled_qualifier(parser, qualif
     assert str(config) == source
 
 
+def test_fortran_nml_value_on_the_next_line(parser):
+    """Test that a value may start on the line after its "=".
+
+    MOM6's test inputs write their longer lists that way. A key with nothing after it at all
+    is still a valueless one, so this does not swallow the assignment that follows.
+    """
+    source = "&L\n  files =\n      'a',\n      'b',\n  empty =\n  z = 1\n/\n"
+    config = parser.parse(source)
+
+    assert dict(config["L"]) == {"FILES": ["a", "b"], "EMPTY": None, "Z": 1}
+    assert str(config) == source
+
+
+# --- Regressions
+#
+# Each of these was a defect found by review after the suite was already green at 100% line
+# coverage, so they assert behaviour rather than reach code.
+
+
 @pytest.mark.parametrize(("container", "category", "expected"), canonical_rows("fortran_nml"))
 def test_canonical_entry_text(parser, container, category, expected) -> None:
     """Test the text this format writes for a new entry with no neighbour to copy from.
