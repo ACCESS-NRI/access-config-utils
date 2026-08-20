@@ -200,3 +200,166 @@ def test_nuopc_config_roundtrip_with_mutation(parser, nuopc_config_file, modifie
     config["ALLCOMP_attributes"]["ocn2glc_levels"] = [1, 10, 19, 26, 30, 33, 36]
 
     assert str(config) == modified_nuopc_config_file
+
+
+@pytest.fixture()
+def extended_nuopc_config_file():
+    """Fixture returning the content of a NUOPC config file with new keys added."""
+    return """DRIVER_attributes:: # Comment 1
+
+  Verbosity = off
+  cime_model = cesm # Comment 2
+
+  logFilePostFix = .log
+  pio_blocksize = -1
+
+  # Comment 3
+
+  pio_rearr_comm_enable_hs_comp2io = .true.
+  pio_rearr_comm_enable_hs_io2comp = .false.
+  reprosum_diffmax = -1.000000D-08
+  wv_sat_table_spacing = 1.000000D+00
+  wv_sat_transition_start = 2.000000D+01
+::
+
+TEST: On
+
+  # Comment 4
+# Comment 5
+
+COMPONENTS: atm ocn   # Comment 6
+
+ALLCOMP_attributes::
+
+  ATM_model = datm
+  GLC_model = sglc
+  OCN_model = mom
+  ocn2glc_levels = 1:10:19:26:30:33:35
+  NEWB = datm
+  NEWBLIST = 1:2:3
+  NEWD = 1e-10
+
+::
+NEWTOP: off
+NEWTOPLIST: a b
+NEWPATH: x.nc
+NEWBOOL: .true.
+NEWTABLE::
+  X = y
+::
+
+"""
+
+
+def test_nuopc_config_roundtrip_with_additions(parser, nuopc_config_file, extended_nuopc_config_file):
+    """Test adding new keys at both levels of the format.
+
+    This file uses two assignment syntaxes -- ``:`` at the top level and ``=`` inside a
+    ``::`` table -- and two list separators, a space at the top level and ``:`` in a table.
+    Which one a new entry uses follows from the container it goes into.
+
+    A new table is created empty, so it has no entry of its own to copy a style from: its
+    contents are indented like those of the tables already in the file.
+    """
+    config = parser.parse(nuopc_config_file)
+
+    config["ALLCOMP_attributes"]["NEWB"] = "datm"
+    config["ALLCOMP_attributes"]["NEWBLIST"] = [1, 2, 3]
+    config["ALLCOMP_attributes"]["NEWD"] = 1.0e-10
+
+    config["NEWTOP"] = "off"
+    config["NEWTOPLIST"] = ["a", "b"]
+    config["NEWPATH"] = Path("x.nc")
+    config["NEWBOOL"] = True
+    config["NEWTABLE"] = {"X": "y"}
+
+    assert str(config) == extended_nuopc_config_file
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_nuopc_config_addition_two_element_list_in_table(parser):
+    """Test that a new list of two in a table uses the table's list separator.
+
+    A list of two is the length at which a table entry and a top-level one hold the same
+    children, so it is the case where the entry could be written with the top-level
+    separator instead.
+    """
+    config = parser.parse("TEST::\n a = 1:2:3\n::\n")
+
+    config["TEST"]["b"] = [4, 5]
+
+    assert str(config) == "TEST::\n a = 1:2:3\n b = 4:5\n::\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_nuopc_config_addition_after_comment_run(parser):
+    """Test that a new key lands between comments rather than inside one.
+
+    A comment on the entry's own line is held by that entry, so the position one past it is
+    the second line of the comment. The run is stepped over instead, as far as the first
+    blank line -- which is what leaves the new key between two comment blocks.
+    """
+    # A trailing comment carried on over the line below it.
+    config = parser.parse("A: 1  # what A is\n# ...continued\n")
+    config["NEW"] = 2
+    assert str(config) == "A: 1  # what A is\n# ...continued\nNEW: 2\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    # A blank line ends the run, so the new key goes between the two blocks.
+    config = parser.parse("A: 1\n# about A\n\n# a separate block\n")
+    config["NEW"] = 2
+    assert str(config) == "A: 1\n# about A\nNEW: 2\n\n# a separate block\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    # In a table, the run is stepped over but the closing "::" is not.
+    config = parser.parse("T::\n a = 1  # what a is\n # ...continued\n::\n")
+    config["T"]["b"] = 2
+    assert str(config) == "T::\n a = 1  # what a is\n # ...continued\n b = 2\n::\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    # A file of nothing but comments: the header keeps its place at the top.
+    config = parser.parse("# header\n# second line\n")
+    config["NEW"] = 2
+    assert str(config) == "# header\n# second line\nNEW: 2\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    # A blank line is not a comment, so nothing is stepped over and it still follows.
+    config = parser.parse("A: 1\n\n# a block after a blank line\n")
+    config["NEW"] = 2
+    assert str(config) == "A: 1\nNEW: 2\n\n# a block after a blank line\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_nuopc_config_addition_errors(parser):
+    """Test additions a NUOPC config file cannot express."""
+    config = parser.parse("A: 1\n")
+
+    # This grammar has no quoted-string value type, so a string that is not a bare word
+    # cannot be written at all.
+    for value in ("a string", "1", "a-b"):
+        with pytest.raises(TypeError):
+            config["Z"] = value
+
+    # "foo" would be written as a bare word, which reads back as a string rather than a
+    # path, so the candidate is rejected instead of storing a value of the wrong type.
+    with pytest.raises(TypeError):
+        config["Z"] = Path("foo")
+
+    # No valueless assignment, and no complex value type.
+    with pytest.raises(TypeError):
+        config["Z"] = None
+    with pytest.raises(TypeError):
+        config["Z"] = 1 + 2j
+
+    assert str(config) == "A: 1\n"
+
+
+def test_nuopc_config_addition_multi_component_path(parser):
+    """Test that a path of more than one component is stored as a path."""
+    config = parser.parse("A: 1\n")
+
+    config["Z"] = Path("./bar/baz")
+
+    assert config["Z"] == Path("bar/baz")
+    assert str(config) == "A: 1\nZ: bar/baz\n"
+    assert dict(parser.parse(str(config))) == dict(config)

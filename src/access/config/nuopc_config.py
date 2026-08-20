@@ -91,7 +91,9 @@ class NUOPCParser(ConfigParser):
     @property
     def grammar(self) -> str:
         return """
-?start: lines*
+// "start" must be a non-transparent rule: the root node is the container that new entries
+// are added to, and a transparent rule collapses away for a single-entry file.
+start: lines*
 
 ?lines: rfile_key_value
       | rfile_key_list
