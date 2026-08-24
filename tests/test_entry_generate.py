@@ -3,14 +3,18 @@
 
 """Unit tests for deriving entry templates from a grammar.
 
-These exercise generation directly, against the three shipped grammars, so that a change in
-what a grammar is thought to admit is caught here rather than only through the end-to-end
-tests in ``test_config.py`` and the per-format modules.
+Nothing is faked. The walk reads real ``Rule`` and ``Symbol`` objects, and the shapes that
+matter -- the helper rule behind a repetition most of all -- are ones Lark invents, so
+standing in for a ``GrammarInfo`` would mean asserting against a guess at what it produces.
+
+The three shipped grammars answer most of the questions. Where none of them has the shape
+under test, a short grammar written for it does.
 """
 
 from conftest import CANONICAL, PARSERS
 
 from access.config.entry_generate import admitted_value_rules, grammar_templates
+from access.config.grammar_compiled import compile_grammar
 from access.config.grammar_contract import ENTRY_CATEGORIES
 
 
@@ -80,3 +84,32 @@ def test_generation_ignores_unreproducible_terminals(infos) -> None:
             assert "!" not in literals
             assert "#" not in literals
             assert "&end" not in literals
+
+
+def test_a_derivation_with_the_wrong_number_of_values_is_discarded() -> None:
+    """Test that a rule aliased to the wrong category yields no template.
+
+    ``mistyped`` says ``key_value`` but admits a second value, so its derivation carries two
+    value placeholders where a scalar entry needs one. Writing it would produce an entry the
+    reader then refuses, so it is dropped at generation instead.
+
+    No shipped grammar has this shape, because it is a mistake; the check exists so that a
+    grammar making it fails visibly rather than emitting entries nothing can read back.
+    """
+    info = compile_grammar("""
+        start: line*
+        ?line: mistyped | plain
+        mistyped: key "=" value (":" value)+ NEWLINE -> key_value
+        plain: key "=" value NEWLINE -> key_value
+
+        %import config.key
+        %import config.integer
+        %import config.NEWLINE
+        ?value: integer
+    """).info
+
+    templates = grammar_templates(info, "start", "key_value")
+
+    # Only the single-value form survives, and every survivor holds exactly one value.
+    assert templates
+    assert all(sum(1 for fragment in t if fragment.kind == "value") == 1 for t in templates)
