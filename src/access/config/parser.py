@@ -14,13 +14,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, NoReturn, SupportsIndex
 
-from lark import Lark, Tree
+from lark import Tree
 from lark.exceptions import UnexpectedInput
-from lark.reconstruct import Reconstructor
 
 from access.config.entry_synthesis import (
     EntryStyle,
@@ -28,15 +25,16 @@ from access.config.entry_synthesis import (
     probe_entry_style,
     probe_sibling_block_style,
 )
-from access.config.entry_templates import GrammarInfo, admitted_value_rules
+from access.config.entry_templates import admitted_value_rules
+from access.config.grammar_compiled import ParseContext, compile_grammar
 from access.config.grammar_contract import (
-    BLOCK_RULE,
     KEY_BLOCK,
     KEY_LIST,
     KEY_NULL,
     KEY_VALUE,
     START_RULE,
 )
+from access.config.grammar_values import VALUE_RULE_PRIORITY, UnsupportedEntryError
 from access.config.parse_tree_ops import (
     AddParent,
     ConfigToDict,
@@ -47,79 +45,6 @@ from access.config.parse_tree_ops import (
     splice_entry_nodes,
     update_node_value,
 )
-from access.config.parser_types import VALUE_RULE_PRIORITY, UnsupportedEntryError
-
-
-@dataclass(frozen=True)
-class CompiledGrammar:
-    """A compiled grammar and the artefacts derived from it.
-
-    Compiling a grammar is far more expensive than parsing a configuration file with it, and
-    the same artefacts are needed again whenever a key is added, so they are built once and
-    cached.
-
-    Args:
-        lark (Lark): The compiled parser.
-        reconstructor (Reconstructor): Writes a parse tree back out as text.
-        info (GrammarInfo): Views over the grammar, used to synthesise new entries.
-    """
-
-    lark: Lark
-    reconstructor: Reconstructor
-    info: GrammarInfo
-
-
-@dataclass(frozen=True)
-class ParseContext:
-    """Everything a ``Config`` needs in order to edit itself, beyond the parse tree.
-
-    Args:
-        grammar (CompiledGrammar): The compiled grammar and its derived artefacts.
-        case_sensitive_keys (bool): Are the dict keys case-sensitive?
-        entry_templates (Mapping[tuple[str, str], str]): Per-parser overrides for the
-            text of a new entry, keyed by container rule name and entry category. Used
-            only where no neighbouring entry can supply a style.
-        value_rule_priority (tuple[str, ...]): Order in which value-type rules are tried for
-            a new value.
-    """
-
-    grammar: CompiledGrammar
-    case_sensitive_keys: bool
-    entry_templates: Mapping[tuple[str, str], str]
-    value_rule_priority: tuple[str, ...]
-
-    @property
-    def lark(self) -> Lark:
-        """Lark: The compiled parser."""
-        return self.grammar.lark
-
-    @property
-    def reconstructor(self) -> Reconstructor:
-        """Reconstructor: The reconstructor for this grammar."""
-        return self.grammar.reconstructor
-
-    @property
-    def info(self) -> GrammarInfo:
-        """GrammarInfo: Grammar views used to synthesise new entries."""
-        return self.grammar.info
-
-
-_GRAMMAR_CACHE: dict[str, CompiledGrammar] = {}
-"""Compiled grammars, keyed by grammar text.
-
-Keyed on the text rather than on the parser class, because ``ConfigParser.grammar`` is a
-property and so could differ between instances of one class, and because parsers sharing a
-grammar should share the compiled result. Concurrent first use may compile twice and discard
-one result, which is wasteful but harmless.
-"""
-
-
-def clear_grammar_cache() -> None:
-    """Discard every cached compiled grammar.
-
-    Only needed by tests that change a grammar between parses.
-    """
-    _GRAMMAR_CACHE.clear()
 
 
 def _entry_category(value: Any) -> str:
@@ -619,48 +544,21 @@ class Config(dict):
 class ConfigParser(ABC):
     """Lark-based configuration parser base class.
 
-    The parsers built by extending this class are meant for files that share a common
-    structure. In this case, the files must be made by a series of key-value assignments
-    that can be mapped onto a Python dict. Each key-value assignment can therefore be one
-    of three types:
-      - scalar (e.g, 'a=1')
-      - list/array (e.g., 'a=1,2,3')
-      - block/dict containing other key-value assignments (e.g., 'blk: b=1, c=2')
+    A parser built by extending this class is for a file that can be mapped onto a Python
+    dict: a series of key-value assignments, where a value is a scalar (``a=1``), a list
+    (``a=1,2,3``) or a block of further assignments (``blk: b=1, c=2``).
 
-    Because the resulting parse trees are all processed using the ``ConfigToDict``
-    Interpreter, whose callbacks are named after grammar rules, all grammars must follow
-    the same structure and use the same rule names:
+    Subclassing means supplying a Lark grammar and saying whether keys are case-sensitive.
+    The grammar has to be written against the naming contract stated in full in
+    ``grammar_contract`` -- the rule names there are what lets one set of machinery read,
+    edit and extend every format.
 
-      - Key-value assignment rules must be named (or aliased to): ``"key_value"``,
-        ``"key_list"``, and ``"key_block"``. The ``ConfigToDict`` Interpreter dispatches
-        to methods of those exact names.
-      - Only value-type rules from ``"config.lark"`` should be used for scalar values.
-        Their names must be registered in ``VALUE_TYPE_HANDLER_REGISTRY``.
-      - The rule that captures the key name must be named ``"key"``. Its first child must
-        be a ``Token`` (terminal) whose text is the key string. The ``"config.lark"`` file
-        provides a ``"key"`` rule suitable for most cases.
-      - Empty assignments (e.g., ``a=``) are supported. The corresponding rule must be
-        named ``"key_null"``.
-
-    Two further requirements exist so that keys can be *added* to a parsed file. Adding a
-    key means creating parse tree nodes the parser never built, and the way that is done is
-    to synthesise the text of the new entry and hand it back to Lark with the enclosing rule
-    as the start symbol. That requires the enclosing rules to be nameable:
-
-      - The start rule must be named ``"start"`` and must **not** be transparent: write
-        ``start:``, never ``?start:``. A transparent rule collapses when it has a single
-        child, so a file with one entry would have that entry as the root of the tree,
-        leaving nothing to add to.
-      - A ``"key_block"``'s contents must be held by a rule *named* ``"block"``, not by one
-        aliased to it with ``-> block``. Lark resolves start symbols against rule names,
-        while a node carries the alias, and the two have to agree.
-
-    A parser may steer the synthesised text through the ``entry_templates`` and
+    A parser may steer the text of a *new* entry through the ``entry_templates`` and
     ``value_rule_priority`` properties, but the defaults derive everything from the grammar
     and are normally enough.
 
-    This class is made abstract to prevent instantiation, as it requires a Lark grammar to
-    be provided in order to work correctly.
+    This class is abstract to prevent instantiation, as it requires a grammar in order to
+    work at all.
     """
 
     @property
@@ -718,40 +616,6 @@ class ConfigParser(ABC):
         """
         return VALUE_RULE_PRIORITY
 
-    def _compile(self) -> CompiledGrammar:
-        """Compile the grammar, or return the cached result for it.
-
-        The parser is built with ``"block"`` as an additional start symbol, so the text of
-        an entry can be parsed in the context it will live in. That is only possible when
-        the grammar has such a rule, so its presence is probed first; a format without
-        blocks keeps a single start symbol.
-
-        Returns:
-            CompiledGrammar: The compiled parser and the artefacts derived from it.
-        """
-        grammar = self.grammar
-        compiled = _GRAMMAR_CACHE.get(grammar)
-        if compiled is None:
-            lark = self._build(grammar, [START_RULE])
-            if any(str(rule.origin.name) == BLOCK_RULE for rule in lark.rules):
-                lark = self._build(grammar, [START_RULE, BLOCK_RULE])
-            compiled = CompiledGrammar(lark, Reconstructor(lark), GrammarInfo.from_lark(lark))
-            _GRAMMAR_CACHE[grammar] = compiled
-        return compiled
-
-    @staticmethod
-    def _build(grammar: str, start: list[str]) -> Lark:
-        """Build a Lark parser for a grammar with the given start symbols.
-
-        Args:
-            grammar (str): The grammar text.
-            start (list[str]): Names of the rules usable as start symbols.
-
-        Returns:
-            Lark: The compiled parser.
-        """
-        return Lark(grammar, import_paths=[Path(__file__).parent], maybe_placeholders=False, start=start)
-
     def parse(self, stream: str) -> Config:
         """Parse the given text.
 
@@ -762,7 +626,10 @@ class ConfigParser(ABC):
             Config: instance of the Config class storing the parsed data.
         """
         ctx = ParseContext(
-            self._compile(), self.case_sensitive_keys, self.entry_templates, tuple(self.value_rule_priority)
+            compile_grammar(self.grammar),
+            self.case_sensitive_keys,
+            self.entry_templates,
+            tuple(self.value_rule_priority),
         )
 
         # Parse text. Here we add a newline character to simplify the writting of the

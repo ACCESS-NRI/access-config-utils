@@ -56,7 +56,6 @@ from lark import Token, Tree
 
 from access.config.entry_templates import (
     EntryTemplate,
-    GrammarInfo,
     admitted_value_rules,
     compile_template,
     expand_value_slots,
@@ -74,7 +73,8 @@ from access.config.grammar_contract import (
     KEY_VALUE,
     WS_RULE,
 )
-from access.config.parser_types import (
+from access.config.grammar_info import GrammarInfo
+from access.config.grammar_values import (
     VALUE_RULE_PRIORITY,
     VALUE_TYPE_HANDLER_REGISTRY,
     select_value_rule,

@@ -6,9 +6,10 @@ from pathlib import Path
 import pytest
 from lark import Tree
 
+from access.config.grammar_compiled import clear_grammar_cache
 from access.config.grammar_contract import ENTRY_CATEGORIES, VALUE_SLOT_COUNTS
 from access.config.parse_tree_ops import AddParent, ConfigToDict, merge_adjacent_repetitions
-from access.config.parser import ConfigParser, _entry_category, _entry_matches, clear_grammar_cache
+from access.config.parser import ConfigParser, _entry_category, _entry_matches
 
 grammar = """
     // Made-up grammar taylored to test the different building blocks

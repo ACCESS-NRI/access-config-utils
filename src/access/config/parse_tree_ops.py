@@ -25,27 +25,11 @@ grammar elements:
 Because ``Token`` inherits from ``str``, code that only needs the matched text
 can use a ``Token`` directly as a string without calling ``.value``.
 
-Grammar structure assumptions
------------------------------
-All grammars used with this module must follow these conventions:
-
-- Key-value assignments use rules named (or aliased to) ``"key_value"``,
-  ``"key_list"``, ``"key_block"``, or ``"key_null"``.
-- The rule identifying the key name must be named ``"key"``, must have a
-  terminal (e.g. ``CNAME``) as its first child and that terminal's text is the
-  key string.
-- Value types (e.g. integers, floats, logicals) are expressed as dedicated
-  rules whose names are registered in ``VALUE_TYPE_HANDLER_REGISTRY``. Each
-  such **value-type rule node** has a single ``Token`` child holding the
-  matched text.
-- Whitespace that must be preserved for round-trip fidelity is captured in an
-  explicit ``ws`` rule rather than discarded with ``%ignore``.
-- The start rule must be named ``"start"`` and must not be transparent
-  (``start:``, never ``?start:``), so that the root of the tree is always the
-  container that new entries are added to.
-- A ``"key_block"``'s contents must be held by a rule *named* ``"block"``,
-  rather than one aliased to it, so that the name can be used as a Lark start
-  symbol when parsing the text of a new entry.
+Every rule name this module looks for -- the four entry categories, ``key``,
+``block``, ``ws`` -- comes from ``grammar_contract``, which states in full what a
+grammar has to provide and why. The shapes relied on here follow from it: a key
+rule node has a ``key`` child whose first child is the ``Token`` holding the key
+text, and a value-type rule node has a single ``Token`` child holding the value.
 """
 
 from __future__ import annotations
@@ -57,9 +41,9 @@ from lark import Token, Tree, Visitor
 from lark.visitors import Interpreter
 
 from access.config.entry_synthesis import contains_entry, is_comment_line
-from access.config.entry_templates import GrammarInfo
 from access.config.grammar_contract import BLOCK_RULE, ENTRY_CATEGORIES, KEY_RULE
-from access.config.parser_types import VALUE_TYPE_HANDLER_REGISTRY
+from access.config.grammar_info import GrammarInfo
+from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
 
 if TYPE_CHECKING:
     from lark import Lark
@@ -81,8 +65,7 @@ def update_node_value(rule_node: Tree, value: Any) -> None:
     Raises:
         TypeError: Raises an exception if the new and old value types do not match.
     """
-    data_name: str | None = getattr(rule_node, "data", None)
-    handler = VALUE_TYPE_HANDLER_REGISTRY.get(data_name)
+    handler = VALUE_TYPE_HANDLER_REGISTRY.get(str(rule_node.data))
     if handler is None or not handler.type_check(value):
         raise TypeError("Trying to change value type")
     # The Token storing the value is always the first child of a value-type rule node.
