@@ -19,13 +19,9 @@ from typing import Any, NoReturn, SupportsIndex
 from lark import Tree
 from lark.exceptions import UnexpectedInput
 
-from access.config.entry_synthesis import (
-    EntryStyle,
-    iter_entry_snippets,
-    probe_entry_style,
-    probe_sibling_block_style,
-)
-from access.config.entry_templates import admitted_value_rules
+from access.config.entry_generate import admitted_value_rules
+from access.config.entry_render import iter_entry_snippets
+from access.config.entry_style import EntryStyle, probe_entry_style, probe_sibling_block_style
 from access.config.grammar_compiled import ParseContext, compile_grammar
 from access.config.grammar_contract import (
     KEY_BLOCK,
