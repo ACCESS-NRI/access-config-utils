@@ -4,85 +4,15 @@
 from pathlib import Path
 
 import pytest
+from conftest import TOY_GRAMMAR
 from lark import Tree
 
 from access.config.grammar_compiled import clear_grammar_cache
-from access.config.grammar_contract import ENTRY_CATEGORIES, VALUE_SLOT_COUNTS
-from access.config.parser import ConfigParser, _entry_category, _entry_matches
+from access.config.grammar_contract import ENTRY_CATEGORIES
+from access.config.parser import ConfigParser
 from access.config.tree_edits import merge_adjacent_repetitions
 from access.config.tree_navigation import AddParent
 from access.config.tree_reader import EntryReader
-
-grammar = """
-    // Made-up grammar taylored to test the different building blocks
-    // of the configuration parsers.
-    start: (key_block|outer_key_value|outer_key_list|key_null|wrong_key_value1|wrong_key_value2|wrong_key_value3)+
-
-    key_null: key equal
-    outer_key_value: key equal value -> key_value
-    outer_key_list: key equal value ("," value)* -> key_list
-    equal: "="
-    key_block: key "<" block ">"
-    block: (block_key_value| block_key_list)*
-    block_key_value: key colon value -> key_value
-    block_key_list: key colon value ("|" value)* -> key_list
-    colon: ":"
- 
-    // This rule will trip the interpreter because there is more than one value
-    // (the alias should therefore be key_list)
-    ?wrong_key_value1:  key equal value (":" value)* -> key_value
-
-    // This rule will trip the interpreter because there is no value
-    // (the alias should therefore be key_null)
-    ?wrong_key_value2:  key colon equal -> key_value
-
-    // This rule will trip the interpreter because there is no "key" child node
-    ?wrong_key_value3:  "!" value -> key_value
-
-    ?value: logical
-         | bool
-         | integer
-         | float
-         | double
-         | complex
-         | double_complex
-         | identifier
-         | string
-         | path
-
-    %import config.key
-    %import config.logical
-    %import config.bool
-    %import config.integer
-    %import config.float
-    %import config.double
-    %import config.complex
-    %import config.double_complex
-    %import config.identifier
-    %import config.string
-    %import config.path
-
-    %import common.WS
-    %ignore WS
-"""
-
-
-class Parser(ConfigParser):
-    """Parser using the grammar defined above, with case sensitive keys."""
-
-    @property
-    def case_sensitive_keys(self) -> bool:
-        return True
-
-    @property
-    def grammar(self) -> str:
-        return grammar
-
-
-@pytest.fixture(scope="module")
-def parser():
-    """Fixture instantiating the parser"""
-    return Parser()
 
 
 def test_config_type_logical(parser):
@@ -752,57 +682,6 @@ def test_config_grammar_cache(parser):
     assert parser.parse("a=1")._ctx.grammar is not first._ctx.grammar
 
 
-def test_config_entry_matches_rejections(parser):
-    """Test the checks that reject a candidate entry read back from its text.
-
-    The candidate is spelled as the text a synthesised entry would be, and then read back
-    through the ordinary path, so the references compared here are the ones insertion sees.
-    """
-
-    def read(text):
-        return parser.parse(text)._refs
-
-    # A candidate that produced the wrong key, or more than one entry.
-    assert not _entry_matches(read("other=1"), "z", 1)
-    assert not _entry_matches(read("z=1 other=2"), "z", 1)
-
-    # The value read back has to match in type as well as in value.
-    assert not _entry_matches(read("z=1"), "z", True)
-    assert not _entry_matches(read("z='1'"), "z", 1)
-    assert not _entry_matches(read("z=2"), "z", 1)
-    assert _entry_matches(read("z=1"), "z", 1)
-
-    # A valueless entry, and a list of the wrong length or element type.
-    assert not _entry_matches(read("z=1"), "z", None)
-    assert _entry_matches(read("z="), "z", None)
-    assert not _entry_matches(read("z=1,2"), "z", [1, 2, 3])
-    assert not _entry_matches(read("z=1"), "z", [1, 2])
-    assert not _entry_matches(read("z=1,'2'"), "z", [1, 2])
-    assert _entry_matches(read("z=1,2"), "z", [1, 2])
-
-    # A new block has to come back empty; its contents are added afterwards.
-    assert not _entry_matches(read("z=1"), "z", {"a": 1})
-    assert not _entry_matches(read("z<a:1>"), "z", {"a": 1})
-    assert _entry_matches(read("z< >"), "z", {"a": 1})
-
-
-class CaseParser(ConfigParser):
-    """Parser using the grammar defined above, with case insensitive keys."""
-
-    @property
-    def case_sensitive_keys(self) -> bool:
-        return False
-
-    @property
-    def grammar(self) -> str:
-        return grammar
-
-
-@pytest.fixture(scope="module")
-def case_parser():
-    return CaseParser()
-
-
 def test_config_case_insensitive(case_parser):
     """Test config files whose keys are case insensitive"""
     config = case_parser.parse("a = 1\n")
@@ -866,7 +745,7 @@ class TemplateParser(ConfigParser):
 
     @property
     def grammar(self) -> str:
-        return grammar
+        return TOY_GRAMMAR
 
     @property
     def entry_templates(self):
@@ -1077,14 +956,3 @@ def test_grammar_contract_has_an_interpreter_callback_per_category() -> None:
     """
     for category in ENTRY_CATEGORIES:
         assert callable(getattr(EntryReader, category, None)), category
-
-
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [({}, "key_block"), (None, "key_null"), ([1, 2], "key_list"), (1, "key_value"), ("s", "key_value")],
-)
-def test_entry_category_is_a_declared_category(value, expected) -> None:
-    """Test that the category chosen for a value is one the contract declares."""
-    assert _entry_category(value) == expected
-    assert _entry_category(value) in ENTRY_CATEGORIES
-    assert _entry_category(value) in VALUE_SLOT_COUNTS

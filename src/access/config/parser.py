@@ -19,94 +19,22 @@ from typing import Any, NoReturn, SupportsIndex
 from lark import Tree
 from lark.exceptions import UnexpectedInput
 
-from access.config.entry_generate import admitted_value_rules
-from access.config.entry_render import iter_entry_snippets
+from access.config.config_insert import insert_entry
 from access.config.entry_style import EntryStyle, probe_entry_style, probe_sibling_block_style
 from access.config.grammar_compiled import ParseContext, compile_grammar
 from access.config.grammar_contract import (
     KEY_BLOCK,
     KEY_LIST,
-    KEY_NULL,
     KEY_VALUE,
     START_RULE,
 )
-from access.config.grammar_values import VALUE_RULE_PRIORITY, UnsupportedEntryError
+from access.config.grammar_values import VALUE_RULE_PRIORITY
 from access.config.tree_edits import (
-    parse_entry_nodes,
     remove_entry_node,
-    splice_entry_nodes,
     update_node_value,
 )
-from access.config.tree_navigation import AddParent, entries_of, entry_insertion_index
+from access.config.tree_navigation import AddParent
 from access.config.tree_reader import EntryRef, entry_value, read_entries
-
-
-def _entry_category(value: Any) -> str:
-    """Return the kind of entry needed to hold *value*.
-
-    Args:
-        value (Any): The value to be stored.
-
-    Returns:
-        str: One of the entry category names.
-    """
-    if isinstance(value, dict):
-        return KEY_BLOCK
-    if value is None:
-        return KEY_NULL
-    if isinstance(value, list):
-        return KEY_LIST
-    return KEY_VALUE
-
-
-def _same_value(stored: Any, requested: Any) -> bool:
-    """Report whether re-reading the written text gave back exactly the requested value.
-
-    The type is compared as well as the value, because several value types share a Python
-    type and a written value can be read back as the wrong one: ``Path("foo")`` writes as
-    ``foo``, which a grammar with a bare-word value type reads back as a plain ``str``.
-
-    Args:
-        stored (Any): The value read back from the candidate text.
-        requested (Any): The value the caller asked to store.
-
-    Returns:
-        bool: True if the two match in both type and value.
-    """
-    return type(stored) is type(requested) and bool(stored == requested)
-
-
-def _entry_matches(refs: Mapping[str, EntryRef], key: str, value: Any) -> bool:
-    """Report whether a candidate entry, read back from its text, holds what was asked for.
-
-    This is what makes candidate ranking a matter of style rather than of correctness: a
-    candidate that parses but means something else fails here and the next one is tried.
-
-    Args:
-        refs (Mapping[str, EntryRef]): The entries read back from the candidate.
-        key (str): The normalised key expected.
-        value (Any): The value requested.
-
-    Returns:
-        bool: True if the candidate is an exact match.
-    """
-    if set(refs) != {key}:
-        return False
-    ref = refs[key]
-    if ref.category != _entry_category(value):
-        return False
-    if ref.category == KEY_BLOCK:
-        # A new block starts empty; its contents are added afterwards.
-        assert ref.block_node is not None
-        return not entries_of(ref.block_node)
-    if ref.category == KEY_NULL:
-        return True
-    stored = entry_value(ref)
-    if ref.category == KEY_LIST:
-        return len(stored) == len(value) and all(
-            _same_value(item, wanted) for item, wanted in zip(stored, value, strict=True)
-        )
-    return _same_value(stored, value)
 
 
 class ConfigList(list):
@@ -274,17 +202,13 @@ class Config(dict):
     def _insert_new_key(self, key: str, raw_key: str, value: Any) -> None:
         """Add an entry for a key that is not in the configuration yet.
 
-        Works by synthesising the *text* of the entry, handing it back to Lark with this
-        container's rule as the start symbol, and splicing the resulting nodes in. Candidate
-        texts are tried in order of how idiomatic they are, and each is validated in full --
-        it must parse, and reading it back must give exactly the requested value -- before
-        the tree is modified. A candidate the grammar reads differently from how it was
-        meant, such as a bare word a format happens to read as a path, is discarded rather
-        than written out.
+        The entry itself is written by ``insert_entry``; what is decided here is the
+        whitespace it should copy, and what has to happen afterwards to the dict.
 
-        The whitespace of the entry is copied from its neighbours in this container, or --
-        when there are none, as in a block this method has just created -- from the style
-        handed to the block when it was created.
+        The whitespace comes from the neighbours in this container, or -- when there are
+        none, as in a block just created -- from the style handed to the block when it was
+        created. A block is filled through this same path, one key at a time, so nesting to
+        any depth works.
 
         Args:
             key (str): The normalised key, used for the dict entry.
@@ -296,70 +220,27 @@ class Config(dict):
                 short for the format to express as one.
             UnsupportedEntryError: If no candidate produced the requested value.
         """
-        if not isinstance(raw_key, str) or not raw_key.isidentifier():
-            raise ValueError(f"Not a valid configuration key: {raw_key!r}")
-
-        category = _entry_category(value)
-        if category == KEY_LIST and len(value) < 2:
-            # Every supported format needs at least two values to be a list rather than a
-            # scalar, and writing a scalar would put the wrong type in the dict.
-            raise ValueError(f"A new list needs at least two elements: '{key}'")
-
         container = self._tree
-        container_rule = str(container.data)
-        ctx = self._ctx
         style = probe_entry_style(container)
         if not style.has_donor:
             style = self._fallback_style
-        index = entry_insertion_index(container)
 
-        for snippet in iter_entry_snippets(
-            ctx.info,
-            container_rule,
-            category,
-            raw_key,
-            value,
-            style,
-            ctx.entry_templates,
-            ctx.value_rule_priority,
-        ):
-            # Interpret the candidate in a throwaway container, so one that parses but does
-            # not mean the right thing leaves no trace. A candidate can fail to parse, or
-            # parse into a shape the interpreter rejects; either way the next one is tried.
-            try:
-                nodes = parse_entry_nodes(ctx.lark, container_rule, snippet)
-                refs = read_entries(Tree(container.data, list(nodes)), ctx)
-            except (UnexpectedInput, ValueError, TypeError):
-                continue
-            if not _entry_matches(refs, key, value):
-                continue
+        ref = insert_entry(container, self._ctx, key, raw_key, value, style)
+        self._refs[key] = ref
+        stored = self._wrap(ref)
+        dict.__setitem__(self, key, stored)
 
-            splice_entry_nodes(container, nodes, index)
-            self._refs[key] = refs[key]
-            stored = self._wrap(refs[key])
-            dict.__setitem__(self, key, stored)
+        if ref.category == KEY_BLOCK:
+            # The new block is empty, so nothing in it can say how its contents should be
+            # laid out. Hand it the style of the nearest sibling block, falling back to this
+            # container's own, so that a block nested in a new block inherits it too rather
+            # than dropping back to the canonical layout.
+            assert isinstance(stored, Config)
+            sibling = probe_sibling_block_style(container)
+            stored._fallback_style = sibling if sibling.has_donor else self._fallback_style
 
-            if category == KEY_BLOCK:
-                # The new block is empty, so nothing in it can say how its contents should
-                # be laid out. Hand it the style of the nearest sibling block, falling back
-                # to this container's own, so that a block nested in a new block inherits it
-                # too rather than dropping back to the canonical layout.
-                assert isinstance(stored, Config)
-                sibling = probe_sibling_block_style(container)
-                stored._fallback_style = sibling if sibling.has_donor else self._fallback_style
-
-                # Fill the block through the same path, one key at a time, so nesting to any
-                # depth works.
-                for block_key, block_value in value.items():
-                    stored[block_key] = block_value
-            return
-
-        admitted = sorted(admitted_value_rules(ctx.info, container_rule, category))
-        raise UnsupportedEntryError(
-            f"This format cannot store {value!r} as '{raw_key}' here: there is no way to "
-            f"write a {category} in '{container_rule}' with this value"
-            + (f" (value types allowed here: {admitted})" if admitted else "")
-        )
+            for block_key, block_value in value.items():
+                stored[block_key] = block_value
 
     def _reconstruct(self) -> str:
         """Round-trip reconstruct the parse tree into its text representation.

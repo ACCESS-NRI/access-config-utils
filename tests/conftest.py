@@ -1,12 +1,18 @@
 # Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Shared fixtures for the entry-synthesis tests.
+"""Shared scaffolding for the parser tests.
 
-The four modules covering synthesis all work against the three shipped grammars, so the
-compiled parsers and their views are built once here. ``CANONICAL`` is shared for another
-reason: it is the whole truth about what each grammar can express, so the module asserting
-what gets *written* and the module asserting what gets *generated* have to agree on it.
+Two things are shared. The modules covering entry synthesis all work against the three
+shipped grammars, so the compiled parsers and their views are built once here, and
+``CANONICAL`` -- the whole truth about what each grammar can express -- is stated once, so
+that the module asserting what gets *written* and the module asserting what gets *generated*
+cannot drift apart.
+
+The rest is the made-up grammar the other parser tests run against. It is deliberately
+unlike any real format: it exercises every value type at once, every entry category, and
+three rules aliased to the wrong category, which is how the reader's own error paths are
+reached.
 """
 
 import pytest
@@ -17,6 +23,7 @@ from access.config.grammar_compiled import compile_grammar
 from access.config.grammar_info import GrammarInfo
 from access.config.mom6_input import MOM6InputParser
 from access.config.nuopc_config import NUOPCParser
+from access.config.parser import ConfigParser
 
 PARSERS = {
     "fortran_nml": FortranNMLParser,
@@ -57,3 +64,92 @@ def larks() -> dict[str, Lark]:
 def infos() -> dict[str, GrammarInfo]:
     """Fixture returning the grammar views per shipped grammar."""
     return {name: compile_grammar(cls().grammar).info for name, cls in PARSERS.items()}
+
+
+TOY_GRAMMAR = """
+    // Made-up grammar taylored to test the different building blocks
+    // of the configuration parsers.
+    start: (key_block|outer_key_value|outer_key_list|key_null|wrong_key_value1|wrong_key_value2|wrong_key_value3)+
+
+    key_null: key equal
+    outer_key_value: key equal value -> key_value
+    outer_key_list: key equal value ("," value)* -> key_list
+    equal: "="
+    key_block: key "<" block ">"
+    block: (block_key_value| block_key_list)*
+    block_key_value: key colon value -> key_value
+    block_key_list: key colon value ("|" value)* -> key_list
+    colon: ":"
+ 
+    // This rule will trip the interpreter because there is more than one value
+    // (the alias should therefore be key_list)
+    ?wrong_key_value1:  key equal value (":" value)* -> key_value
+
+    // This rule will trip the interpreter because there is no value
+    // (the alias should therefore be key_null)
+    ?wrong_key_value2:  key colon equal -> key_value
+
+    // This rule will trip the interpreter because there is no "key" child node
+    ?wrong_key_value3:  "!" value -> key_value
+
+    ?value: logical
+         | bool
+         | integer
+         | float
+         | double
+         | complex
+         | double_complex
+         | identifier
+         | string
+         | path
+
+    %import config.key
+    %import config.logical
+    %import config.bool
+    %import config.integer
+    %import config.float
+    %import config.double
+    %import config.complex
+    %import config.double_complex
+    %import config.identifier
+    %import config.string
+    %import config.path
+
+    %import common.WS
+    %ignore WS
+"""
+
+
+class Parser(ConfigParser):
+    """Parser using the grammar defined above, with case sensitive keys."""
+
+    @property
+    def case_sensitive_keys(self) -> bool:
+        return True
+
+    @property
+    def grammar(self) -> str:
+        return TOY_GRAMMAR
+
+
+@pytest.fixture(scope="module")
+def parser():
+    """Fixture instantiating the parser"""
+    return Parser()
+
+
+class CaseParser(ConfigParser):
+    """Parser using the grammar defined above, with case insensitive keys."""
+
+    @property
+    def case_sensitive_keys(self) -> bool:
+        return False
+
+    @property
+    def grammar(self) -> str:
+        return TOY_GRAMMAR
+
+
+@pytest.fixture(scope="module")
+def case_parser():
+    return CaseParser()
