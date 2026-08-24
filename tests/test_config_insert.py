@@ -22,7 +22,7 @@ def test_entry_matches_rejections(parser):
     """
 
     def read(text):
-        return parser.parse(text)._refs
+        return parser.parse(text)._store.refs
 
     # A candidate that produced the wrong key, or more than one entry.
     assert not entry_matches(read("other=1"), "z", 1)

@@ -598,8 +598,8 @@ def test_config_add_no_node_reuse(parser):
 
     config["p"] = config["x"]
     config["q"] = config["y"]
-    assert config._refs["p"] is not config._refs["x"]
-    assert config._refs["q"] is not config._refs["y"]
+    assert config._store.refs["p"] is not config._store.refs["x"]
+    assert config._store.refs["q"] is not config._store.refs["y"]
 
     config["p"] = 9
     config["q"][0] = 9
@@ -676,10 +676,10 @@ def test_config_grammar_cache(parser):
     first = parser.parse("a=1")
     second = parser.parse("a=1")
     # Compiling costs far more than parsing, so the result is shared.
-    assert first._ctx.grammar is second._ctx.grammar
+    assert first._store.ctx.grammar is second._store.ctx.grammar
 
     clear_grammar_cache()
-    assert parser.parse("a=1")._ctx.grammar is not first._ctx.grammar
+    assert parser.parse("a=1")._store.ctx.grammar is not first._store.ctx.grammar
 
 
 def test_config_case_insensitive(case_parser):
@@ -911,7 +911,7 @@ def test_config_non_finite_floats(parser):
 
 def test_config_is_repetition_rule(parser):
     """Test the shape test that decides which rules may be merged after a deletion"""
-    info = parser.parse("a=1")._ctx.info
+    info = parser.parse("a=1")._store.ctx.info
 
     # A rule that is a plain repetition of something.
     assert info.is_repetition_rule("block")
@@ -929,7 +929,7 @@ def test_config_merge_adjacent_repetitions(parser):
     so that the merged children end up owned by the node that survives.
     """
     config = parser.parse("a=1")
-    info = config._ctx.info
+    info = config._store.ctx.info
 
     left, right = Tree("block", [Tree("x", [])]), Tree("block", [Tree("y", [])])
     container = Tree("start", [left, right, Tree("equal", [])])
