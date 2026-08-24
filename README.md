@@ -60,7 +60,8 @@ parameterB = 'abc'
 /
 ```
 
-The parsed content can then be modified just like any Python dict:
+The parsed content can then be modified like a Python dict. Everything not touched — comments,
+blank lines, spacing — is reproduced exactly:
 ```python
 config["data_nml"]["parameterA"] = 2
 print(config)
@@ -71,6 +72,36 @@ parameterA = 2
 parameterB = 'abc'
 /
 ```
+
+New keys can be added too, and are written in the style of their neighbours. Each value is written
+in whichever notation the format uses, so a `bool` becomes a Fortran logical here:
+```python
+config["data_nml"]["parameterC"] = True
+config["data_nml"]["parameterD"] = [1, 2, 3]
+config["new_nml"] = {"parameterE": "def"}
+print(config)
+```
+```python
+&data_nml
+parameterA = 2
+parameterB = 'abc'
+parameterC = .true.
+parameterD = 1, 2, 3
+/
+&new_nml
+parameterE = "def"
+/
+```
+
+A value the format cannot express raises `UnsupportedEntryError` rather than writing a file that
+no longer means what the dict says — for instance `None` in a format with no valueless assignment,
+or a string containing a space in one with no quoted-string syntax.
+
+Two caveats on the dict and list behaviour. Operations that would add, remove or reorder the
+elements of a list value (`append`, `extend`, `insert`, `pop`, `sort`, …) raise
+`NotImplementedError`, because each element is tied to the place it came from in the file; assign
+a whole new list instead. And replacing an existing block wholesale raises `SyntaxError` — a block
+can be created and edited, but not swapped out.
 
 ## Development installation
 

@@ -40,17 +40,31 @@ All grammars used with this module must follow these conventions:
   matched text.
 - Whitespace that must be preserved for round-trip fidelity is captured in an
   explicit ``ws`` rule rather than discarded with ``%ignore``.
+- The start rule must be named ``"start"`` and must not be transparent
+  (``start:``, never ``?start:``), so that the root of the tree is always the
+  container that new entries are added to.
+- A ``"key_block"``'s contents must be held by a rule *named* ``"block"``,
+  rather than one aliased to it, so that the name can be used as a Lark start
+  symbol when parsing the text of a new entry.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 from lark import Token, Tree, Visitor
-from lark.reconstruct import Reconstructor
 from lark.visitors import Interpreter
 
+from access.config.entry_synthesis import contains_entry, is_comment_line
+from access.config.entry_templates import GrammarInfo
+from access.config.grammar_contract import BLOCK_RULE, ENTRY_CATEGORIES, KEY_RULE
 from access.config.parser_types import VALUE_TYPE_HANDLER_REGISTRY
+
+if TYPE_CHECKING:
+    from lark import Lark
+
+    from access.config.parser import ParseContext
 
 
 def update_node_value(rule_node: Tree, value: Any) -> None:
@@ -94,17 +108,144 @@ def find_rule_node(ref: list[Tree] | Tree) -> Tree:
             or a key rule node, as stored in ``_refs``.
 
     Returns:
-        Tree: The key rule node (``Tree`` whose ``.data`` starts with ``"key_"``).
+        Tree: The key rule node (``Tree`` whose ``.data`` is an entry category).
     """
     if isinstance(ref, list):
         return ref[0].parent  # type: ignore[attr-defined]
-    elif hasattr(ref, "data") and ref.data.startswith("key_"):
-        # Note that, although ``key_value`` and ``key_block`` contain ``key_`` in their
-        # names, the refs stored for these types are **children** of the key rule node,
-        # so their ``.data`` does not start with ``"key_"``.
+    elif hasattr(ref, "data") and ref.data in ENTRY_CATEGORIES:
+        # Only a ``key_null`` ref is the key rule node itself. For ``key_value`` and
+        # ``key_block`` the ref is a **child** of that node -- a value-type rule node or a
+        # ``block`` -- so its ``.data`` is never an entry category.
         return ref
     else:
         return ref.parent  # type: ignore[attr-defined]
+
+
+def entry_insertion_index(container: Tree) -> int:
+    """Return the index in ``container.children`` at which a new entry belongs.
+
+    One past the last child that holds an entry, so a new entry follows the last existing
+    assignment and comes *before* any trailing blank lines or the token closing a block.
+    Simply appending would put it after all of those, which for a block would place it
+    outside the block entirely.
+
+    The search is over the container's *direct* children even though the test for holding an
+    entry looks deeper: in a Fortran namelist one child can be a whole line carrying several
+    assignments, and a new entry has to go after that line rather than inside it.
+
+    **A run of comment lines starting at that position is stepped over**, up to the first
+    blank line, the next entry, or the end of the container. A comment there either carries
+    on from the trailing comment of the line above -- MOM6 documents most of its parameters
+    that way, beginning on the parameter's own line and continuing below it -- or heads what
+    follows. Either way the new entry belongs after the whole run, and stopping at a blank
+    line is what puts it *between* two comment blocks rather than inside the second one.
+
+    Args:
+        container (Tree): A container rule node: the parse tree root, or a ``"block"`` node.
+
+    Returns:
+        int: The insertion index; ``0`` when the container holds neither an entry nor a
+            leading comment.
+    """
+    index = 0
+    for position, child in enumerate(container.children):
+        if contains_entry(child):
+            index = position + 1
+    while index < len(container.children) and is_comment_line(container.children[index]):
+        index += 1
+    return index
+
+
+def parse_entry_nodes(lark: Lark, container: str, snippet: str) -> list[Tree | Token]:
+    """Parse the text of a new entry into nodes ready to be spliced into a container.
+
+    Parsing the synthesised text with the container rule as the start symbol is what makes
+    this safe: the nodes are the ones Lark would have produced for a file containing the
+    entry, so there is no need to replicate Lark's rule inlining, aliasing or terminal
+    renaming. Text that does not fit the grammar raises here, rather than producing a tree
+    that cannot be written back out.
+
+    Args:
+        lark (Lark): The compiled parser, which must have *container* among its start
+            symbols.
+        container (str): Name of the container rule.
+        snippet (str): The entry text.
+
+    Returns:
+        list[Tree | Token]: The nodes to splice, with ``.parent`` set throughout their
+            interiors.
+
+    Raises:
+        UnexpectedInput: If *snippet* is not valid in *container*.
+    """
+    parsed = lark.parse(snippet, start=container)
+    children = parsed.children if str(parsed.data) == container else [parsed]
+
+    # Drop nodes that matched no text. A rule able to derive the empty string produces one
+    # of these -- Fortran's rule for the text between namelists is one -- and splicing it
+    # would put a second empty node beside the container's own, which the grammar cannot
+    # derive and the reconstructor therefore refuses to write out. Only the top level is
+    # filtered: a block being created is legitimately an empty node, and it is nested rather
+    # than top-level.
+    nodes = [child for child in children if not (isinstance(child, Tree) and not child.children)]
+
+    for node in nodes:
+        if isinstance(node, Tree):
+            AddParent().visit(node)
+    return nodes
+
+
+def merge_adjacent_repetitions(container: Tree, info: GrammarInfo) -> None:
+    """Rejoin sibling nodes that became adjacent because an entry between them was removed.
+
+    A grammar can require entries and the text around them to alternate. Fortran's does:
+    the text between two namelists is one node, so removing a namelist leaves two such
+    nodes side by side, which the start rule cannot derive and the reconstructor therefore
+    refuses to write out. Merging them restores a shape the grammar accepts, and preserves
+    the text exactly, since the merged node holds both sets of children in order.
+
+    Only rules that are a plain repetition are merged, because only those accept the
+    combined children. Everything else is left alone.
+
+    Args:
+        container (Tree): The container rule node an entry was just removed from.
+        info (GrammarInfo): Views over the compiled grammar, used to identify the rules
+            that may be merged.
+    """
+    index = 1
+    while index < len(container.children):
+        previous, current = container.children[index - 1], container.children[index]
+        if (
+            isinstance(previous, Tree)
+            and isinstance(current, Tree)
+            and previous.data == current.data
+            and info.is_repetition_rule(str(current.data))
+        ):
+            for child in current.children:
+                if isinstance(child, Tree):
+                    child.parent = previous  # type: ignore[attr-defined]
+            previous.children.extend(current.children)
+            del container.children[index]
+        else:
+            index += 1
+
+
+def splice_entry_nodes(container: Tree, nodes: Sequence[Tree | Token], index: int) -> None:
+    """Insert freshly parsed entry nodes into a container.
+
+    Kept separate from ``parse_entry_nodes`` so a candidate entry can be validated in
+    full before the tree is touched: everything up to this call is reversible, and this
+    call is not.
+
+    Args:
+        container (Tree): The container rule node to insert into.
+        nodes (Sequence[Tree | Token]): Nodes from ``parse_entry_nodes``.
+        index (int): Position from ``entry_insertion_index``.
+    """
+    for node in nodes:
+        if isinstance(node, Tree):
+            node.parent = container  # type: ignore[attr-defined]
+    container.children[index:index] = nodes
 
 
 class AddParent(Visitor):
@@ -113,6 +254,12 @@ class AddParent(Visitor):
     ``Token`` children (terminal leaves) are skipped and only ``Tree`` children (rule nodes)
     receive the ``.parent`` attribute. This enables upward traversal of the parse tree,
     which Lark does not provide natively.
+
+    Only ever apply this to a freshly parsed tree. Visiting a tree that already carries the
+    attribute trips the assertion below, so a new entry is annotated on its own before
+    being spliced in, never by re-visiting the tree it is spliced into. Note also that
+    ``__delitem__`` does not clear ``.parent`` on the node it removes, and that the
+    assertion is a development aid which ``python -O`` strips.
     """
 
     def __default__(self, tree: Tree) -> None:
@@ -133,23 +280,25 @@ class ConfigToDict(Interpreter):
     automatically, so each callback handles an entire key rule subtree in one call.
 
     While processing blocks, instances of this class need extra information to instantiate
-    a ``Config``. We store that extra information as private class arguments.
+    a ``Config``. That information is carried by the parse context.
+
+    Note that visiting a tree builds a *new* ``Config`` for every block it contains, so
+    re-visiting a whole tree would leave any previously handed-out block ``Config`` detached
+    from the dict. Insertion therefore visits only the newly parsed subtree and merges the
+    result.
 
     Args:
-        reconstructor (Reconstructor): Lark reconstructor created from the parser.
-        case_sensitive_keys (bool): Are keys case-sensitive?
+        ctx (ParseContext): The compiled grammar and the per-parser settings.
     """
 
     _data: dict[str, Any]  # Config data accumulated while traversing the tree.
     _refs: dict[str, list[Tree] | Tree]  # References to rule nodes in the parse tree, keyed by config key.
     # For key_list: a list of value-type rule nodes (one per element).
     # For key_value / key_block / key_null: a single rule node.
-    _reconstructor: Reconstructor  # Lark reconstructor.
-    _case_sensitive_keys: bool  # Are keys case-sensitive?
+    _ctx: ParseContext  # Compiled grammar and per-parser settings.
 
-    def __init__(self, reconstructor: Reconstructor, case_sensitive_keys: bool) -> None:
-        self._reconstructor = reconstructor
-        self._case_sensitive_keys = case_sensitive_keys
+    def __init__(self, ctx: ParseContext) -> None:
+        self._ctx = ctx
         super().__init__()
 
     def visit(self, tree: Tree) -> tuple[dict[str, Any], dict[str, list[Tree] | Tree]]:
@@ -187,7 +336,7 @@ class ConfigToDict(Interpreter):
             TypeError: If no ``Token`` is found as the first child of the ``"key"`` rule
                 node.
         """
-        key_rules = [child.children for child in tree.children if child.data == "key"]
+        key_rules = [child.children for child in tree.children if child.data == KEY_RULE]
         if len(key_rules) == 0:
             raise ValueError("No 'key' rule nodes found among children of key rule node")
         else:
@@ -202,7 +351,7 @@ class ConfigToDict(Interpreter):
         else:
             raise TypeError("No key found.")
 
-        if self._case_sensitive_keys:
+        if self._ctx.case_sensitive_keys:
             return key
         else:
             return key.upper()
@@ -278,8 +427,8 @@ class ConfigToDict(Interpreter):
 
         key = self._get_key(tree)
         for child in tree.children:
-            if child.data == "block":
-                self._data[key] = ConfigImpl(child, self._reconstructor, self._case_sensitive_keys)
+            if child.data == BLOCK_RULE:
+                self._data[key] = ConfigImpl(child, self._ctx)
                 self._refs[key] = child
                 return
             else:
