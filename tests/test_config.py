@@ -11,7 +11,7 @@ from access.config.grammar_contract import ENTRY_CATEGORIES, VALUE_SLOT_COUNTS
 from access.config.parser import ConfigParser, _entry_category, _entry_matches
 from access.config.tree_edits import merge_adjacent_repetitions
 from access.config.tree_navigation import AddParent
-from access.config.tree_reader import ConfigToDict
+from access.config.tree_reader import EntryReader
 
 grammar = """
     // Made-up grammar taylored to test the different building blocks
@@ -753,29 +753,37 @@ def test_config_grammar_cache(parser):
 
 
 def test_config_entry_matches_rejections(parser):
-    """Test the checks that reject a candidate entry read back from its text"""
-    config = parser.parse("a=1")
+    """Test the checks that reject a candidate entry read back from its text.
+
+    The candidate is spelled as the text a synthesised entry would be, and then read back
+    through the ordinary path, so the references compared here are the ones insertion sees.
+    """
+
+    def read(text):
+        return parser.parse(text)._refs
 
     # A candidate that produced the wrong key, or more than one entry.
-    assert not _entry_matches({"other": 1}, "z", 1)
-    assert not _entry_matches({"z": 1, "other": 2}, "z", 1)
+    assert not _entry_matches(read("other=1"), "z", 1)
+    assert not _entry_matches(read("z=1 other=2"), "z", 1)
 
     # The value read back has to match in type as well as in value.
-    assert not _entry_matches({"z": 1}, "z", True)
-    assert not _entry_matches({"z": "1"}, "z", 1)
-    assert _entry_matches({"z": 1}, "z", 1)
+    assert not _entry_matches(read("z=1"), "z", True)
+    assert not _entry_matches(read("z='1'"), "z", 1)
+    assert not _entry_matches(read("z=2"), "z", 1)
+    assert _entry_matches(read("z=1"), "z", 1)
 
     # A valueless entry, and a list of the wrong length or element type.
-    assert not _entry_matches({"z": 1}, "z", None)
-    assert _entry_matches({"z": None}, "z", None)
-    assert not _entry_matches({"z": [1, 2]}, "z", [1, 2, 3])
-    assert not _entry_matches({"z": 1}, "z", [1, 2])
-    assert not _entry_matches({"z": [1, "2"]}, "z", [1, 2])
+    assert not _entry_matches(read("z=1"), "z", None)
+    assert _entry_matches(read("z="), "z", None)
+    assert not _entry_matches(read("z=1,2"), "z", [1, 2, 3])
+    assert not _entry_matches(read("z=1"), "z", [1, 2])
+    assert not _entry_matches(read("z=1,'2'"), "z", [1, 2])
+    assert _entry_matches(read("z=1,2"), "z", [1, 2])
 
     # A new block has to come back empty; its contents are added afterwards.
-    assert not _entry_matches({"z": 1}, "z", {"a": 1})
-    assert not _entry_matches({"z": config}, "z", {"a": 1})
-    assert _entry_matches({"z": parser.parse("blk< >")["blk"]}, "z", {"a": 1})
+    assert not _entry_matches(read("z=1"), "z", {"a": 1})
+    assert not _entry_matches(read("z<a:1>"), "z", {"a": 1})
+    assert _entry_matches(read("z< >"), "z", {"a": 1})
 
 
 class CaseParser(ConfigParser):
@@ -1059,7 +1067,7 @@ def test_config_merge_adjacent_repetitions(parser):
 
 
 def test_grammar_contract_has_an_interpreter_callback_per_category() -> None:
-    """Test that ``ConfigToDict`` implements every entry category the contract declares.
+    """Test that ``EntryReader`` implements every entry category the contract declares.
 
     This is the one duplication of the category names that cannot be removed: Lark's
     ``Interpreter`` dispatches on a node's rule name to a method of that name, so the
@@ -1068,7 +1076,7 @@ def test_grammar_contract_has_an_interpreter_callback_per_category() -> None:
     instead of by construction.
     """
     for category in ENTRY_CATEGORIES:
-        assert callable(getattr(ConfigToDict, category, None)), category
+        assert callable(getattr(EntryReader, category, None)), category
 
 
 @pytest.mark.parametrize(

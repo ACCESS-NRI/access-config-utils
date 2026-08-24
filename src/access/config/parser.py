@@ -41,8 +41,8 @@ from access.config.tree_edits import (
     splice_entry_nodes,
     update_node_value,
 )
-from access.config.tree_navigation import AddParent, entry_insertion_index
-from access.config.tree_reader import ConfigToDict, find_rule_node
+from access.config.tree_navigation import AddParent, entries_of, entry_insertion_index
+from access.config.tree_reader import EntryRef, entry_value, read_entries
 
 
 def _entry_category(value: Any) -> str:
@@ -80,33 +80,35 @@ def _same_value(stored: Any, requested: Any) -> bool:
     return type(stored) is type(requested) and bool(stored == requested)
 
 
-def _entry_matches(data: Mapping[str, Any], key: str, value: Any) -> bool:
+def _entry_matches(refs: Mapping[str, EntryRef], key: str, value: Any) -> bool:
     """Report whether a candidate entry, read back from its text, holds what was asked for.
 
     This is what makes candidate ranking a matter of style rather than of correctness: a
     candidate that parses but means something else fails here and the next one is tried.
 
     Args:
-        data (Mapping[str, Any]): The values read back from the candidate.
+        refs (Mapping[str, EntryRef]): The entries read back from the candidate.
         key (str): The normalised key expected.
         value (Any): The value requested.
 
     Returns:
         bool: True if the candidate is an exact match.
     """
-    if set(data) != {key}:
+    if set(refs) != {key}:
         return False
-    stored = data[key]
-    if isinstance(value, dict):
+    ref = refs[key]
+    if ref.category != _entry_category(value):
+        return False
+    if ref.category == KEY_BLOCK:
         # A new block starts empty; its contents are added afterwards.
-        return isinstance(stored, Config) and not stored
-    if value is None:
-        return stored is None
-    if isinstance(value, list):
-        return (
-            isinstance(stored, list)
-            and len(stored) == len(value)
-            and all(_same_value(item, wanted) for item, wanted in zip(stored, value, strict=True))
+        assert ref.block_node is not None
+        return not entries_of(ref.block_node)
+    if ref.category == KEY_NULL:
+        return True
+    stored = entry_value(ref)
+    if ref.category == KEY_LIST:
+        return len(stored) == len(value) and all(
+            _same_value(item, wanted) for item, wanted in zip(stored, value, strict=True)
         )
     return _same_value(stored, value)
 
@@ -212,11 +214,7 @@ class Config(dict):
     """
 
     _tree: Tree  # The full parse tree
-    _refs: dict[str, list[Tree] | Tree]
-    # References to rule nodes in the parse tree, keyed by config key:
-    #   scalar keys  → a value-type rule node (Tree whose .data is in the handler registry)
-    #   list keys    → a list of value-type rule nodes (one per element)
-    #   block keys   → the "block" rule node (Tree whose .data == "block")
+    _refs: dict[str, EntryRef]  # Where each key's entry lives in the parse tree
     _ctx: ParseContext  # Compiled grammar and per-parser settings
     # Whitespace for a new entry when this container holds none to copy from. Set on a block
     # created by an assignment, which is empty and so has no style of its own yet.
@@ -226,15 +224,27 @@ class Config(dict):
         self._tree = tree
         self._ctx = ctx
         self._fallback_style = EntryStyle()
-        interpreter = ConfigToDict(ctx)
-        data, self._refs = interpreter.visit(self._tree)
-        # Wrap list values in ConfigList so element-level updates keep the tree in sync
-        for key in data:
-            if isinstance(data[key], list):
-                refs = self._refs[key]
-                assert isinstance(refs, list)
-                data[key] = ConfigList(data[key], refs)
-        super().__init__(data)
+        self._refs = read_entries(tree, ctx)
+        super().__init__({key: self._wrap(ref) for key, ref in self._refs.items()})
+
+    def _wrap(self, ref: EntryRef) -> Any:
+        """Return the object standing for an entry in the dict.
+
+        A list and a block are both handed out as something that keeps the parse tree in
+        step: a ``ConfigList`` pairs each element with the node holding it, and a nested
+        ``Config`` does the same for the entries of a block.
+
+        Args:
+            ref (EntryRef): The entry to represent.
+
+        Returns:
+            Any: The scalar, a ``ConfigList``, a nested ``Config``, or ``None``.
+        """
+        if ref.category == KEY_BLOCK:
+            assert ref.block_node is not None
+            return Config(ref.block_node, self._ctx)
+        value = entry_value(ref)
+        return ConfigList(value, list(ref.value_nodes)) if ref.category == KEY_LIST else value
 
     # --- Tree update helpers (SRP) ---
 
@@ -252,16 +262,16 @@ class Config(dict):
             TypeError: If the existing value is not a list.
             ValueError: If the new list has a different length.
         """
-        refs = self._refs[key]
-        if not isinstance(refs, list):
+        nodes = self._refs[key].value_nodes
+        if self._refs[key].category != KEY_LIST:
             raise TypeError(f"Trying to change the type of variable '{key}'")
-        if len(refs) != len(value):
+        if len(nodes) != len(value):
             raise ValueError(f"Trying to change the length of list '{key}'")
 
-        for rule_node, v in zip(refs, value, strict=True):
+        for rule_node, v in zip(nodes, value, strict=True):
             update_node_value(rule_node, v)
 
-        return ConfigList(value, refs)
+        return ConfigList(value, list(nodes))
 
     # --- Key addition (SRP) ---
 
@@ -322,19 +332,15 @@ class Config(dict):
             # parse into a shape the interpreter rejects; either way the next one is tried.
             try:
                 nodes = parse_entry_nodes(ctx.lark, container_rule, snippet)
-                data, refs = ConfigToDict(ctx).visit(Tree(container.data, list(nodes)))
+                refs = read_entries(Tree(container.data, list(nodes)), ctx)
             except (UnexpectedInput, ValueError, TypeError):
                 continue
-            if not _entry_matches(data, key, value):
+            if not _entry_matches(refs, key, value):
                 continue
 
             splice_entry_nodes(container, nodes, index)
-            stored = data[key]
-            if isinstance(stored, list):
-                element_refs = refs[key]
-                assert isinstance(element_refs, list)
-                stored = ConfigList(stored, element_refs)
             self._refs[key] = refs[key]
+            stored = self._wrap(refs[key])
             dict.__setitem__(self, key, stored)
 
             if category == KEY_BLOCK:
@@ -427,9 +433,9 @@ class Config(dict):
 
         else:
             ref = self._refs[key]
-            if not isinstance(ref, Tree):
+            if ref.category != KEY_VALUE:
                 raise TypeError(f"Trying to change the type of variable '{key}'")
-            update_node_value(ref, value)
+            update_node_value(ref.value_nodes[0], value)
 
         super().__setitem__(key, value)
 
@@ -444,7 +450,7 @@ class Config(dict):
         # Remove the entry from the parse tree. Doing so can leave the nodes either side
         # of it adjacent, in a shape the grammar cannot derive, which remove_entry_node
         # repairs.
-        remove_entry_node(find_rule_node(self._refs[key]), self._ctx.info)
+        remove_entry_node(self._refs[key].entry_node, self._ctx.info)
 
         # Remove the rule node reference
         del self._refs[key]
