@@ -15,8 +15,6 @@ from lark import Lark, Tree
 
 from access.config.entry_synthesis import (
     EntryStyle,
-    contains_entry,
-    is_comment_line,
     iter_entry_snippets,
     probe_entry_style,
     probe_sibling_block_style,
@@ -24,7 +22,6 @@ from access.config.entry_synthesis import (
 )
 from access.config.entry_templates import (
     Fragment,
-    GrammarInfo,
     admitted_value_rules,
     compile_template,
     expand_value_slots,
@@ -32,6 +29,7 @@ from access.config.entry_templates import (
 )
 from access.config.fortran_nml import FortranNMLParser
 from access.config.grammar_contract import ENTRY_CATEGORIES
+from access.config.grammar_info import GrammarInfo
 from access.config.mom6_input import MOM6InputParser
 from access.config.nuopc_config import NUOPCParser
 
@@ -311,27 +309,6 @@ def test_probe_sibling_block_style_without_blocks(larks) -> None:
 
     assert probe_sibling_block_style(entries_only) == EntryStyle()
     assert probe_sibling_block_style(empty_block) == EntryStyle()
-
-
-def test_contains_entry(larks) -> None:
-    """Test the test for a container child holding an entry."""
-    tree = larks["mom6_input"].parse("A = 1\n\n", start="start")
-
-    kinds = [contains_entry(child) for child in tree.children]
-    assert kinds.count(True) == 1
-    # A blank line is a child, but not an entry.
-    assert False in kinds
-
-
-def test_is_comment_line(larks) -> None:
-    """Test the test for a container child holding nothing but a comment.
-
-    A comment-only line and a blank line are the same rule, and an entry's own trailing
-    comment must not make its line count as one.
-    """
-    tree = larks["mom6_input"].parse("A = 1 ! trailing\n! standalone\n\n", start="start")
-
-    assert [is_comment_line(child) for child in tree.children] == [False, True, False]
 
 
 def test_expand_value_slots() -> None:

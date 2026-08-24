@@ -52,7 +52,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 
-from lark import Token, Tree
+from lark import Tree
 
 from access.config.entry_templates import (
     EntryTemplate,
@@ -65,8 +65,6 @@ from access.config.entry_templates import (
 )
 from access.config.grammar_contract import (
     BLOCK_RULE,
-    COMMENT_RULES,
-    ENTRY_CATEGORIES,
     KEY_BLOCK,
     KEY_LIST,
     KEY_RULE,
@@ -79,6 +77,7 @@ from access.config.grammar_values import (
     VALUE_TYPE_HANDLER_REGISTRY,
     select_value_rule,
 )
+from access.config.tree_navigation import entries_of
 
 _MAX_SNIPPETS = 64
 """Cap on the candidate texts offered for a single insertion."""
@@ -313,65 +312,6 @@ def render(template: EntryTemplate, key: str, value_texts: Sequence[str], style:
 # --- Style probing ---
 
 
-def _entry_nodes(node: Tree) -> list[Tree]:
-    """Return the entry rule nodes at or below *node*, not entering a nested block."""
-    if node.data in ENTRY_CATEGORIES:
-        return [node]
-    found = []
-    for child in node.children:
-        if isinstance(child, Tree) and child.data != BLOCK_RULE:
-            found += _entry_nodes(child)
-    return found
-
-
-def contains_entry(node: Tree | Token) -> bool:
-    """Report whether a container child holds a configuration entry.
-
-    Args:
-        node (Tree | Token): A child of a container rule node.
-
-    Returns:
-        bool: True if an entry rule node is at or below *node*.
-    """
-    return isinstance(node, Tree) and bool(_entry_nodes(node))
-
-
-def _holds_comment(node: Tree) -> bool:
-    """Report whether a comment rule node sits at or below *node*."""
-    if node.data in COMMENT_RULES:
-        return True
-    return any(isinstance(child, Tree) and _holds_comment(child) for child in node.children)
-
-
-def is_comment_line(node: Tree | Token) -> bool:
-    """Report whether a container child is a line holding nothing but a comment.
-
-    A comment-only line and a blank line are the same rule in every grammar, told apart by
-    whether a comment node hangs below it. A child that holds an entry is never a comment
-    line, however many comments it carries: those belong to the entry's own line and travel
-    with it.
-
-    Args:
-        node (Tree | Token): A child of a container rule node.
-
-    Returns:
-        bool: True if *node* is a line holding only a comment.
-    """
-    return isinstance(node, Tree) and not contains_entry(node) and _holds_comment(node)
-
-
-def _entries_of(container: Tree) -> list[Tree]:
-    """Return the entry rule nodes held directly by *container*, in the order written.
-
-    Args:
-        container (Tree): A container rule node.
-
-    Returns:
-        list[Tree]: The entry nodes, not descending into a nested block.
-    """
-    return [entry for child in container.children if isinstance(child, Tree) for entry in _entry_nodes(child)]
-
-
 def probe_entry_style(container: Tree) -> EntryStyle:
     """Read the whitespace of the entries in *container*, to match when adding a new one.
 
@@ -403,7 +343,7 @@ def probe_entry_style(container: Tree) -> EntryStyle:
         A   =   1
         B   =   2
     """
-    entries = _entries_of(container)
+    entries = entries_of(container)
     if not entries:
         return EntryStyle()
 
@@ -450,7 +390,7 @@ def probe_sibling_block_style(container: Tree) -> EntryStyle:
           X = 2
         ::
     """
-    for entry in reversed(_entries_of(container)):
+    for entry in reversed(entries_of(container)):
         if entry.data != KEY_BLOCK:
             continue
         for child in entry.children:

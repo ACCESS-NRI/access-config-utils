@@ -35,16 +35,14 @@ from access.config.grammar_contract import (
     START_RULE,
 )
 from access.config.grammar_values import VALUE_RULE_PRIORITY, UnsupportedEntryError
-from access.config.parse_tree_ops import (
-    AddParent,
-    ConfigToDict,
-    entry_insertion_index,
-    find_rule_node,
-    merge_adjacent_repetitions,
+from access.config.tree_edits import (
     parse_entry_nodes,
+    remove_entry_node,
     splice_entry_nodes,
     update_node_value,
 )
+from access.config.tree_navigation import AddParent, entry_insertion_index
+from access.config.tree_reader import ConfigToDict, find_rule_node
 
 
 def _entry_category(value: Any) -> str:
@@ -238,19 +236,6 @@ class Config(dict):
                 data[key] = ConfigList(data[key], refs)
         super().__init__(data)
 
-    # --- Key normalisation (SRP) ---
-
-    def _normalize_key(self, key: str) -> str:
-        """Normalise a key according to the case-sensitivity setting.
-
-        Args:
-            key (str): The raw key.
-
-        Returns:
-            str: The normalised key.
-        """
-        return key if self._ctx.case_sensitive_keys else key.upper()
-
     # --- Tree update helpers (SRP) ---
 
     def _update_list_value(self, key: str, value: list[Any]) -> ConfigList:
@@ -392,7 +377,7 @@ class Config(dict):
 
         This method takes into account if keys are case-sensitive or not.
         """
-        return super().__getitem__(self._normalize_key(key))
+        return super().__getitem__(self._ctx.normalise_key(key))
 
     def __setitem__(self, key: str, value: Any) -> None:
         """Override method to set item from dict.
@@ -422,7 +407,7 @@ class Config(dict):
         """
 
         raw_key = key
-        key = self._normalize_key(key)
+        key = self._ctx.normalise_key(key)
 
         if key not in self:
             self._insert_new_key(key, raw_key, value)
@@ -451,19 +436,15 @@ class Config(dict):
     def __delitem__(self, key: str) -> None:
         """Override method to del item from dict."""
 
-        key = self._normalize_key(key)
+        key = self._ctx.normalise_key(key)
 
         # Remove item from the dict
         super().__delitem__(key)
 
-        # Remove the key rule node from the parse tree
-        key_rule_node = find_rule_node(self._refs[key])
-        container = key_rule_node.parent  # type: ignore[attr-defined]
-        container.children.remove(key_rule_node)
-
-        # Removing an entry can leave the nodes either side of it adjacent, in a shape the
-        # grammar cannot derive; rejoin them so the tree can still be written out.
-        merge_adjacent_repetitions(container, self._ctx.info)
+        # Remove the entry from the parse tree. Doing so can leave the nodes either side
+        # of it adjacent, in a shape the grammar cannot derive, which remove_entry_node
+        # repairs.
+        remove_entry_node(find_rule_node(self._refs[key]), self._ctx.info)
 
         # Remove the rule node reference
         del self._refs[key]
@@ -479,12 +460,12 @@ class Config(dict):
     def __contains__(self, key: object) -> bool:
         """Override method to test key membership, honouring case-insensitive keys."""
         if isinstance(key, str):
-            key = self._normalize_key(key)
+            key = self._ctx.normalise_key(key)
         return super().__contains__(key)
 
     def get(self, key: str, default: Any = None) -> Any:
         """Override method to get an item with a default, honouring key case."""
-        return super().get(self._normalize_key(key), default)
+        return super().get(self._ctx.normalise_key(key), default)
 
     def update(self, other: Any = (), /, **kwargs: Any) -> None:
         """Override method to assign several items, keeping the parse tree in sync."""
