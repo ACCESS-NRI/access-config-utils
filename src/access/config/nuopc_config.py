@@ -78,6 +78,9 @@ case in Fortran namelists. The format used to store arrays of values is also not
 as in Fortran namelists.
 """
 
+from collections.abc import Mapping
+
+from access.config.grammar_contract import BLOCK_RULE, KEY_LIST, KEY_VALUE
 from access.config.parser import ConfigParser
 
 
@@ -87,6 +90,26 @@ class NUOPCParser(ConfigParser):
     @property
     def case_sensitive_keys(self) -> bool:
         return True
+
+    @property
+    def entry_templates(self) -> Mapping[tuple[str, str], str]:
+        """Templates giving the body of a brand-new table its conventional indentation.
+
+        Nothing in the grammar requires a table entry to be indented -- ``block`` accepts
+        ``ws*`` -- so the text derived from the grammar alone puts the first entry of a new
+        table in column 0. Every table in the ESMF documentation and in a real
+        ``nuopc.runconfig`` indents its body, which is what these templates restore.
+
+        They apply only to a table that has no entry and no sibling table to copy from. Once
+        anything is there to imitate, its indentation wins over the single space here.
+
+        Returns:
+            Mapping[tuple[str, str], str]: Templates for a table entry.
+        """
+        return {
+            (BLOCK_RULE, KEY_VALUE): " {key} = {value}\n",
+            (BLOCK_RULE, KEY_LIST): " {key} = {value}:{value}\n",
+        }
 
     @property
     def grammar(self) -> str:

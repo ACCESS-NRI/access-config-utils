@@ -363,3 +363,46 @@ def test_nuopc_config_addition_multi_component_path(parser):
     assert config["Z"] == Path("bar/baz")
     assert str(config) == "A: 1\nZ: bar/baz\n"
     assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_nuopc_config_new_table_body_is_indented(parser):
+    """Test that a brand-new table indents its body, as the format conventionally does.
+
+    Nothing in the grammar asks for this -- ``block`` accepts ``ws*`` -- so the text derived
+    from the grammar alone would open the body in column 0. The parser declares a template
+    to supply the convention for the case where no existing table can demonstrate it.
+    """
+    config = parser.parse("A: 1\n")
+
+    config["tab"] = {"x": 2, "y": [3, 4]}
+
+    assert str(config) == "A: 1\ntab::\n x = 2\n y = 3:4\n::\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_nuopc_config_new_table_copies_a_sibling_indent(parser):
+    """Test that a sibling table's indentation beats the declared template.
+
+    The template says one space, but matching the file wins: a declared convention only
+    decides the case where there is nothing to copy.
+    """
+    config = parser.parse("old::\n   p = 1\n::\n")
+
+    config["new"] = {"x": 2}
+
+    assert str(config) == "old::\n   p = 1\n::\nnew::\n   x = 2\n::\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_nuopc_config_added_key_matches_its_own_table(parser):
+    """Test that a key added to an existing table is spaced like the entries beside it.
+
+    The regression the template must not cause: an entry one line below a three-space
+    neighbour has to be indented three spaces too, not the one the template declares.
+    """
+    config = parser.parse("old::\n   p = 1\n::\n")
+
+    config["old"]["q"] = 9
+
+    assert str(config) == "old::\n   p = 1\n   q = 9\n::\n"
+    assert dict(parser.parse(str(config))) == dict(config)

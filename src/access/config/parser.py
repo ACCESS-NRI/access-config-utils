@@ -23,13 +23,19 @@ from lark.exceptions import UnexpectedInput
 from lark.reconstruct import Reconstructor
 
 from access.config.entry_synthesis import (
-    BLOCK_RULE,
     EntryStyle,
-    GrammarInfo,
-    admitted_value_rules,
     iter_entry_snippets,
     probe_entry_style,
     probe_sibling_block_style,
+)
+from access.config.entry_templates import GrammarInfo, admitted_value_rules
+from access.config.grammar_contract import (
+    BLOCK_RULE,
+    KEY_BLOCK,
+    KEY_LIST,
+    KEY_NULL,
+    KEY_VALUE,
+    START_RULE,
 )
 from access.config.parse_tree_ops import (
     AddParent,
@@ -42,9 +48,6 @@ from access.config.parse_tree_ops import (
     update_node_value,
 )
 from access.config.parser_types import VALUE_RULE_PRIORITY, UnsupportedEntryError
-
-START_RULE = "start"
-"""Name of the top-level rule, fixed by the grammar contract."""
 
 
 @dataclass(frozen=True)
@@ -74,7 +77,8 @@ class ParseContext:
         grammar (CompiledGrammar): The compiled grammar and its derived artefacts.
         case_sensitive_keys (bool): Are the dict keys case-sensitive?
         entry_templates (Mapping[tuple[str, str], str]): Per-parser overrides for the
-            text of a new entry, keyed by container rule name and entry category.
+            text of a new entry, keyed by container rule name and entry category. Used
+            only where no neighbouring entry can supply a style.
         value_rule_priority (tuple[str, ...]): Order in which value-type rules are tried for
             a new value.
     """
@@ -128,12 +132,12 @@ def _entry_category(value: Any) -> str:
         str: One of the entry category names.
     """
     if isinstance(value, dict):
-        return "key_block"
+        return KEY_BLOCK
     if value is None:
-        return "key_null"
+        return KEY_NULL
     if isinstance(value, list):
-        return "key_list"
-    return "key_value"
+        return KEY_LIST
+    return KEY_VALUE
 
 
 def _same_value(stored: Any, requested: Any) -> bool:
@@ -380,7 +384,7 @@ class Config(dict):
             raise ValueError(f"Not a valid configuration key: {raw_key!r}")
 
         category = _entry_category(value)
-        if category == "key_list" and len(value) < 2:
+        if category == KEY_LIST and len(value) < 2:
             # Every supported format needs at least two values to be a list rather than a
             # scalar, and writing a scalar would put the wrong type in the dict.
             raise ValueError(f"A new list needs at least two elements: '{key}'")
@@ -423,7 +427,7 @@ class Config(dict):
             self._refs[key] = refs[key]
             dict.__setitem__(self, key, stored)
 
-            if category == "key_block":
+            if category == KEY_BLOCK:
                 # The new block is empty, so nothing in it can say how its contents should
                 # be laid out. Hand it the style of the nearest sibling block, falling back
                 # to this container's own, so that a block nested in a new block inherits it
@@ -686,10 +690,15 @@ class ConfigParser(ABC):
         markers, where ``{ws}`` marks whitespace that should follow the style of a
         neighbouring entry.
 
-        A template is a preference, not a replacement: it is tried first, and synthesis
-        falls back to the grammar-derived candidates if it no longer fits the grammar.
-        Override this only when the derived text is not what the format conventionally looks
-        like.
+        A template applies **only when there is no neighbouring entry to copy a style
+        from**. Matching the entries already in the file always wins, because a minimal diff
+        matters more than any declared convention; what a template decides is how the very
+        first entry of its kind should look. Override this when a format's conventional
+        layout is not what the grammar-derived text happens to be -- an indented block body,
+        say, which nothing in the grammar implies.
+
+        Even then it is a preference, not a replacement: synthesis falls back to the
+        grammar-derived candidates if the template no longer fits the grammar.
 
         Returns:
             Mapping[tuple[str, str], str]: The templates; empty by default.

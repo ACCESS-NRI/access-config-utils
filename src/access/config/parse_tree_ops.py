@@ -56,7 +56,9 @@ from typing import TYPE_CHECKING, Any
 from lark import Token, Tree, Visitor
 from lark.visitors import Interpreter
 
-from access.config.entry_synthesis import GrammarInfo, contains_entry, is_comment_line
+from access.config.entry_synthesis import contains_entry, is_comment_line
+from access.config.entry_templates import GrammarInfo
+from access.config.grammar_contract import BLOCK_RULE, ENTRY_CATEGORIES, KEY_RULE
 from access.config.parser_types import VALUE_TYPE_HANDLER_REGISTRY
 
 if TYPE_CHECKING:
@@ -106,14 +108,14 @@ def find_rule_node(ref: list[Tree] | Tree) -> Tree:
             or a key rule node, as stored in ``_refs``.
 
     Returns:
-        Tree: The key rule node (``Tree`` whose ``.data`` starts with ``"key_"``).
+        Tree: The key rule node (``Tree`` whose ``.data`` is an entry category).
     """
     if isinstance(ref, list):
         return ref[0].parent  # type: ignore[attr-defined]
-    elif hasattr(ref, "data") and ref.data.startswith("key_"):
-        # Note that, although ``key_value`` and ``key_block`` contain ``key_`` in their
-        # names, the refs stored for these types are **children** of the key rule node,
-        # so their ``.data`` does not start with ``"key_"``.
+    elif hasattr(ref, "data") and ref.data in ENTRY_CATEGORIES:
+        # Only a ``key_null`` ref is the key rule node itself. For ``key_value`` and
+        # ``key_block`` the ref is a **child** of that node -- a value-type rule node or a
+        # ``block`` -- so its ``.data`` is never an entry category.
         return ref
     else:
         return ref.parent  # type: ignore[attr-defined]
@@ -334,7 +336,7 @@ class ConfigToDict(Interpreter):
             TypeError: If no ``Token`` is found as the first child of the ``"key"`` rule
                 node.
         """
-        key_rules = [child.children for child in tree.children if child.data == "key"]
+        key_rules = [child.children for child in tree.children if child.data == KEY_RULE]
         if len(key_rules) == 0:
             raise ValueError("No 'key' rule nodes found among children of key rule node")
         else:
@@ -425,7 +427,7 @@ class ConfigToDict(Interpreter):
 
         key = self._get_key(tree)
         for child in tree.children:
-            if child.data == "block":
+            if child.data == BLOCK_RULE:
                 self._data[key] = ConfigImpl(child, self._ctx)
                 self._refs[key] = child
                 return

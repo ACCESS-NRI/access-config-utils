@@ -14,22 +14,24 @@ import pytest
 from lark import Lark, Tree
 
 from access.config.entry_synthesis import (
-    ENTRY_CATEGORIES,
     EntryStyle,
-    Fragment,
-    GrammarInfo,
-    admitted_value_rules,
-    compile_template,
     contains_entry,
-    expand_value_slots,
-    grammar_templates,
     is_comment_line,
     iter_entry_snippets,
     probe_entry_style,
     probe_sibling_block_style,
     render,
 )
+from access.config.entry_templates import (
+    Fragment,
+    GrammarInfo,
+    admitted_value_rules,
+    compile_template,
+    expand_value_slots,
+    grammar_templates,
+)
 from access.config.fortran_nml import FortranNMLParser
+from access.config.grammar_contract import ENTRY_CATEGORIES
 from access.config.mom6_input import MOM6InputParser
 from access.config.nuopc_config import NUOPCParser
 

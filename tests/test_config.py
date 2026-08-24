@@ -6,8 +6,9 @@ from pathlib import Path
 import pytest
 from lark import Tree
 
-from access.config.parse_tree_ops import AddParent, merge_adjacent_repetitions
-from access.config.parser import ConfigParser, _entry_matches, clear_grammar_cache
+from access.config.grammar_contract import ENTRY_CATEGORIES, VALUE_SLOT_COUNTS
+from access.config.parse_tree_ops import AddParent, ConfigToDict, merge_adjacent_repetitions
+from access.config.parser import ConfigParser, _entry_category, _entry_matches, clear_grammar_cache
 
 grammar = """
     // Made-up grammar taylored to test the different building blocks
@@ -858,7 +859,10 @@ class TemplateParser(ConfigParser):
 
     @property
     def entry_templates(self):
-        # Deliberately different from what would be derived: no spaces around the separator.
+        # This grammar discards whitespace with %ignore, so a template can only spell the
+        # same text the grammar itself derives. What these pin is that the override is
+        # compiled and used at all; that a template can *change* the text is covered
+        # against a real format, in test_nuopc_config.py.
         return {("start", "key_value"): "{key}={value}", ("block", "key_value"): "{key}:{value}"}
 
     @property
@@ -879,6 +883,20 @@ def test_config_entry_template_override():
     config = parser.parse("blk<a:2>")
     config["blk"]["b"] = 3
     _check_added(parser, config, "blk<a:2 b:3>")
+
+
+def test_config_entry_template_used_without_a_donor():
+    """Test that the declared template is compiled and used for an entry with no neighbour.
+
+    A template applies only where nothing nearby can supply a style, so an empty block is
+    the case that reaches it: the block holds no entry to copy from, and no sibling block
+    either.
+    """
+    parser = TemplateParser()
+
+    config = parser.parse("a=1 blk<>")
+    config["blk"]["b"] = 3
+    _check_added(parser, config, "a=1 blk<b:3>")
 
 
 def test_config_add_value_rule_fallback():
@@ -907,16 +925,18 @@ class BrokenTemplateParser(TemplateParser):
 
     @property
     def entry_templates(self):
-        return {("start", "key_value"): "{key} <<>> {value}"}
+        # Declared for the block, because that is the container an empty one gives us: a
+        # template is only ever tried where there is no neighbouring entry to copy from.
+        return {("block", "key_value"): "{key} <<>> {value}"}
 
 
 def test_config_entry_template_fallback():
     """Test that an override no longer fitting the grammar falls back to the derived text"""
     parser = BrokenTemplateParser()
 
-    config = parser.parse("a=1")
-    config["z"] = 3
-    _check_added(parser, config, "a=1 z=3")
+    config = parser.parse("a=1 blk<>")
+    config["blk"]["b"] = 3
+    _check_added(parser, config, "a=1 blk<b:3>")
 
 
 class BlocklessParser(ConfigParser):
@@ -1033,3 +1053,27 @@ def test_config_merge_adjacent_repetitions(parser):
     assert container.children[0].children[1].parent is left
     # A rule that is not a repetition is left alone.
     assert container.children[1].data == "equal"
+
+
+def test_grammar_contract_has_an_interpreter_callback_per_category() -> None:
+    """Test that ``ConfigToDict`` implements every entry category the contract declares.
+
+    This is the one duplication of the category names that cannot be removed: Lark's
+    ``Interpreter`` dispatches on a node's rule name to a method of that name, so the
+    callbacks have to be spelled out. Adding a category without its callback would leave
+    entries of that category silently unvisited, so the two lists are pinned together here
+    instead of by construction.
+    """
+    for category in ENTRY_CATEGORIES:
+        assert callable(getattr(ConfigToDict, category, None)), category
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [({}, "key_block"), (None, "key_null"), ([1, 2], "key_list"), (1, "key_value"), ("s", "key_value")],
+)
+def test_entry_category_is_a_declared_category(value, expected) -> None:
+    """Test that the category chosen for a value is one the contract declares."""
+    assert _entry_category(value) == expected
+    assert _entry_category(value) in ENTRY_CATEGORIES
+    assert _entry_category(value) in VALUE_SLOT_COUNTS
