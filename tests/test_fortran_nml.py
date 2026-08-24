@@ -4,9 +4,11 @@
 from pathlib import Path
 
 import pytest
+from conftest import assert_canonical_entry, canonical_rows
 from lark.exceptions import UnexpectedEOF
 
 from access.config.fortran_nml import FortranNMLParser
+from access.config.grammar_compiled import compile_grammar
 
 
 @pytest.fixture(scope="module")
@@ -388,3 +390,13 @@ def test_fortran_nml_delete_namelist(parser, fortran_nml_file):
     del config["LIST_A"]
     del config["LIST_C"]
     assert str(config) == ""
+
+
+@pytest.mark.parametrize(("container", "category", "expected"), canonical_rows("fortran_nml"))
+def test_canonical_entry_text(parser, container, category, expected) -> None:
+    """Test the text this format writes for a new entry with no neighbour to copy from.
+
+    Byte-exact, and re-parsed in the container it was generated for. These rows are the
+    statement of what this grammar can express and how it spells it.
+    """
+    assert_canonical_entry(compile_grammar(parser.grammar), container, category, expected)

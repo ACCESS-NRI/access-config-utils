@@ -1,85 +1,77 @@
 # Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
 # SPDX-License-Identifier: Apache-2.0
 
+"""Tests for the ``ConfigParser`` base class, and the integration suite behind it.
+
+This is the one test module that does **not** isolate its subject. Every other parser module
+is exercised through fakes standing in for its neighbours; here the whole stack runs for
+real, driven the way a caller drives it -- ``parse()``, then the mapping interface -- since
+that is what ``ConfigParser`` is the entry point to, and because round-trip fidelity is a
+property of the stack rather than of any module in it. Together with the four format modules
+these are the tests that would catch a break the isolated ones cannot see.
+
+Everything runs against ``TOY_GRAMMAR``, which is unlike any real format on purpose: it
+admits every value type at once and every entry category, so one grammar reaches paths that
+would otherwise need three.
+"""
+
 from pathlib import Path
 
 import pytest
-from lark import Tree
+from conftest import TOY_GRAMMAR
 
-from access.config.grammar_contract import ENTRY_CATEGORIES, VALUE_SLOT_COUNTS
-from access.config.parse_tree_ops import AddParent, ConfigToDict, merge_adjacent_repetitions
-from access.config.parser import ConfigParser, _entry_category, _entry_matches, clear_grammar_cache
-
-grammar = """
-    // Made-up grammar taylored to test the different building blocks
-    // of the configuration parsers.
-    start: (key_block|outer_key_value|outer_key_list|key_null|wrong_key_value1|wrong_key_value2|wrong_key_value3)+
-
-    key_null: key equal
-    outer_key_value: key equal value -> key_value
-    outer_key_list: key equal value ("," value)* -> key_list
-    equal: "="
-    key_block: key "<" block ">"
-    block: (block_key_value| block_key_list)*
-    block_key_value: key colon value -> key_value
-    block_key_list: key colon value ("|" value)* -> key_list
-    colon: ":"
- 
-    // This rule will trip the interpreter because there is more than one value
-    // (the alias should therefore be key_list)
-    ?wrong_key_value1:  key equal value (":" value)* -> key_value
-
-    // This rule will trip the interpreter because there is no value
-    // (the alias should therefore be key_null)
-    ?wrong_key_value2:  key colon equal -> key_value
-
-    // This rule will trip the interpreter because there is no "key" child node
-    ?wrong_key_value3:  "!" value -> key_value
-
-    ?value: logical
-         | bool
-         | integer
-         | float
-         | double
-         | complex
-         | double_complex
-         | identifier
-         | string
-         | path
-
-    %import config.key
-    %import config.logical
-    %import config.bool
-    %import config.integer
-    %import config.float
-    %import config.double
-    %import config.complex
-    %import config.double_complex
-    %import config.identifier
-    %import config.string
-    %import config.path
-
-    %import common.WS
-    %ignore WS
-"""
+from access.config.grammar_compiled import clear_grammar_cache
+from access.config.grammar_values import VALUE_RULE_PRIORITY
+from access.config.parser import ConfigParser
 
 
-class Parser(ConfigParser):
-    """Parser using the grammar defined above, with case sensitive keys."""
+def test_parser_is_abstract() -> None:
+    """Test that the base class cannot be instantiated without a grammar.
 
-    @property
-    def case_sensitive_keys(self) -> bool:
-        return True
+    It declares two abstract properties, so a subclass that forgets either is refused at
+    construction rather than failing somewhere inside ``parse``.
+    """
+    with pytest.raises(TypeError):
+        ConfigParser()
 
-    @property
-    def grammar(self) -> str:
-        return grammar
+    class NoGrammar(ConfigParser):
+        @property
+        def case_sensitive_keys(self) -> bool:
+            return True
+
+    with pytest.raises(TypeError):
+        NoGrammar()
 
 
-@pytest.fixture(scope="module")
-def parser():
-    """Fixture instantiating the parser"""
-    return Parser()
+def test_parser_declares_defaults(parser) -> None:
+    """Test the two properties a format only overrides when it has to.
+
+    Both defaults are what makes a minimal parser possible: a subclass supplies a grammar
+    and a case-sensitivity flag and nothing else, and entry synthesis derives the rest from
+    the grammar.
+    """
+    assert parser.entry_templates == {}
+    assert parser.value_rule_priority is VALUE_RULE_PRIORITY
+
+    # Whatever the subclass declares is what reaches the parsed configuration.
+    ctx = parser.parse("a=1")._store.ctx
+    assert ctx.case_sensitive_keys is True
+    assert ctx.entry_templates == {}
+    assert ctx.value_rule_priority == tuple(VALUE_RULE_PRIORITY)
+
+
+def test_parser_appends_a_trailing_newline(parser) -> None:
+    """Test that a file with no final newline parses just like one that has it.
+
+    ``parse`` appends a newline so that no grammar has to spell out the end-of-file case,
+    and ``__str__`` strips one back off. Whether the newline itself survives is the
+    grammar's business: this one discards whitespace with ``%ignore``, so it does not, and
+    the format modules are where the byte-exact round trip is pinned.
+    """
+    without, with_newline = parser.parse("a=1"), parser.parse("a=1\n")
+
+    assert dict(without) == dict(with_newline) == {"a": 1}
+    assert str(without) == str(with_newline) == "a=1"
 
 
 def test_config_type_logical(parser):
@@ -665,8 +657,8 @@ def test_config_add_no_node_reuse(parser):
 
     config["p"] = config["x"]
     config["q"] = config["y"]
-    assert config._refs["p"] is not config._refs["x"]
-    assert config._refs["q"] is not config._refs["y"]
+    assert config._store.refs["p"] is not config._store.refs["x"]
+    assert config._store.refs["q"] is not config._store.refs["y"]
 
     config["p"] = 9
     config["q"][0] = 9
@@ -743,53 +735,10 @@ def test_config_grammar_cache(parser):
     first = parser.parse("a=1")
     second = parser.parse("a=1")
     # Compiling costs far more than parsing, so the result is shared.
-    assert first._ctx.grammar is second._ctx.grammar
+    assert first._store.ctx.grammar is second._store.ctx.grammar
 
     clear_grammar_cache()
-    assert parser.parse("a=1")._ctx.grammar is not first._ctx.grammar
-
-
-def test_config_entry_matches_rejections(parser):
-    """Test the checks that reject a candidate entry read back from its text"""
-    config = parser.parse("a=1")
-
-    # A candidate that produced the wrong key, or more than one entry.
-    assert not _entry_matches({"other": 1}, "z", 1)
-    assert not _entry_matches({"z": 1, "other": 2}, "z", 1)
-
-    # The value read back has to match in type as well as in value.
-    assert not _entry_matches({"z": 1}, "z", True)
-    assert not _entry_matches({"z": "1"}, "z", 1)
-    assert _entry_matches({"z": 1}, "z", 1)
-
-    # A valueless entry, and a list of the wrong length or element type.
-    assert not _entry_matches({"z": 1}, "z", None)
-    assert _entry_matches({"z": None}, "z", None)
-    assert not _entry_matches({"z": [1, 2]}, "z", [1, 2, 3])
-    assert not _entry_matches({"z": 1}, "z", [1, 2])
-    assert not _entry_matches({"z": [1, "2"]}, "z", [1, 2])
-
-    # A new block has to come back empty; its contents are added afterwards.
-    assert not _entry_matches({"z": 1}, "z", {"a": 1})
-    assert not _entry_matches({"z": config}, "z", {"a": 1})
-    assert _entry_matches({"z": parser.parse("blk< >")["blk"]}, "z", {"a": 1})
-
-
-class CaseParser(ConfigParser):
-    """Parser using the grammar defined above, with case insensitive keys."""
-
-    @property
-    def case_sensitive_keys(self) -> bool:
-        return False
-
-    @property
-    def grammar(self) -> str:
-        return grammar
-
-
-@pytest.fixture(scope="module")
-def case_parser():
-    return CaseParser()
+    assert parser.parse("a=1")._store.ctx.grammar is not first._store.ctx.grammar
 
 
 def test_config_case_insensitive(case_parser):
@@ -855,7 +804,7 @@ class TemplateParser(ConfigParser):
 
     @property
     def grammar(self) -> str:
-        return grammar
+        return TOY_GRAMMAR
 
     @property
     def entry_templates(self):
@@ -1017,63 +966,3 @@ def test_config_non_finite_floats(parser):
 
     # None of the refused assignments changed the file.
     assert str(config) == "a=1.0 b=(1.0, 2.0)c=1.0d0"
-
-
-def test_config_is_repetition_rule(parser):
-    """Test the shape test that decides which rules may be merged after a deletion"""
-    info = parser.parse("a=1")._ctx.info
-
-    # A rule that is a plain repetition of something.
-    assert info.is_repetition_rule("block")
-    # A rule whose alternative is a single terminal, and one with a longer expansion.
-    assert not info.is_repetition_rule("equal")
-    assert not info.is_repetition_rule("key_value")
-    # A name that is not a rule at all.
-    assert not info.is_repetition_rule("not_a_rule")
-
-
-def test_config_merge_adjacent_repetitions(parser):
-    """Test that merging rejoins the children of two adjacent nodes and re-parents them.
-
-    Exercised here with a repetition rule whose children are rule nodes rather than tokens,
-    so that the merged children end up owned by the node that survives.
-    """
-    config = parser.parse("a=1")
-    info = config._ctx.info
-
-    left, right = Tree("block", [Tree("x", [])]), Tree("block", [Tree("y", [])])
-    container = Tree("start", [left, right, Tree("equal", [])])
-    AddParent().visit(container)
-
-    merge_adjacent_repetitions(container, info)
-
-    assert len(container.children) == 2
-    assert [child.data for child in container.children[0].children] == ["x", "y"]
-    # The moved child now belongs to the node that absorbed it.
-    assert container.children[0].children[1].parent is left
-    # A rule that is not a repetition is left alone.
-    assert container.children[1].data == "equal"
-
-
-def test_grammar_contract_has_an_interpreter_callback_per_category() -> None:
-    """Test that ``ConfigToDict`` implements every entry category the contract declares.
-
-    This is the one duplication of the category names that cannot be removed: Lark's
-    ``Interpreter`` dispatches on a node's rule name to a method of that name, so the
-    callbacks have to be spelled out. Adding a category without its callback would leave
-    entries of that category silently unvisited, so the two lists are pinned together here
-    instead of by construction.
-    """
-    for category in ENTRY_CATEGORIES:
-        assert callable(getattr(ConfigToDict, category, None)), category
-
-
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [({}, "key_block"), (None, "key_null"), ([1, 2], "key_list"), (1, "key_value"), ("s", "key_value")],
-)
-def test_entry_category_is_a_declared_category(value, expected) -> None:
-    """Test that the category chosen for a value is one the contract declares."""
-    assert _entry_category(value) == expected
-    assert _entry_category(value) in ENTRY_CATEGORIES
-    assert _entry_category(value) in VALUE_SLOT_COUNTS

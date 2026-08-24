@@ -4,8 +4,10 @@
 from pathlib import Path
 
 import pytest
+from conftest import assert_canonical_entry, canonical_rows
 from lark.exceptions import UnexpectedCharacters, UnexpectedEOF
 
+from access.config.grammar_compiled import compile_grammar
 from access.config.nuopc_config import NUOPCParser
 
 
@@ -406,3 +408,13 @@ def test_nuopc_config_added_key_matches_its_own_table(parser):
 
     assert str(config) == "old::\n   p = 1\n   q = 9\n::\n"
     assert dict(parser.parse(str(config))) == dict(config)
+
+
+@pytest.mark.parametrize(("container", "category", "expected"), canonical_rows("nuopc_config"))
+def test_canonical_entry_text(parser, container, category, expected) -> None:
+    """Test the text this format writes for a new entry with no neighbour to copy from.
+
+    Byte-exact, and re-parsed in the container it was generated for. These rows are the
+    statement of what this grammar can express and how it spells it.
+    """
+    assert_canonical_entry(compile_grammar(parser.grammar), container, category, expected)

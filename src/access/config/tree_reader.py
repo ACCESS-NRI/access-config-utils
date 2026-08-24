@@ -1,0 +1,234 @@
+# Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Reading a parse tree into the entries it holds, and the nodes those entries live in.
+
+This is the one place that turns a tree into data. It walks a container rule node and, for
+every entry directly below it, records an ``EntryRef``: which category the entry is, the
+node the whole entry hangs from, and the nodes holding its values. Everything an edit needs
+to find later is in there, so nothing downstream has to search the tree again.
+
+The reader deliberately stops at data. It does **not** build the dict that will hold the
+values -- ``entry_value`` turns a reference into a Python value, and wrapping a list or a
+block in something dict-like is the job of the layer that owns the dict. Keeping that out of
+here is what lets the tree layer sit below the data layer rather than beside it.
+
+Every rule name looked for here -- the four entry categories, ``key``, ``block`` -- comes
+from ``grammar_contract``, which states in full what a grammar has to provide and why. The
+shapes relied on follow from it: a key rule node has a ``key`` child whose first child is
+the ``Token`` holding the key text, and a value-type rule node has a single ``Token`` child
+holding the value.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+from lark import Token, Tree
+from lark.visitors import Interpreter
+
+from access.config.grammar_contract import BLOCK_RULE, KEY_BLOCK, KEY_LIST, KEY_NULL, KEY_RULE, KEY_VALUE
+from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
+
+if TYPE_CHECKING:
+    from access.config.grammar_compiled import ParseContext
+
+
+@dataclass(frozen=True)
+class EntryRef:
+    """Where in the parse tree one key's entry lives.
+
+    An entry is edited by mutating the nodes named here, so a reference has to survive as
+    long as the configuration does. It stays valid across edits to *other* keys, because
+    inserting or removing an entry never rebuilds the nodes of its neighbours.
+
+    Args:
+        category (str): One of ``ENTRY_CATEGORIES``, saying which shape this entry has.
+        entry_node (Tree): The node the whole entry hangs from, whose ``.data`` is
+            *category*. Removing the entry means unlinking this node.
+        value_nodes (tuple[Tree, ...]): The value-type rule nodes holding the entry's
+            values, in order. One for ``key_value``, one per element for ``key_list``,
+            none for ``key_block`` and ``key_null``.
+        block_node (Tree | None): The ``block`` node holding the entry's contents, for a
+            ``key_block``; ``None`` otherwise.
+    """
+
+    category: str
+    entry_node: Tree
+    value_nodes: tuple[Tree, ...] = ()
+    block_node: Tree | None = None
+
+
+def entry_value(ref: EntryRef) -> Any:
+    """Return the Python value an entry holds.
+
+    A ``key_block`` has no value of its own: its contents are the entries of ``block_node``,
+    which the caller reads separately and wraps in whatever it uses for a nested
+    configuration. Ask this only about the other three categories.
+
+    Args:
+        ref (EntryRef): The entry to read, of any category but ``key_block``.
+
+    Returns:
+        Any: The scalar, the list of values, or ``None`` for a valueless entry.
+    """
+    if ref.category == KEY_NULL:
+        return None
+    values = [_token_value(node) for node in ref.value_nodes]
+    return values if ref.category == KEY_LIST else values[0]
+
+
+def _token_value(node: Tree) -> Any:
+    """Convert a value-type rule node into the Python value its ``Token`` spells."""
+    return VALUE_TYPE_HANDLER_REGISTRY[str(node.data)].from_token(str(node.children[0]))
+
+
+def read_entries(container: Tree, ctx: ParseContext) -> dict[str, EntryRef]:
+    """Read the entries a container holds, in the order they are written.
+
+    Args:
+        container (Tree): The container rule node to read: the parse tree root, a ``block``
+            node, or a throwaway node wrapping candidate entry text.
+        ctx (ParseContext): Supplies the key normalisation this format uses.
+
+    Returns:
+        dict[str, EntryRef]: One reference per key, keyed by the normalised key name.
+
+    Raises:
+        ValueError: If an entry node holds no ``key`` rule, or the wrong number of values
+            for its category.
+        TypeError: If a ``key`` rule node does not begin with a ``Token``.
+    """
+    return EntryReader(ctx).read(container)
+
+
+class EntryReader(Interpreter):
+    """Lark interpreter collecting an ``EntryRef`` per entry of a container.
+
+    A Lark ``Transformer`` would be the usual choice, but it replaces rule nodes with
+    transformed values, destroying the original tree. Using an ``Interpreter`` instead keeps
+    references to the original rule nodes so that they can be mutated later to support
+    round-trip editing. The ``Interpreter`` also skips visiting child rule nodes
+    automatically, so each callback handles an entire entry subtree in one call -- which is
+    also what stops the reader descending into a nested block, whose entries belong to that
+    block and are read separately when it is opened.
+
+    The callbacks have to be named after the entry categories, because that is how Lark
+    dispatches; a test pins the two lists together.
+
+    Args:
+        ctx (ParseContext): Supplies the key normalisation this format uses.
+    """
+
+    _refs: dict[str, EntryRef]  # References collected while traversing the tree.
+    _ctx: ParseContext  # Compiled grammar and per-parser settings.
+
+    def __init__(self, ctx: ParseContext) -> None:
+        self._ctx = ctx
+        super().__init__()
+
+    def read(self, container: Tree) -> dict[str, EntryRef]:
+        """Visit a container and return the references to the entries below it.
+
+        Args:
+            container (Tree): Container rule node to read.
+
+        Returns:
+            dict[str, EntryRef]: One reference per key, keyed by the normalised key name.
+        """
+        self._refs = {}
+        self.visit(container)
+        return self._refs
+
+    def _get_key(self, tree: Tree) -> str:
+        """Given an entry rule node, extract and return the key name.
+
+        Finds the ``"key"`` rule node among *tree*'s children, then reads the ``Token``
+        (terminal) that is its first child and that token's text is the key name.
+
+        Args:
+            tree (Tree): An entry rule node (e.g. ``Tree`` with ``.data == "key_value"``).
+
+        Returns:
+            str: The key name, normalised for this format's key case-sensitivity.
+
+        Raises:
+            ValueError: If no ``"key"`` rule node is found among the children.
+            TypeError: If no ``Token`` is found as the first child of the ``"key"`` rule
+                node.
+        """
+        key_rules = [child.children for child in tree.children if child.data == KEY_RULE]
+        if len(key_rules) == 0:
+            raise ValueError("No 'key' rule nodes found among children of key rule node")
+        else:
+            # Multiple "key" rule nodes are possible (e.g., if the tree is a key_block
+            # storing one of more key_values) but the correct one is always the first.
+            key_rule = key_rules[0]
+
+        # The token holding the key name is the first child of the "key" rule node.
+        key_token = key_rule[0]
+        if not isinstance(key_token, Token):
+            raise TypeError("No key found.")
+
+        return self._ctx.normalise_key(key_token.value)
+
+    @staticmethod
+    def _value_nodes(tree: Tree) -> tuple[Tree, ...]:
+        """Return the value-type rule nodes among an entry's children.
+
+        Args:
+            tree (Tree): A ``"key_value"`` or ``"key_list"`` rule node.
+
+        Returns:
+            tuple[Tree, ...]: The value-type rule nodes, in the order written.
+
+        Raises:
+            ValueError: If there are none.
+        """
+        nodes = tuple(child for child in tree.children if child.data in VALUE_TYPE_HANDLER_REGISTRY)
+        if not nodes:
+            raise ValueError("No values found in Tree")
+        return nodes
+
+    def key_value(self, tree: Tree) -> None:
+        """Interpreter callback for ``"key_value"`` rule nodes.
+
+        Args:
+            tree (Tree): Rule node produced by the ``"key_value"`` grammar rule.
+
+        Raises:
+            ValueError: If the node holds more than one value, which means the grammar
+                aliased it to the wrong category.
+        """
+        nodes = self._value_nodes(tree)
+        if len(nodes) > 1:
+            raise ValueError("More than one value found in Tree")
+        self._refs[self._get_key(tree)] = EntryRef(KEY_VALUE, tree, nodes)
+
+    def key_list(self, tree: Tree) -> None:
+        """Interpreter callback for ``"key_list"`` rule nodes.
+
+        Args:
+            tree (Tree): Rule node produced by the ``"key_list"`` grammar rule.
+        """
+        self._refs[self._get_key(tree)] = EntryRef(KEY_LIST, tree, self._value_nodes(tree))
+
+    def key_block(self, tree: Tree) -> None:
+        """Interpreter callback for ``"key_block"`` rule nodes.
+
+        Args:
+            tree (Tree): Rule node produced by the ``"key_block"`` grammar rule.
+        """
+        for child in tree.children:
+            if child.data == BLOCK_RULE:
+                self._refs[self._get_key(tree)] = EntryRef(KEY_BLOCK, tree, block_node=child)
+                return
+
+    def key_null(self, tree: Tree) -> None:
+        """Interpreter callback for ``"key_null"`` rule nodes.
+
+        Args:
+            tree (Tree): Rule node produced by the ``"key_null"`` grammar rule.
+        """
+        self._refs[self._get_key(tree)] = EntryRef(KEY_NULL, tree)

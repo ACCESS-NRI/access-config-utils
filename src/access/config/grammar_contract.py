@@ -1,22 +1,48 @@
 # Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The grammar rule names every format grammar must use.
+"""The grammar rule names every format grammar must use, and what each one promises.
 
-These names are an API, not cosmetics. ``ConfigToDict`` is a Lark ``Interpreter``, which
+These names are an API, not cosmetics. The reader is a Lark ``Interpreter``, which
 dispatches on a node's rule name to a *method of that name*, and adding a key parses
 synthesised text with a container rule as the start symbol, which needs that rule to be
 nameable. So a grammar that spells one of these differently does not merely read oddly --
 it silently stops working.
 
-Collecting the names here means a rename is one edit rather than a hunt through five
-modules. One duplication is irreducible: ``ConfigToDict`` has to define a method literally
-named after each entry category, because that is how Lark dispatches. ``ENTRY_CATEGORIES``
-and those method names are held together by a test rather than by construction.
+This module is the single statement of that contract. Collecting the names here means a
+rename is one edit rather than a hunt through five modules. One duplication is irreducible:
+the reader has to define a method literally named after each entry category, because that is
+how Lark dispatches. ``ENTRY_CATEGORIES`` and those method names are held together by a test
+rather than by construction.
 
-The rules a grammar must provide, and where each is documented in full: the entry
-categories and the ``key``, ``start`` and ``block`` rules in ``ConfigParser``; the parse
-tree those rules produce in ``parse_tree_ops``; the value-type rules in ``parser_types``.
+The contract
+------------
+A grammar written against this package must:
+
+- Express every key-value assignment with a rule named, or aliased with ``->``, to one of
+  the four entry categories: ``key_value`` (one scalar), ``key_list`` (two or more values),
+  ``key_block`` (a nested block of entries) and ``key_null`` (a key with no value, as in
+  ``a=``). Aliasing is the normal case, so that one category can have several syntaxes:
+  ``rfile_key_value: ws* key ":" ws* value line_end -> key_value``.
+- Name the rule holding a key ``key``, with a ``Token`` as its first child whose text is the
+  key name. ``config.lark`` provides one that suits most formats.
+- Write scalar values using value-type rules imported from ``config.lark``, whose names are
+  registered in ``VALUE_TYPE_HANDLER_REGISTRY``. Such a node has exactly one ``Token``
+  child.
+- Capture whitespace that must survive a round trip in the explicit ``ws`` rule, never
+  discard it with ``%ignore``.
+- Name the top-level rule ``start``, and leave it non-transparent.
+- Hold the contents of a ``key_block`` in a rule *named* ``block``, not one aliased to it.
+
+Two rules aliased to the same category must produce **distinguishable children**. The
+reconstructor picks the rule to write a node with by matching that node's children, and Lark
+filters anonymous string tokens out of the tree before it looks, so punctuation that tells
+two syntaxes apart has to sit in a rule of its own -- ``assign: "="`` in ``nuopc_config``,
+``separator: ","`` in ``fortran_nml``.
+
+Where the consequences are spelled out: the parse tree these rules produce in
+``parse_tree_ops``, the value types in ``grammar_values``, how an entry is written back out
+in ``entry_templates``.
 """
 
 from __future__ import annotations

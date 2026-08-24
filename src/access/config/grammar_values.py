@@ -1,11 +1,14 @@
 # Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Value type handlers for the configuration parser.
+"""The value types a grammar can express, and how each maps to a Python value.
 
-This module defines ``ValueTypeHandler``, a dataclass that bundles the operations needed to
-handle a single value type (type checking, parsing, and serialisation), and provides the
-``VALUE_TYPE_HANDLER_REGISTRY`` that maps grammar rule names to their handlers.
+Scalar values are written in the grammar as dedicated *value-type rules* -- ``integer``,
+``float``, ``logical`` and so on, all imported from ``config.lark``. This module is the
+other half of that contract: ``ValueTypeHandler`` bundles the operations needed to handle
+one such type (type checking, parsing, serialisation), and ``VALUE_TYPE_HANDLER_REGISTRY``
+maps each rule name to its handler. A rule name absent from the registry is not a value
+position, which is how the rest of the package recognises one.
 
 Several handlers accept the same Python type, so writing a value for a key that does not
 exist yet also needs a rule to be *chosen*. ``VALUE_RULE_PRIORITY`` and
@@ -136,7 +139,7 @@ class ValueTypeHandler:
         return self.to_token(value, self.seed_token(value))
 
 
-VALUE_TYPE_HANDLER_REGISTRY: dict[str | None, ValueTypeHandler] = {
+VALUE_TYPE_HANDLER_REGISTRY: dict[str, ValueTypeHandler] = {
     "logical": ValueTypeHandler(
         type_check=lambda value: type(value) is bool,
         from_token=lambda token: str(token).lower() == ".true.",
