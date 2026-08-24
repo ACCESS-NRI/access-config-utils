@@ -4,8 +4,10 @@
 from pathlib import Path
 
 import pytest
+from conftest import assert_canonical_entry, canonical_rows
 from lark.exceptions import UnexpectedCharacters
 
+from access.config.grammar_compiled import compile_grammar
 from access.config.mom6_input import MOM6InputParser
 
 
@@ -276,3 +278,13 @@ def test_mom6_input_delete_everything_keeps_comments(parser):
     # Adding a key back does not resurrect anything: the text was never hidden.
     config["C"] = 3
     assert str(config) == "C = 3\n\n  ! keep me\n\n"
+
+
+@pytest.mark.parametrize(("container", "category", "expected"), canonical_rows("mom6_input"))
+def test_canonical_entry_text(parser, container, category, expected) -> None:
+    """Test the text this format writes for a new entry with no neighbour to copy from.
+
+    Byte-exact, and re-parsed in the container it was generated for. These rows are the
+    statement of what this grammar can express and how it spells it.
+    """
+    assert_canonical_entry(compile_grammar(parser.grammar), container, category, expected)

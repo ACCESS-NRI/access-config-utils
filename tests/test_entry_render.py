@@ -8,32 +8,10 @@ change in which candidate wins is caught here rather than only through the end-t
 in ``test_config.py`` and the per-format modules.
 """
 
-import pytest
-from conftest import CANONICAL, VALUES
-
 from access.config import entry_render
 from access.config.entry_fragments import Fragment
 from access.config.entry_render import iter_entry_snippets, render
 from access.config.entry_style import EntryStyle
-
-
-@pytest.mark.parametrize(("case", "expected"), CANONICAL.items(), ids=lambda item: item)
-def test_canonical_snippet(infos, larks, case, expected) -> None:
-    """Test the entry text produced for each supported container and category.
-
-    The first candidate has to be both the expected text and valid in that container, so
-    these assertions pin the whole generate-rank-render pipeline against the real grammars.
-    """
-    grammar, container, category = case
-    snippets = iter_entry_snippets(infos[grammar], container, category, "NEWKEY", VALUES[category], EntryStyle())
-
-    first = next(iter(snippets))
-    assert first == expected
-
-    # The text must parse in the container it was generated for, and yield that category.
-    parsed = larks[grammar].parse(first, start=container)
-    categories = {node.data for node in parsed.iter_subtrees()} | {parsed.data}
-    assert category in categories
 
 
 def test_value_type_rendering(infos) -> None:

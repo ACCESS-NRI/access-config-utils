@@ -1,18 +1,77 @@
 # Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
 # SPDX-License-Identifier: Apache-2.0
 
+"""Tests for the ``ConfigParser`` base class, and the integration suite behind it.
+
+This is the one test module that does **not** isolate its subject. Every other parser module
+is exercised through fakes standing in for its neighbours; here the whole stack runs for
+real, driven the way a caller drives it -- ``parse()``, then the mapping interface -- since
+that is what ``ConfigParser`` is the entry point to, and because round-trip fidelity is a
+property of the stack rather than of any module in it. Together with the four format modules
+these are the tests that would catch a break the isolated ones cannot see.
+
+Everything runs against ``TOY_GRAMMAR``, which is unlike any real format on purpose: it
+admits every value type at once and every entry category, so one grammar reaches paths that
+would otherwise need three.
+"""
+
 from pathlib import Path
 
 import pytest
 from conftest import TOY_GRAMMAR
-from lark import Tree
 
 from access.config.grammar_compiled import clear_grammar_cache
-from access.config.grammar_contract import ENTRY_CATEGORIES
+from access.config.grammar_values import VALUE_RULE_PRIORITY
 from access.config.parser import ConfigParser
-from access.config.tree_edits import merge_adjacent_repetitions
-from access.config.tree_navigation import AddParent
-from access.config.tree_reader import EntryReader
+
+
+def test_parser_is_abstract() -> None:
+    """Test that the base class cannot be instantiated without a grammar.
+
+    It declares two abstract properties, so a subclass that forgets either is refused at
+    construction rather than failing somewhere inside ``parse``.
+    """
+    with pytest.raises(TypeError):
+        ConfigParser()
+
+    class NoGrammar(ConfigParser):
+        @property
+        def case_sensitive_keys(self) -> bool:
+            return True
+
+    with pytest.raises(TypeError):
+        NoGrammar()
+
+
+def test_parser_declares_defaults(parser) -> None:
+    """Test the two properties a format only overrides when it has to.
+
+    Both defaults are what makes a minimal parser possible: a subclass supplies a grammar
+    and a case-sensitivity flag and nothing else, and entry synthesis derives the rest from
+    the grammar.
+    """
+    assert parser.entry_templates == {}
+    assert parser.value_rule_priority is VALUE_RULE_PRIORITY
+
+    # Whatever the subclass declares is what reaches the parsed configuration.
+    ctx = parser.parse("a=1")._store.ctx
+    assert ctx.case_sensitive_keys is True
+    assert ctx.entry_templates == {}
+    assert ctx.value_rule_priority == tuple(VALUE_RULE_PRIORITY)
+
+
+def test_parser_appends_a_trailing_newline(parser) -> None:
+    """Test that a file with no final newline parses just like one that has it.
+
+    ``parse`` appends a newline so that no grammar has to spell out the end-of-file case,
+    and ``__str__`` strips one back off. Whether the newline itself survives is the
+    grammar's business: this one discards whitespace with ``%ignore``, so it does not, and
+    the format modules are where the byte-exact round trip is pinned.
+    """
+    without, with_newline = parser.parse("a=1"), parser.parse("a=1\n")
+
+    assert dict(without) == dict(with_newline) == {"a": 1}
+    assert str(without) == str(with_newline) == "a=1"
 
 
 def test_config_type_logical(parser):
@@ -907,52 +966,3 @@ def test_config_non_finite_floats(parser):
 
     # None of the refused assignments changed the file.
     assert str(config) == "a=1.0 b=(1.0, 2.0)c=1.0d0"
-
-
-def test_config_is_repetition_rule(parser):
-    """Test the shape test that decides which rules may be merged after a deletion"""
-    info = parser.parse("a=1")._store.ctx.info
-
-    # A rule that is a plain repetition of something.
-    assert info.is_repetition_rule("block")
-    # A rule whose alternative is a single terminal, and one with a longer expansion.
-    assert not info.is_repetition_rule("equal")
-    assert not info.is_repetition_rule("key_value")
-    # A name that is not a rule at all.
-    assert not info.is_repetition_rule("not_a_rule")
-
-
-def test_config_merge_adjacent_repetitions(parser):
-    """Test that merging rejoins the children of two adjacent nodes and re-parents them.
-
-    Exercised here with a repetition rule whose children are rule nodes rather than tokens,
-    so that the merged children end up owned by the node that survives.
-    """
-    config = parser.parse("a=1")
-    info = config._store.ctx.info
-
-    left, right = Tree("block", [Tree("x", [])]), Tree("block", [Tree("y", [])])
-    container = Tree("start", [left, right, Tree("equal", [])])
-    AddParent().visit(container)
-
-    merge_adjacent_repetitions(container, info)
-
-    assert len(container.children) == 2
-    assert [child.data for child in container.children[0].children] == ["x", "y"]
-    # The moved child now belongs to the node that absorbed it.
-    assert container.children[0].children[1].parent is left
-    # A rule that is not a repetition is left alone.
-    assert container.children[1].data == "equal"
-
-
-def test_grammar_contract_has_an_interpreter_callback_per_category() -> None:
-    """Test that ``EntryReader`` implements every entry category the contract declares.
-
-    This is the one duplication of the category names that cannot be removed: Lark's
-    ``Interpreter`` dispatches on a node's rule name to a method of that name, so the
-    callbacks have to be spelled out. Adding a category without its callback would leave
-    entries of that category silently unvisited, so the two lists are pinned together here
-    instead of by construction.
-    """
-    for category in ENTRY_CATEGORIES:
-        assert callable(getattr(EntryReader, category, None)), category
