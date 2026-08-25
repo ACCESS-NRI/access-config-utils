@@ -76,7 +76,7 @@ def offer(monkeypatch):
 def scalar_ref(key: str = "z") -> tuple[dict[str, EntryRef], Tree]:
     """Return a read-back reporting one scalar entry, and the node it hangs from."""
     node = entry_node("key_value", key, value_node())
-    return {key: EntryRef("key_value", node, (node.children[1],))}, node
+    return {key: EntryRef("key_value", (node,), (node.children[1],))}, node
 
 
 class TestEntryCategory:
@@ -136,13 +136,13 @@ class TestEntryMatches:
     def test_a_valueless_entry_needs_no_value_check(self) -> None:
         """Test that ``key_null`` matches on its category alone."""
         node = entry_node("key_null", "z")
-        assert entry_matches({"z": EntryRef("key_null", node)}, "z", None)
+        assert entry_matches({"z": EntryRef("key_null", (node,))}, "z", None)
 
     def test_checks_a_list_element_by_element(self) -> None:
         """Test that length and every element's type have to agree."""
         values = (value_node(text="1"), value_node(text="2"))
         node = entry_node("key_list", "z", *values)
-        refs = {"z": EntryRef("key_list", node, values)}
+        refs = {"z": EntryRef("key_list", (node,), values)}
 
         assert entry_matches(refs, "z", [1, 2])
         assert not entry_matches(refs, "z", [1, 2, 3])
@@ -159,7 +159,7 @@ class TestEntryMatches:
 
         for body, expected in ((empty, True), (filled, False)):
             node = entry_node("key_block", "z", body)
-            refs = {"z": EntryRef("key_block", node, block_node=body)}
+            refs = {"z": EntryRef("key_block", (node,), block_nodes=(body,))}
             assert entry_matches(refs, "z", {"a": 1}) is expected
 
 
@@ -233,7 +233,7 @@ class TestInsertEntryCandidates:
         offer(("z = foo\n", (wrong, wrong_node)), ("z = 1\n", (right, right_node)))
 
         # The first read-back reports the string "1", not the integer asked for.
-        wrong["z"] = EntryRef("key_value", wrong_node, (value_node("string", "'1'"),))
+        wrong["z"] = EntryRef("key_value", (wrong_node,), (value_node("string", "'1'"),))
 
         assert insert_entry(container, FakeContext(), "z", "z", 1, EntryStyle()) is right["z"]
 

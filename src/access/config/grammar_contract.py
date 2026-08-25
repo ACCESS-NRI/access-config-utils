@@ -30,15 +30,16 @@ A grammar written against this package must:
   registered in ``VALUE_TYPE_HANDLER_REGISTRY``. Such a node has exactly one ``Token``
   child.
 - Capture whitespace that must survive a round trip in the explicit ``ws`` rule, never
-  discard it with ``%ignore``.
+  discard it with ``%ignore``, and bind the run *before* an assignment literal into an
+  ``eq`` rule with it -- see ``TRANSPARENT_RULES``.
 - Name the top-level rule ``start``, and leave it non-transparent.
 - Hold the contents of a ``key_block`` in a rule *named* ``block``, not one aliased to it.
 
 Two rules aliased to the same category must produce **distinguishable children**. The
 reconstructor picks the rule to write a node with by matching that node's children, and Lark
 filters anonymous string tokens out of the tree before it looks, so punctuation that tells
-two syntaxes apart has to sit in a rule of its own -- ``assign: "="`` in ``nuopc_config``,
-``separator: ","`` in ``fortran_nml``.
+two syntaxes apart has to sit in a rule of its own: a bare ``"="`` or ``","`` between two
+otherwise identical shapes leaves the two indistinguishable once the tree is built.
 
 Where the consequences are spelled out: the parse tree these rules produce in
 ``parse_tree_ops``, the value types in ``grammar_values``, how an entry is written back out
@@ -82,6 +83,43 @@ COMMENT_RULES: Final = ("comment", "fortran_comment")
 The shared grammar defines one rule per comment character in use, and both are rules rather
 than terminals, so the name is what identifies a comment. The terminal each wraps is an
 anonymous regular expression, which Lark names ``__ANON_0``.
+"""
+
+INDEX_RULE: Final = "index"
+"""Name of the rule holding an array qualifier, the ``(3)`` of ``v(3) = 1``.
+
+An indexed assignment writes part of an array, so several entries on several lines can make
+up one value: ``v(1) = 1`` beside ``v(2) = 2`` is the two-element ``v``. ``place_indexed``
+works out where each entry's values land.
+"""
+
+ELIDED_RULE: Final = "elided"
+"""Name of the rule marking a list position written as nothing between two separators.
+
+``x = 1, , 3`` skips its second element, which the reader is expected to leave unset.
+One node per position skipped, so the count survives into the tree; the reader turns each
+into the same absent-node a position no indexed entry wrote already has.
+"""
+
+REPEAT_RULE: Final = "repeat"
+"""Name of the rule holding a repeat count, ``n*v`` for *v* repeated *n* times.
+
+Unlike a value-type rule it is not in ``VALUE_TYPE_HANDLER_REGISTRY``: it holds a count
+token and, unless the repeat is of null values, the value-type rule node being repeated. One
+such node therefore backs several list elements, which is what ``write_values`` has to undo
+when one of them is written.
+"""
+
+TRANSPARENT_RULES: Final = frozenset({"eq"})
+"""Rules that group whitespace with a punctuation literal, and hold nothing else.
+
+A grammar needs one of these because an anonymous literal is filtered out of the parse tree,
+so ``ws* "=" ws*`` records which whitespace runs exist but not which side of the ``=`` each
+one fell on -- and the reconstructor then guesses, turning ``A= 1`` into ``A =1``. Binding
+the leading whitespace to the literal in a rule of its own fixes the position.
+
+Such a rule is a grouping device rather than structure, so reading an entry's whitespace
+looks through it: the runs inside it space out the same things as the runs beside it do.
 """
 
 KEY_VALUE: Final = "key_value"

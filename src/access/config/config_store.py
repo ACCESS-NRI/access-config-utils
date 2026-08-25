@@ -19,6 +19,7 @@ whitespace is handed down. That is the only reason a store knows about its neigh
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from lark import Tree
@@ -27,7 +28,8 @@ from lark.exceptions import UnexpectedInput
 from access.config.config_insert import insert_entry
 from access.config.entry_style import EntryStyle, probe_entry_style, probe_sibling_block_style
 from access.config.grammar_contract import KEY_LIST, KEY_VALUE
-from access.config.tree_edits import remove_entry_node, update_node_value
+from access.config.grammar_values import UnsupportedEntryError
+from access.config.tree_edits import remove_entry_node, update_node_value, write_values
 from access.config.tree_reader import EntryRef, read_entries
 
 if TYPE_CHECKING:
@@ -40,6 +42,9 @@ class ConfigStore:
     Args:
         tree (Tree): The container rule node: the root of a parsed file, or a ``block``.
         ctx (ParseContext): The compiled grammar and the per-parser settings.
+        addable (bool): Whether a new entry can be spliced into *tree*. False for a block
+            merged from several in the file, whose root is not itself in the parse tree, so
+            splicing into it would change nothing that gets written out.
     """
 
     tree: Tree  # The container rule node this store owns.
@@ -48,24 +53,28 @@ class ConfigStore:
     # Whitespace for a new entry when this container holds none to copy from. Set on a block
     # created by an assignment, which is empty and so has no style of its own yet.
     fallback_style: EntryStyle
+    addable: bool  # Whether a new entry can be spliced into this container
 
-    def __init__(self, tree: Tree, ctx: ParseContext) -> None:
+    def __init__(self, tree: Tree, ctx: ParseContext, addable: bool = True) -> None:
         self.tree = tree
         self.ctx = ctx
+        self.addable = addable
         self.fallback_style = EntryStyle()
         self.refs = read_entries(tree, ctx)
 
-    def child(self, ref: EntryRef) -> ConfigStore:
+    def child(self, ref: EntryRef, index: int = 0) -> ConfigStore:
         """Return the store for the contents of a block held by this container.
 
         Args:
             ref (EntryRef): A ``key_block`` reference read from this container.
+            index (int): Which occurrence to open, for a block the file writes more than
+                once and this format reads as separate records. Zero for every other block,
+                which has exactly one.
 
         Returns:
-            ConfigStore: A store over the block's own contents.
+            ConfigStore: A store over that block's own contents.
         """
-        assert ref.block_node is not None
-        return ConfigStore(ref.block_node, self.ctx)
+        return ConfigStore(ref.block_nodes[index], self.ctx, addable=ref.addable)
 
     def replace(self, key: str, value: Any) -> tuple[Tree, ...]:
         """Write a new value into the nodes of an entry that already exists.
@@ -87,8 +96,9 @@ class ConfigStore:
                 raise TypeError(f"Trying to change the type of variable '{key}'")
             if len(ref.value_nodes) != len(value):
                 raise ValueError(f"Trying to change the length of list '{key}'")
-            for node, item in zip(ref.value_nodes, value, strict=True):
-                update_node_value(node, item)
+            written = tuple(write_values(ref.value_nodes, value, self.ctx.lark))
+            self.refs[key] = replace(ref, value_nodes=written)
+            return written
         else:
             if ref.category != KEY_VALUE:
                 raise TypeError(f"Trying to change the type of variable '{key}'")
@@ -112,8 +122,14 @@ class ConfigStore:
 
         Raises:
             ValueError: If *raw_key* is unusable, or *value* is a list too short to write.
-            UnsupportedEntryError: If the format cannot express *value* here.
+            UnsupportedEntryError: If the format cannot express *value* here, or this
+                container has no body in the file for a new entry to go in.
         """
+        if not self.addable:
+            raise UnsupportedEntryError(
+                f"Cannot add '{key}': this block has no body in the file for a new entry to go in. "
+                "It is either merged from several blocks, or written one component per line"
+            )
         style = probe_entry_style(self.tree)
         if not style.has_donor:
             style = self.fallback_style
@@ -136,12 +152,17 @@ class ConfigStore:
         return sibling if sibling.has_donor else self.fallback_style
 
     def remove(self, key: str) -> None:
-        """Unlink an entry from the tree and forget its reference.
+        """Unlink every entry that wrote a key, and forget its reference.
+
+        There is more than one when the file assigned the key twice. Only the last
+        assignment reached the configuration, so removing only that one would leave the
+        earlier entries in the file and the key would come back the next time it was read.
 
         Args:
             key (str): The normalised key.
         """
-        remove_entry_node(self.refs[key].entry_node, self.ctx.info)
+        for entry_node in self.refs[key].entry_nodes:
+            remove_entry_node(entry_node, self.ctx.info)
         del self.refs[key]
 
     def render(self) -> str:

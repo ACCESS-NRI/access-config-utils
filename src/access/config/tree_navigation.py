@@ -4,8 +4,8 @@
 """Finding one's way around a Lark parse tree.
 
 Everything here reads a tree and reports what is in it. Nothing here changes one; that is
-``tree_edits``. The questions asked are always the same three: where are the entries, which
-children are comment lines, and where does a new entry belong.
+``tree_edits``. Four questions are asked: where are the entries, which children are comment
+lines, where does a new entry belong, and what values does a node hold.
 
 Lark parse tree structure
 -------------------------
@@ -32,9 +32,13 @@ from ``grammar_contract``, which states in full what a grammar has to provide.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any
+
 from lark import Token, Tree, Visitor
 
-from access.config.grammar_contract import BLOCK_RULE, COMMENT_RULES, ENTRY_CATEGORIES
+from access.config.grammar_contract import BLOCK_RULE, COMMENT_RULES, ENTRY_CATEGORIES, REPEAT_RULE
+from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
 
 
 class AddParent(Visitor):
@@ -133,13 +137,13 @@ def entry_insertion_index(container: Tree) -> int:
     outside the block entirely.
 
     The search is over the container's *direct* children even though the test for holding an
-    entry looks deeper: in a Fortran namelist one child can be a whole line carrying several
-    assignments, and a new entry has to go after that line rather than inside it.
+    entry looks deeper: one child can be a whole line carrying several assignments, and a
+    new entry has to go after that line rather than inside it.
 
     **A run of comment lines starting at that position is stepped over**, up to the first
     blank line, the next entry, or the end of the container. A comment there either carries
-    on from the trailing comment of the line above -- MOM6 documents most of its parameters
-    that way, beginning on the parameter's own line and continuing below it -- or heads what
+    on from the trailing comment of the line above -- a format may document a key that way,
+    beginning on the key's own line and continuing below it -- or heads what
     follows. Either way the new entry belongs after the whole run, and stopping at a blank
     line is what puts it *between* two comment blocks rather than inside the second one.
 
@@ -157,3 +161,150 @@ def entry_insertion_index(container: Tree) -> int:
     while index < len(container.children) and is_comment_line(container.children[index]):
         index += 1
     return index
+
+
+# --- Values ---
+#
+# A value node is usually one value, but a repeat is several: "6*9.0" is six elements
+# written once. Reading that out is a question about a node, so it lives here; undoing it
+# when one of those elements is written is a change, and lives in ``tree_edits``.
+
+
+def is_value_node(node: Tree | Token) -> bool:
+    """Report whether a node holds one or more values of an entry.
+
+    Args:
+        node (Tree | Token): A child of an entry rule node.
+
+    Returns:
+        bool: True for a value-type rule node or a repeat of one.
+    """
+    return isinstance(node, Tree) and (node.data in VALUE_TYPE_HANDLER_REGISTRY or node.data == REPEAT_RULE)
+
+
+def repeat_parts(node: Tree) -> tuple[int, Tree | None]:
+    """Split a repeat node into its count and the value-type node it repeats.
+
+    Args:
+        node (Tree): A repeat rule node.
+
+    Returns:
+        tuple[int, Tree | None]: The count, and the repeated node or ``None`` for ``n*``.
+    """
+    count = int(str(node.children[0]).rstrip("*"))
+    inner = node.children[1] if len(node.children) > 1 else None
+    assert inner is None or isinstance(inner, Tree)
+    return count, inner
+
+
+def node_values(node: Tree) -> list[Any]:
+    """Return the values a value node contributes to its entry, in order.
+
+    One for an ordinary value-type node, and *n* for ``n*v`` -- all equal, and all ``None``
+    when the repeat names no value.
+
+    Args:
+        node (Tree): A value-type rule node or a repeat node.
+
+    Returns:
+        list[Any]: The values.
+    """
+    if node.data == REPEAT_RULE:
+        count, inner = repeat_parts(node)
+        return [None if inner is None else token_value(inner)] * count
+    return [token_value(node)]
+
+
+def token_value(node: Tree) -> Any:
+    """Convert the token of a value-type rule node into a Python value."""
+    return VALUE_TYPE_HANDLER_REGISTRY[str(node.data)].from_token(str(node.children[0]))
+
+
+def index_positions(node: Tree | None, count: int) -> list[int] | None:
+    """Return the position each of *count* values takes, or ``None`` if they follow on.
+
+    Reads the qualifier's own text: ``(3)`` names where the values start, ``(2:5)`` a range,
+    and ``(1:7:2)`` a strided one, which leaves gaps between the values it places. An
+    implicit bound (``(2:)``, ``(:5)``, ``(:)``) is filled in from how many values there
+    are. Positions are as written, so they may start anywhere, including at zero or below.
+
+    A qualifier names where an entry's values *begin*, not how many it may have:
+    ``v(3) = 1, 2, 3`` fills three positions from the third.
+
+    Args:
+        node (Tree | None): The index rule node, or ``None`` for an unqualified assignment.
+        count (int): How many values the entry holds.
+
+    Returns:
+        list[int] | None: The position of each value, or ``None`` when there is no qualifier
+            or it is one this does not model.
+    """
+    if node is None:
+        return None
+    spec = str(node.children[0])
+    if "," in spec:
+        # A multidimensional qualifier addresses an array of arrays, which is a shape this
+        # flat model cannot hold. Left alone, it stays part of the key.
+        return None
+    bounds = spec.split(":")
+    if len(bounds) > 3:
+        return None
+    try:
+        start = int(bounds[0]) if bounds[0].strip() else None
+        stop = int(bounds[1]) if len(bounds) > 1 and bounds[1].strip() else None
+        step = int(bounds[2]) if len(bounds) > 2 and bounds[2].strip() else 1
+    except ValueError:
+        return None
+    if step == 0:
+        return None
+    if len(bounds) == 1:
+        if start is None:
+            return None
+        first, step = start, 1
+    else:
+        first = start if start is not None else (stop - (count - 1) * step if stop is not None else 1)
+    return [first + offset * step for offset in range(count)]
+
+
+def place_indexed(
+    slots: dict[int, tuple[Any, Tree | None]],
+    positions: list[int] | None,
+    values: Sequence[Any],
+    refs: Sequence[Tree | None],
+) -> None:
+    """Record where an entry's values sit in the array its key names.
+
+    Args:
+        slots (dict[int, tuple[Any, Tree | None]]): Value and backing node by position,
+            added to in place. A position already taken is overwritten, as the later
+            assignment wins.
+        positions (list[int] | None): Where the values go, or ``None`` to follow on from
+            the first position the format numbers.
+        values (Sequence[Any]): The entry's values.
+        refs (Sequence[Tree | None]): The node backing each value, ``None`` where the entry
+            wrote the position without a value.
+    """
+    if positions is None:
+        # An unqualified assignment to an array otherwise written with indices starts at
+        # the first position the format numbers, which is one.
+        positions = [1 + offset for offset in range(len(values))]
+    for position, value, ref in zip(positions, values, refs, strict=True):
+        slots[position] = (value, ref)
+
+
+def flatten_slots(slots: dict[int, tuple[Any, Tree | None]]) -> tuple[list[Any], list[Tree | None]]:
+    """Lay the recorded positions out as a list, filling any gap with a null.
+
+    Positions are as the file wrote them, so they can start at any number and a stride or a
+    sparse set of indices leaves holes. The holes become ``None``, backed by no node at all,
+    which is what makes them unwritable.
+
+    Args:
+        slots (dict[int, tuple[Any, Tree | None]]): Value and backing node by position.
+
+    Returns:
+        tuple[list[Any], list[Tree | None]]: The values in order, and the node behind each.
+    """
+    order = range(min(slots), max(slots) + 1)
+    filled = [slots.get(position, (None, None)) for position in order]
+    return [value for value, _ in filled], [ref for _, ref in filled]

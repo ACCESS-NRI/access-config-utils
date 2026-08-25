@@ -13,6 +13,8 @@ delegation is worth pinning: which style an addition is given, and which node a 
 unlinks.
 """
 
+from dataclasses import replace
+
 import pytest
 from conftest import entry_node, value_node
 from lark import Tree
@@ -22,6 +24,7 @@ from access.config import config_store
 from access.config.config_store import ConfigStore
 from access.config.entry_style import EntryStyle
 from access.config.grammar_compiled import ParseContext, compile_grammar
+from access.config.grammar_values import UnsupportedEntryError
 from access.config.tree_navigation import AddParent
 from access.config.tree_reader import EntryRef
 
@@ -135,7 +138,7 @@ class TestAdd:
         """Patch insertion, recording its arguments and returning a chosen reference."""
         calls: list[dict] = []
         node = entry_node("key_value", "z", value_node())
-        ref = EntryRef("key_value", node, (node.children[1],))
+        ref = EntryRef("key_value", (node,), (node.children[1],))
 
         def fake_insert(container, ctx, key, raw_key, value, style):
             calls.append({"container": container, "key": key, "raw_key": raw_key, "value": value, "style": style})
@@ -186,6 +189,29 @@ class TestAdd:
         assert calls[0]["style"].indent == "    "
 
 
+class TestUnaddableBlocks:
+    """A container with no body in the file for a new entry to go into."""
+
+    def test_refuses_an_addition(self, ctx) -> None:
+        """Test that such a store says so rather than splicing where nothing is written."""
+        tree = ctx.lark.parse("a = 1\n", start="start")
+        AddParent().visit(tree)
+        store = ConfigStore(tree, ctx, addable=False)
+
+        with pytest.raises(UnsupportedEntryError, match="no body in the file"):
+            store.add("z", "z", 1)
+
+    def test_a_child_inherits_the_flag_from_its_reference(self, ctx) -> None:
+        """Test that ``child`` passes on what the reader decided about the block."""
+        tree = ctx.lark.parse("blk<\n>\n", start="start")
+        AddParent().visit(tree)
+        store = ConfigStore(tree, ctx)
+        ref = store.refs["blk"]
+
+        assert store.child(ref).addable
+        assert not store.child(replace(ref, addable=False)).addable
+
+
 class TestCreatedBlockStyle:
     """The style handed down to a block this session created."""
 
@@ -216,6 +242,21 @@ class TestRemove:
         assert list(store.refs) == ["b"]
         assert store.render() == "b = 2"
 
+    def test_unlinks_every_entry_that_wrote_the_key(self, ctx) -> None:
+        """Test the file that assigns a key twice, where only the last is in the dict.
+
+        Removing just that one would leave the earlier line behind, and the key would come
+        back the next time the file was read.
+        """
+        tree = ctx.lark.parse("a = 1\na = 2\nb = 3\n", start="start")
+        AddParent().visit(tree)
+        store = ConfigStore(tree, ctx)
+        assert len(store.refs["a"].entry_nodes) == 2
+
+        store.remove("a")
+
+        assert store.render() == "b = 3"
+
     def test_delegates_to_the_tree_edit(self, store, monkeypatch) -> None:
         """Test that removal goes through the repair path, not a bare list removal.
 
@@ -224,11 +265,11 @@ class TestRemove:
         """
         seen: list[Tree] = []
         monkeypatch.setattr(config_store, "remove_entry_node", lambda node, info: seen.append(node))
-        entry = store.refs["a"].entry_node
+        entries = list(store.refs["a"].entry_nodes)
 
         store.remove("a")
 
-        assert seen == [entry]
+        assert seen == entries
 
 
 class TestRender:

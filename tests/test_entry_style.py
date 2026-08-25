@@ -95,6 +95,8 @@ class TestClassifySlots:
 
         assert slots.leading == (0,)
         assert slots.key == (2, 4)
+        # The "=" is the first fixed text after the key, so one slot falls before it.
+        assert slots.key_split == 1
         # A scalar has no second value, so nothing spaces out an element separator.
         assert slots.element == ()
 
@@ -121,6 +123,13 @@ class TestClassifySlots:
         assert slots.key == (1,)
         assert slots.element == ()
 
+    def test_a_template_with_no_fixed_text_after_the_key(self) -> None:
+        """Test that with no assignment to split on, every key slot precedes it."""
+        slots = classify_slots((KEY, WS, VALUE))
+
+        assert slots.key == (1,)
+        assert slots.key_split == 1
+
     def test_a_template_with_no_key(self) -> None:
         """Test that a template holding no key has no leading region to indent."""
         assert classify_slots((WS, VALUE, literal("\n"))).leading == (0,)
@@ -136,8 +145,20 @@ class TestStyleMatches:
 
     def test_matches_when_the_slot_counts_line_up(self) -> None:
         """Test the ordinary case, one recorded run per stylable slot."""
-        style = EntryStyle(indent="  ", key_pads=(" ", " "), element_pads=None, has_donor=True)
+        style = EntryStyle(indent="  ", key_pads=(" ", " "), key_split=1, has_donor=True)
         assert style_matches(LINE, style)
+
+    def test_rejects_runs_that_fall_on_the_wrong_side_of_the_assignment(self) -> None:
+        """Test that agreeing counts are not enough; the split has to agree too.
+
+        ``LINE`` puts one slot before the ``=`` and one after. A donor recording both runs
+        before it wrote something else, and reproducing them here would move them.
+        """
+        assert not style_matches(LINE, EntryStyle(key_pads=(" ", " "), key_split=2, has_donor=True))
+
+    def test_a_style_with_no_key_runs_recorded_matches_anything(self) -> None:
+        """Test that the split constrains nothing when there is no run to place."""
+        assert style_matches(LINE, EntryStyle(indent="  ", key_split=2, has_donor=True))
 
     def test_rejects_a_template_with_nowhere_to_put_the_indent(self) -> None:
         """Test what a MOM6 assignment presents: no leading slot, so no indent."""
@@ -198,6 +219,52 @@ class TestProbeEntryStyle:
         assert style.indent == "  "
         assert style.key_pads == (" ",)
         assert style.element_pads is None
+
+    def test_reads_through_a_transparent_assignment_rule(self) -> None:
+        """Test the ``eq`` rule, which binds the run before ``=`` to the literal.
+
+        Left as a bare ``ws*`` beside the one after ``=``, a single run is ambiguous about
+        which side it fell on and the reconstructor moves it. The runs inside the rule count
+        as though written beside the key, and the rule marks where the literal fell.
+        """
+        # "a =1": one run before the "=", none after.
+        entry = Tree(
+            "key_value",
+            [Tree("key", [Token("CNAME", "a")]), Tree("eq", [ws_node(" ")]), value_node()],
+        )
+
+        style = probe_entry_style(Tree("start", [entry]))
+
+        assert style.key_pads == (" ",)
+        assert style.key_split == 1
+
+    def test_a_run_after_the_assignment_is_counted_on_the_other_side(self) -> None:
+        """Test the mirror case ``a= 1``: the same one run, split the other way."""
+        entry = Tree(
+            "key_value",
+            [Tree("key", [Token("CNAME", "a")]), Tree("eq", []), ws_node(" "), value_node()],
+        )
+
+        style = probe_entry_style(Tree("start", [entry]))
+
+        assert style.key_pads == (" ",)
+        assert style.key_split == 0
+
+    def test_a_block_entry_does_not_donate_assignment_spacing(self) -> None:
+        """Test that a block is passed over as a donor for the spacing around an assignment.
+
+        It shows the indentation but carries no assignment, so taking its empty run would
+        write ``KEY=value`` into a file that spaces its assignments.
+        """
+        assignment = Tree(
+            "key_value",
+            [Tree("key", [Token("CNAME", "a")]), Tree("eq", [ws_node(" ")]), ws_node(" "), value_node()],
+        )
+        block = entry_node("key_block", "blk", Tree("block", []))
+
+        style = probe_entry_style(Tree("start", [assignment, block]))
+
+        assert style.key_pads == (" ", " ")
 
     def test_ignores_children_that_are_tokens(self) -> None:
         """Test that punctuation kept as a bare terminal is not a whitespace run."""

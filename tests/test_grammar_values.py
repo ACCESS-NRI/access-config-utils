@@ -38,6 +38,7 @@ ROUND_TRIPS = [
     ("double_complex", "(1.0d0, -2.0d0)", 1.0 - 2.0j, "(1.0, -2.0)"),
     ("identifier", "a_word", "a_word", "a_word"),
     ("string", "'quoted'", "quoted", '"quoted"'),
+    ("fortran_string", "'quoted'", "quoted", '"quoted"'),
     ("path", "/dir/file.nc", Path("/dir/file.nc"), "/dir/file.nc"),
 ]
 
@@ -122,6 +123,37 @@ class TestStringQuoting:
         assert VALUE_TYPE_HANDLER_REGISTRY["string"].to_new_token('has " inside') == "'has \" inside'"
 
 
+class TestFortranStringQuoting:
+    """Fortran escapes a quote by doubling it, so no value is out of reach."""
+
+    def test_reads_a_doubled_quote_as_one(self) -> None:
+        """Test the escape on the way in: ``'it''s'`` holds one apostrophe."""
+        handler = VALUE_TYPE_HANDLER_REGISTRY["fortran_string"]
+
+        assert handler.from_token("'it''s'") == "it's"
+        assert handler.from_token('"say ""hi"""') == 'say "hi"'
+
+    def test_doubles_a_quote_on_the_way_out(self) -> None:
+        """Test that the quote in use is kept and the value escaped against it."""
+        handler = VALUE_TYPE_HANDLER_REGISTRY["fortran_string"]
+
+        assert handler.to_token("it's", "'old'") == "'it''s'"
+        assert handler.to_token('say "hi"', '"old"') == '"say ""hi"""'
+
+    def test_a_value_holding_both_quotes_can_still_be_written(self) -> None:
+        """Test the difference from the general string type, which has to refuse this.
+
+        Doubling means the quote in use never has to change, so a value containing both is
+        representable rather than an error.
+        """
+        handler = VALUE_TYPE_HANDLER_REGISTRY["fortran_string"]
+        both = "has ' and \""
+
+        written = handler.to_token(both, "'old'")
+
+        assert handler.from_token(written) == both
+
+
 class TestFloatNotation:
     """Preserving the exponent character a file already uses."""
 
@@ -171,6 +203,37 @@ class TestFloatNotation:
         """Test that the check reaches both halves of a complex value."""
         with pytest.raises(UnsupportedEntryError):
             VALUE_TYPE_HANDLER_REGISTRY[rule].to_token(complex(math.inf, 0.0), "(1.0, 2.0)")
+
+
+class TestBareExponent:
+    """The exponent letter a Fortran real may leave out when the exponent is signed."""
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [("1+0", 1.0), ("5-1", 0.5), ("1.5+2", 150.0), ("-2-1", -0.2), ("+3+1", 30.0)],
+    )
+    def test_the_letter_is_put_back_before_converting(self, text, expected) -> None:
+        """Test the spellings ``float`` cannot take, confirmed against gfortran."""
+        assert VALUE_TYPE_HANDLER_REGISTRY["bare_exponent"].from_token(text) == expected
+
+    @pytest.mark.parametrize("text", ["1.5", "-2.5", "1e5", "1E5", "-1e-5", "+0.0"])
+    def test_an_ordinary_spelling_is_left_alone(self, text) -> None:
+        """Test that a number already carrying an exponent letter is not touched.
+
+        The search for a sign starts past a leading one, so ``-2.5`` is not read as an
+        exponent, and a text holding ``e`` or ``d`` is left to be parsed as it stands.
+        """
+        assert VALUE_TYPE_HANDLER_REGISTRY["bare_exponent"].from_token(text) == float(text)
+
+    def test_the_plain_float_handler_is_untouched(self) -> None:
+        """Test that the notation stayed out of the handler every format shares.
+
+        The registry is keyed by rule name, so teaching ``float`` this spelling would teach
+        it to every grammar importing ``config.float`` -- none of which can produce it.
+        """
+        assert VALUE_TYPE_HANDLER_REGISTRY["float"].from_token("1.5") == 1.5
+        with pytest.raises(ValueError):
+            VALUE_TYPE_HANDLER_REGISTRY["float"].from_token("1+0")
 
 
 class TestSelectValueRule:

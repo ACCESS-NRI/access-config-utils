@@ -67,8 +67,18 @@ class TestRender:
 
     def test_reproduces_a_donor_run_per_slot(self) -> None:
         """Test that the recorded runs are used, one per stylable slot."""
-        style = EntryStyle(indent="", key_pads=("  ", "  "), has_donor=True)
+        style = EntryStyle(indent="", key_pads=("  ", "  "), key_split=1, has_donor=True)
         assert render(LINE, "A", ["1"], style) == "A  =  1\n"
+
+    def test_a_style_whose_runs_fall_the_other_side_is_ignored(self) -> None:
+        """Test that runs are dropped rather than moved across the assignment.
+
+        The donor put both runs before its ``=``; this template has one either side.
+        Writing them here would space the entry unlike the neighbour it was copied from, so
+        the canonical layout is used instead.
+        """
+        style = EntryStyle(key_pads=("  ", "  "), key_split=2, has_donor=True)
+        assert render(LINE, "A", ["1"], style) == "A = 1\n"
 
     def test_a_style_offering_the_wrong_number_of_runs_is_ignored(self) -> None:
         """Test that a mismatch falls back to the canonical layout rather than guessing."""
@@ -116,7 +126,7 @@ class TestRanking:
         one_slot = (KEY, literal(" ="), WS, value(), literal("\n"))
         offer(one_slot, LINE)
 
-        style = EntryStyle(key_pads=("  ", "  "), has_donor=True)
+        style = EntryStyle(key_pads=("  ", "  "), key_split=1, has_donor=True)
         assert snippets("key_value", "K", 1, style)[0] == "K  =  1\n"
 
     def test_generation_order_is_the_final_tie_break(self, offer) -> None:

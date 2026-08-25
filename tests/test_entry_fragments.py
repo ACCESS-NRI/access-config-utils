@@ -93,16 +93,36 @@ class TestShapeKey:
         assert shape_key(LINE)[2] == 0
         assert shape_key((KEY, literal("="), VALUE, literal("\n\n")))[2] == 1
 
+    def test_prefers_values_parted_by_punctuation(self) -> None:
+        """Test the fourth term, which is what keeps a written list comma-separated.
+
+        A Fortran namelist reads ``1 2 3`` as well as ``1, 2, 3``, so both derivations
+        exist. Whitespace alone is the weaker of the two: a stricter reader of the same
+        format may not split the run.
+        """
+        commas = (KEY, literal("="), VALUE, literal(","), WS, VALUE, literal("\n"))
+        blanks = (KEY, literal("="), VALUE, WS, VALUE, literal("\n"))
+
+        assert shape_key(commas)[3] == 0
+        assert shape_key(blanks)[3] == 1
+        # It has to outrank the fixed-text term, which prefers the blank form for being
+        # one character shorter, so the whole key must order the same way.
+        assert shape_key(commas) < shape_key(blanks)
+
+    def test_a_template_with_fewer_than_two_values_passes_that_term(self) -> None:
+        """Test that a scalar template is not penalised by a term about value separators."""
+        assert shape_key(LINE)[3] == 0
+
     def test_measures_fixed_text_ignoring_whitespace(self) -> None:
-        """Test the fourth term, which is what rejects an optional trailing separator."""
-        assert shape_key(LINE)[3] == len("=")
-        assert shape_key((KEY, literal("="), VALUE, literal(","), literal("\n")))[3] == len("=,")
+        """Test the fifth term, which is what rejects an optional trailing separator."""
+        assert shape_key(LINE)[4] == len("=")
+        assert shape_key((KEY, literal("="), VALUE, literal(","), literal("\n")))[4] == len("=,")
 
     def test_prefers_more_whitespace_slots_and_fewer_keys(self) -> None:
         """Test the last two terms: spare whitespace is free, a repeated key is not."""
-        assert shape_key(LINE)[4] == -2
-        assert shape_key(LINE)[5] == 1
-        assert shape_key((KEY, literal("%\n"), BLOCK, literal("%"), KEY, literal("\n")))[5] == 2
+        assert shape_key(LINE)[5] == -2
+        assert shape_key(LINE)[6] == 1
+        assert shape_key((KEY, literal("%\n"), BLOCK, literal("%"), KEY, literal("\n")))[6] == 2
 
     def test_orders_a_realistic_pair(self) -> None:
         """Test the terms together, on the choice a Fortran list actually presents."""

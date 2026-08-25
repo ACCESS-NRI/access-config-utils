@@ -18,7 +18,7 @@ from conftest import FakeContext, FakeStore, entry_node, value_node
 from lark import Tree
 
 from access.config import config_dict
-from access.config.config_dict import Config, ConfigList
+from access.config.config_dict import Config, ConfigBlockList, ConfigList
 from access.config.tree_reader import EntryRef
 
 
@@ -28,8 +28,8 @@ def ref(category: str = "key_value", key: str = "a", values: int = 1) -> EntryRe
     node = entry_node(category, key, *nodes)
     if category == "key_block":
         body = Tree("block", [])
-        return EntryRef(category, entry_node(category, key, body), block_node=body)
-    return EntryRef(category, node, nodes)
+        return EntryRef(category, (entry_node(category, key, body),), block_nodes=(body,))
+    return EntryRef(category, (node,), nodes)
 
 
 @pytest.fixture
@@ -159,7 +159,7 @@ class TestAddingAKey:
         """
         inner = FakeStore({}, added={"x": ref("key_value", "x")})
         store = FakeStore({}, added={"blk": ref("key_block", "blk")})
-        store.child = lambda reference: inner  # type: ignore[method-assign]
+        store.child = lambda reference, index=0: inner  # type: ignore[method-assign]
         config = Config(store)
 
         config["blk"] = {"x": 1}
@@ -188,6 +188,55 @@ class TestDeleting:
         with pytest.raises(KeyError):
             del config["nope"]
         assert store.asked("remove") == []
+
+
+class TestDroppingAnEmptiedBlock:
+    """A block that cannot be written empty goes when its last entry does."""
+
+    @staticmethod
+    def _nested(block_rule: str, repetition: bool):
+        """Return a parent config whose one key is a block held by *block_rule*."""
+
+        class Info:
+            def is_repetition_rule(self, name: str) -> bool:
+                return repetition
+
+        inner = FakeStore({"x": ref("key_value", "x")}, ctx=FakeContext(info=Info()))
+        inner.tree = Tree(block_rule, [])
+        outer = FakeStore({"blk": ref("key_block", "blk")}, ctx=FakeContext(info=Info()))
+        outer.child = lambda reference, index=0: inner  # type: ignore[method-assign]
+        return Config(outer), outer
+
+    def test_a_derived_type_goes_when_its_last_component_does(self) -> None:
+        """Test the block whose rule is not a repetition, so an empty one cannot be written.
+
+        A derived type is spelled a component per line; once the last one goes there is
+        nothing left to write, and the lines are already out of the tree.
+        """
+        config, store = self._nested("dtype_body", repetition=False)
+
+        del config["blk"]["x"]
+
+        assert "blk" not in config
+        assert "blk" not in store.refs
+
+    def test_an_empty_namelist_group_stays(self) -> None:
+        """Test the block whose rule *is* a repetition: an empty group is still a group."""
+        config, _ = self._nested("block", repetition=True)
+
+        del config["blk"]["x"]
+
+        assert "blk" in config
+        assert dict(config["blk"]) == {}
+
+    def test_the_configuration_of_a_whole_file_is_never_dropped(self) -> None:
+        """Test that a top-level configuration has no parent to be removed from."""
+        store = FakeStore({"a": ref("key_value", "a")})
+        config = Config(store)
+
+        del config["a"]
+
+        assert dict(config) == {}
 
 
 class TestKeyCase:
@@ -323,10 +372,19 @@ class TestConfigList:
 
     @pytest.fixture
     def values(self, nodes, monkeypatch) -> tuple[ConfigList, list]:
-        """Return a list over those nodes, the tree update recorded rather than made."""
-        written: list[tuple[Tree, object]] = []
-        monkeypatch.setattr(config_dict, "update_node_value", lambda node, value: written.append((node, value)))
-        return ConfigList([0, 1, 2], nodes), written
+        """Return a list over those nodes, the tree write recorded rather than made.
+
+        ``write_values`` takes the whole list, because a repeat node backs several elements
+        at once and the run it covers is rewritten as a unit.
+        """
+        written: list[list] = []
+
+        def record(refs, new_values, lark):
+            written.append(list(new_values))
+            return list(refs)
+
+        monkeypatch.setattr(config_dict, "write_values", record)
+        return ConfigList([0, 1, 2], nodes, FakeContext()), written
 
     def test_an_element_update_reaches_its_node(self, values, nodes) -> None:
         """Test the pairing: element *i* writes to the node holding element *i*."""
@@ -335,7 +393,7 @@ class TestConfigList:
         listed[1] = 20
 
         assert listed == [0, 20, 2]
-        assert written == [(nodes[1], 20)]
+        assert written == [[0, 20, 2]]
 
     def test_a_negative_index(self, values, nodes) -> None:
         """Test that indexing from the end reaches the same node the list does."""
@@ -343,7 +401,7 @@ class TestConfigList:
 
         listed[-1] = 30
 
-        assert written == [(nodes[-1], 30)]
+        assert written == [[0, 1, 30]]
 
     def test_a_slice(self, values, nodes) -> None:
         """Test that a slice writes each of its elements, in order."""
@@ -352,7 +410,7 @@ class TestConfigList:
         listed[0:2] = [10, 11]
 
         assert listed == [10, 11, 2]
-        assert written == [(nodes[0], 10), (nodes[1], 11)]
+        assert written == [[10, 11, 2]]
 
     def test_a_slice_with_a_step(self, values, nodes) -> None:
         """Test that the nodes are selected by the same slice as the elements."""
@@ -361,7 +419,7 @@ class TestConfigList:
         listed[::2] = [10, 30]
 
         assert listed == [10, 1, 30]
-        assert written == [(nodes[0], 10), (nodes[2], 30)]
+        assert written == [[10, 1, 30]]
 
     def test_a_slice_of_the_wrong_length(self, values) -> None:
         """Test that a slice assignment cannot change how many elements there are."""
@@ -397,3 +455,43 @@ class TestConfigList:
 
         with pytest.raises(NotImplementedError, match="assign a whole new list"):
             operation(listed)
+
+
+class TestConfigBlockList:
+    """The list handed out for a block the file writes more than once."""
+
+    @pytest.fixture
+    def blocks(self) -> ConfigBlockList:
+        """Return a list standing for two occurrences of one block."""
+        return ConfigBlockList([Config(FakeStore()), Config(FakeStore())])
+
+    def test_holds_one_configuration_per_occurrence(self, blocks) -> None:
+        """Test that the occurrences are reachable by index, in the order written."""
+        assert len(blocks) == 2
+        assert all(isinstance(block, Config) for block in blocks)
+
+    @pytest.mark.parametrize(
+        "operation",
+        [
+            lambda blocks: blocks.append({}),
+            lambda blocks: blocks.extend([{}]),
+            lambda blocks: blocks.insert(0, {}),
+            lambda blocks: blocks.remove(blocks[0]),
+            lambda blocks: blocks.pop(),
+            lambda blocks: blocks.clear(),
+            lambda blocks: blocks.sort(),
+            lambda blocks: blocks.reverse(),
+            lambda blocks: blocks.__setitem__(0, {}),
+            lambda blocks: blocks.__delitem__(0),
+            lambda blocks: blocks.__iadd__([{}]),
+            lambda blocks: blocks.__imul__(2),
+        ],
+    )
+    def test_refuses_to_add_remove_or_replace_a_whole_block(self, blocks, operation) -> None:
+        """Test that only the entries of an occurrence are editable, not the list itself.
+
+        Where a new occurrence would go, and how it should be spaced, is not something the
+        list can answer, so these would leave it and the file disagreeing.
+        """
+        with pytest.raises(NotImplementedError, match="occurrence of a repeated block"):
+            operation(blocks)

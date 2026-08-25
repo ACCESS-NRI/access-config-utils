@@ -29,17 +29,9 @@ The pipeline
 
 Because step 3 is validated by parsing, ranking only decides which *valid* rendering is
 used. It can change how the output looks, never whether it is correct.
-
-Examples:
-    Synthesis is reached through the ordinary mapping interface; a new key is written in the
-    format's own syntax, spaced like the entries around it.
-
-    >>> from access.config import MOM6InputParser
-    >>> config = MOM6InputParser().parse("A = 1\\n")
-    >>> config["B"] = [2, 3]
-    >>> print(str(config), end="")
-    A = 1
-    B = 2, 3
+Synthesis is reached through the ordinary mapping interface: assigning a key the
+configuration does not have writes it in the format's own syntax, spaced like the entries
+around it.
 """
 
 from __future__ import annotations
@@ -87,9 +79,9 @@ def _rank_key(template: EntryTemplate, style: EntryStyle, order: int) -> tuple[i
     Returns:
         tuple[int, ...]: The sort key.
     """
-    ends_line, block_ok, newlines, literal_length, negated_ws, keys = shape_key(template)
+    ends_line, block_ok, newlines, parted, literal_length, negated_ws, keys = shape_key(template)
     mismatch = 0 if style_matches(template, style) else 1
-    return (ends_line, block_ok, newlines, literal_length, mismatch, negated_ws, keys, order)
+    return (ends_line, block_ok, newlines, parted, literal_length, mismatch, negated_ws, keys, order)
 
 
 def _ranked_templates(info: GrammarInfo, container: str, category: str, style: EntryStyle) -> list[EntryTemplate]:
@@ -123,7 +115,9 @@ def _ws_texts(template: EntryTemplate, style: EntryStyle) -> dict[int, str]:
     if style.indent and slots.leading:
         # The indentation sits immediately before the key.
         texts[slots.leading[-1]] = style.indent
-    for indices, pads in ((slots.key, style.key_pads), (slots.element, style.element_pads)):
+    # Only reproduce the key runs where the template puts them on the side they came from.
+    matched = style.key_pads is not None and slots.key_split == style.key_split
+    for indices, pads in ((slots.key if matched else (), style.key_pads), (slots.element, style.element_pads)):
         if pads is not None and len(indices) == len(pads):
             for index, pad in zip(indices, pads, strict=True):
                 texts[index] = pad
@@ -155,9 +149,10 @@ def render(template: EntryTemplate, key: str, value_texts: Sequence[str], style:
         Given a donor style, the runs it recorded are reproduced instead. One pad per
         stylable slot: this template has two between the key and the value, either side of
         the ``=``, and a style offering a different number is ignored rather than guessed
-        at.
+        at. ``key_split`` says how many of them fall before the ``=``, since a run recorded
+        on the wrong side of it would move the whitespace rather than reproduce it.
 
-        >>> style = EntryStyle(indent="", key_pads=("  ", "  "), has_donor=True)
+        >>> style = EntryStyle(key_pads=("  ", "  "), key_split=1, has_donor=True)
         >>> render(template, "A", ["1"], style)
         'A  =  1\\n'
     """

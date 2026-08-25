@@ -17,7 +17,7 @@ from collections.abc import Mapping, Sequence
 from access.config.config_dict import Config
 from access.config.config_store import ConfigStore
 from access.config.grammar_compiled import ParseContext, compile_grammar
-from access.config.grammar_contract import START_RULE
+from access.config.grammar_contract import BLOCK_RULE, START_RULE
 from access.config.grammar_values import VALUE_RULE_PRIORITY
 from access.config.tree_navigation import AddParent
 
@@ -85,12 +85,50 @@ class ConfigParser(ABC):
         return {}
 
     @property
+    def block_rules(self) -> Sequence[str]:
+        """Names of the rules that hold the contents of a block.
+
+        Nearly always just ``"block"``. A format with more than one kind of block declares
+        them all, most-addable first: the first name is the one new entries are written
+        into, and a block held by any of the others is read and edited but not added to.
+        A block written one component per line, rather than as a delimited body, is one.
+
+        Returns:
+            Sequence[str]: The rule names.
+        """
+        return (BLOCK_RULE,)
+
+    @property
+    def repeated_blocks(self) -> str:
+        """What it means for a file to write the same block twice.
+
+        ``"merge"``, the default, reads the two as one block holding the entries of both. A
+        key assigned in both keeps the last value, which is what a format uses repetition to
+        express when it uses it at all.
+
+        ``"separate"`` reads them as a list of blocks, one per occurrence. A format whose
+        reader scans forward and stops at the first block of the name needs this: a program
+        reading the block once sees the first occurrence, one reading it twice sees each in
+        turn, and neither of those is the merge. Keeping the occurrences is the only reading
+        all of them can be recovered from.
+
+        This applies only to the first of ``block_rules``. A block held by any other rule
+        merges whatever the policy, because repeating one of those means something else: a
+        block spelled one component per line makes ``a%b`` and ``a%c`` two writings of the
+        single key ``a``, and merging them is what reads them correctly.
+
+        Returns:
+            str: ``"merge"`` or ``"separate"``.
+        """
+        return "merge"
+
+    @property
     def value_rule_priority(self) -> Sequence[str]:
         """Order in which value-type rules are tried when writing a value for a new key.
 
         Several value types accept the same Python type, so the order decides how a value is
         written: whether a ``bool`` becomes ``.true.`` or ``True``, or a ``float`` uses a
-        Fortran ``D`` exponent. Only rules the grammar admits are considered.
+        double-precision exponent. Only rules the grammar admits are considered.
 
         Returns:
             Sequence[str]: The rule names, most preferred first.
@@ -111,6 +149,8 @@ class ConfigParser(ABC):
             self.case_sensitive_keys,
             self.entry_templates,
             tuple(self.value_rule_priority),
+            tuple(self.block_rules),
+            self.repeated_blocks,
         )
 
         # Parse text. Here we add a newline character to simplify the writting of the

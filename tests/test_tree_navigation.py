@@ -11,7 +11,7 @@ all -- without a grammar contrived to produce each one.
 """
 
 import pytest
-from conftest import entry_node, value_node
+from conftest import entry_node, value_node, ws_node
 from lark import Token, Tree
 
 from access.config.tree_navigation import (
@@ -20,7 +20,14 @@ from access.config.tree_navigation import (
     entries_of,
     entry_insertion_index,
     entry_nodes,
+    flatten_slots,
+    index_positions,
     is_comment_line,
+    is_value_node,
+    node_values,
+    place_indexed,
+    repeat_parts,
+    token_value,
 )
 
 
@@ -183,3 +190,147 @@ class TestEntryInsertionIndex:
         """Test that the run ends at an entry, so the index is one past the *last* entry."""
         container = Tree("start", [scalar("a"), comment_line(), scalar("b"), line()])
         assert entry_insertion_index(container) == 3
+
+
+def repeat(count: int, inner: Tree | None = None) -> Tree:
+    """Return a repeat node: ``n*v``, or ``n*`` when nothing is repeated."""
+    children: list[Tree | Token] = [Token("REPEAT_COUNT", f"{count}*")]
+    if inner is not None:
+        children.append(inner)
+    return Tree("repeat", children)
+
+
+class TestReadingValues:
+    """What a value node contributes to its entry.
+
+    One value for an ordinary node, and *n* for ``n*v`` -- which is why a node and a list
+    element are no longer one to one.
+    """
+
+    def test_a_plain_value_node_is_one_value(self) -> None:
+        """Test the ordinary case, where the node and the element correspond."""
+        node = value_node("integer", "7")
+
+        assert is_value_node(node)
+        assert token_value(node) == 7
+        assert node_values(node) == [7]
+
+    def test_a_repeat_is_the_value_that_many_times(self) -> None:
+        """Test ``3*1``, which is written where one value goes and means three."""
+        node = repeat(3, value_node("integer", "1"))
+
+        assert is_value_node(node)
+        assert node_values(node) == [1, 1, 1]
+
+    def test_a_repeat_of_nulls_names_no_value(self) -> None:
+        """Test the bare ``n*`` form, which stands for that many unset elements."""
+        assert node_values(repeat(2)) == [None, None]
+
+    def test_repeat_parts_splits_the_count_from_what_it_repeats(self) -> None:
+        """Test the two shapes a repeat node comes in."""
+        inner = value_node("float", "9.0")
+
+        assert repeat_parts(repeat(6, inner)) == (6, inner)
+        assert repeat_parts(repeat(4)) == (4, None)
+
+    def test_what_is_not_a_value_node(self) -> None:
+        """Test that only a value-type rule or a repeat counts."""
+        assert not is_value_node(Tree("key", [Token("CNAME", "a")]))
+        assert not is_value_node(ws_node())
+        assert not is_value_node(Token("NEWLINE", "\n"))
+
+
+def index_node(spec: str) -> Tree:
+    """Return an array qualifier node holding *spec*, the ``1:3:2`` of ``v(1:3:2)``."""
+    return Tree("index", [Token("INDEX", spec)])
+
+
+class TestIndexPositions:
+    """Working out where an indexed entry's values land in the array its key names."""
+
+    @pytest.mark.parametrize(
+        ("spec", "count", "expected"),
+        [
+            ("3", 1, [3]),
+            # A qualifier says where the values *begin*, not how many there may be.
+            ("3", 3, [3, 4, 5]),
+            ("2:5", 4, [2, 3, 4, 5]),
+            ("1:7:2", 4, [1, 3, 5, 7]),
+            # Implicit bounds are filled in from how many values there are.
+            ("2:", 3, [2, 3, 4]),
+            (":5", 3, [3, 4, 5]),
+            (":", 2, [1, 2]),
+            # Positions are as written, so they may start anywhere.
+            ("0", 2, [0, 1]),
+            ("-1", 2, [-1, 0]),
+            ("5:1:-2", 3, [5, 3, 1]),
+        ],
+    )
+    def test_a_qualifier_it_models(self, spec, count, expected) -> None:
+        """Test each shape of qualifier this understands."""
+        assert index_positions(index_node(spec), count) == expected
+
+    def test_no_qualifier_at_all(self) -> None:
+        """Test the unqualified assignment, whose values simply follow on."""
+        assert index_positions(None, 3) is None
+
+    @pytest.mark.parametrize("spec", ["1,1", "1:2:3:4", "n", "1:n", "1:5:0", ""])
+    def test_a_qualifier_it_does_not_model(self, spec) -> None:
+        """Test the ones left alone, which keep their text in the key instead.
+
+        A multidimensional index addresses an array of arrays, which this flat model cannot
+        hold; a non-numeric bound names nothing it can place; a zero stride goes nowhere;
+        and an empty qualifier names no position at all. Reporting ``None`` is what stops
+        ``v(1,1)`` and ``v(3,3)`` reading as one key.
+        """
+        assert index_positions(index_node(spec), 2) is None
+
+
+class TestPlacingAndFlattening:
+    """Recording where each entry's values sit, then laying the array out."""
+
+    def test_places_at_the_positions_given(self) -> None:
+        """Test the ordinary indexed entry."""
+        slots: dict[int, tuple[object, Tree | None]] = {}
+        first, second = value_node(text="1"), value_node(text="2")
+
+        place_indexed(slots, [1, 2], [1, 2], [first, second])
+
+        assert slots == {1: (1, first), 2: (2, second)}
+
+    def test_an_unqualified_entry_starts_at_one(self) -> None:
+        """Test that an unqualified assignment joins the array Fortran would number from."""
+        slots: dict[int, tuple[object, Tree | None]] = {}
+        node = value_node()
+
+        place_indexed(slots, None, [7], [node])
+
+        assert slots == {1: (7, node)}
+
+    def test_a_later_entry_overwrites_the_position(self) -> None:
+        """Test that the last assignment to a position wins, as it does for a whole key."""
+        slots: dict[int, tuple[object, Tree | None]] = {1: (1, value_node())}
+        later = value_node(text="9")
+
+        place_indexed(slots, [1], [9], [later])
+
+        assert slots == {1: (9, later)}
+
+    def test_flatten_fills_the_gaps_with_nulls(self) -> None:
+        """Test that a position no entry wrote reads as null, backed by no node.
+
+        Having no node is what makes it unwritable: there is nowhere in the file to put a
+        value for it.
+        """
+        first, third = value_node(text="1"), value_node(text="3")
+
+        values, nodes = flatten_slots({1: (1, first), 3: (3, third)})
+
+        assert values == [1, None, 3]
+        assert nodes == [first, None, third]
+
+    def test_flatten_starts_at_the_lowest_position_written(self) -> None:
+        """Test that the array spans what the file wrote, wherever that begins."""
+        values, _ = flatten_slots({5: (5, value_node()), 7: (7, value_node())})
+
+        assert values == [5, None, 7]

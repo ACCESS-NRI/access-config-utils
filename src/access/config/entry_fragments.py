@@ -108,9 +108,9 @@ def _block_contents_start_a_line(template: EntryTemplate) -> bool:
     """Report whether the contents of a new block would begin on their own line.
 
     A grammar may make the newline after a block header optional, so that a block can
-    legally open and close on one line (a Fortran namelist does: ``&NAME/`` is a valid if
-    unusual empty group). Preferring the form whose body is on its own line is what leaves
-    room for the keys about to be added to it.
+    legally open and close on one line, so that an empty block is written without a body.
+    Preferring the form whose body is on its own line is what leaves room for the keys about
+    to be added to it.
 
     Args:
         template (EntryTemplate): The template to inspect.
@@ -136,9 +136,14 @@ def shape_key(template: EntryTemplate) -> tuple[int, ...]:
        at all, so this is a preference rather than a filter.
     2. A new block's contents should start on their own line.
     3. Fewest newlines *other than* the one ending the entry, so no blank lines are added.
-    4. Least fixed text, which rejects an optional trailing separator such as ``KEY = 1,``.
-    5. Most whitespace placeholders, since unwanted ones render empty anyway.
-    6. Fewest repetitions of the key.
+    4. Values parted by punctuation rather than by whitespace alone. A grammar may allow
+       both -- a grammar may read ``1 2 3`` as well as ``1, 2, 3`` -- and the run of
+       whitespace is the weaker of the two: a stricter reader of the same format may
+       not split it. This outranks the next term, which would otherwise choose the
+       whitespace form for having one character less of fixed text.
+    5. Least fixed text, which rejects an optional trailing separator such as ``KEY = 1,``.
+    6. Most whitespace placeholders, since unwanted ones render empty anyway.
+    7. Fewest repetitions of the key.
 
     Used both to rank finished templates and to decide which derivations survive
     ``_MAX_ALTERNATIVES``, so that the generation cap keeps what ranking would prefer.
@@ -158,9 +163,30 @@ def shape_key(template: EntryTemplate) -> tuple[int, ...]:
         0 if ends_line else 1,
         0 if _block_contents_start_a_line(template) else 1,
         sum(text.count("\n") for text in literals) - (1 if ends_line else 0),
+        0 if _values_parted_by_literal(template) else 1,
         sum(len(text.strip()) for text in literals),
         -count_fragments(template, "ws"),
         count_fragments(template, "key"),
+    )
+
+
+def _values_parted_by_literal(template: EntryTemplate) -> bool:
+    """Report whether every pair of neighbouring values has punctuation between them.
+
+    False for a template that leans on a whitespace placeholder alone to tell one value
+    from the next. A template with fewer than two values is trivially True, so this term
+    moves nothing for the categories that hold one value or none.
+
+    Args:
+        template (EntryTemplate): The template to inspect.
+
+    Returns:
+        bool: True if no two values are parted by whitespace alone.
+    """
+    positions = [index for index, fragment in enumerate(template) if fragment.kind == "value"]
+    return all(
+        any(template[between].kind == "literal" for between in range(first + 1, second))
+        for first, second in zip(positions, positions[1:], strict=False)
     )
 
 

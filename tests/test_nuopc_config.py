@@ -188,6 +188,27 @@ def test_nuopc_config_table_syntax_roundtrip(parser, text):
     assert str(parser.parse(text)) == text
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "BLK::\n Verbosity = off\n::\n",
+        "BLK::\n Verbosity= off\n::\n",
+        "BLK::\n Verbosity =off\n::\n",
+        "BLK::\n Verbosity=off\n::\n",
+        "BLK::\n Verbosity  =  off\n::\n",
+    ],
+)
+def test_nuopc_config_roundtrip_assignment_spacing(parser, text) -> None:
+    """Test that a table assignment keeps its "=" and the whitespace around it.
+
+    The "=" is an anonymous literal, so Lark filters it out of the parse tree. With a bare
+    "ws*" on each side, the tree records that a whitespace run exists but not which side of
+    the "=" it fell on. Here that also let the reconstructor confuse this rule with the
+    resource-file rule aliased to the same name, and write "Verbosity: off" instead.
+    """
+    assert str(parser.parse(text)) == text
+
+
 def test_nuopc_config_roundtrip_with_mutation(parser, nuopc_config_file, modified_nuopc_config_file):
     """Test round-trip parsing with mutation of the config."""
     config = parser.parse(nuopc_config_file)
@@ -364,6 +385,17 @@ def test_nuopc_config_addition_multi_component_path(parser):
 
     assert config["Z"] == Path("bar/baz")
     assert str(config) == "A: 1\nZ: bar/baz\n"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+
+def test_nuopc_config_delete_removes_every_entry_that_wrote_the_key(parser):
+    """Test that a label assigned more than once is deleted from every line assigning it."""
+    config = parser.parse("A: 1\nA: 2\nB: 3\n")
+    assert dict(config) == {"A": 2, "B": 3}
+
+    del config["A"]
+
+    assert str(config) == "B: 3\n"
     assert dict(parser.parse(str(config))) == dict(config)
 
 

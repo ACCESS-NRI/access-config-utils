@@ -25,13 +25,14 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, NoReturn, SupportsIndex
 
 from access.config.grammar_contract import KEY_BLOCK, KEY_LIST
-from access.config.tree_edits import update_node_value
+from access.config.tree_edits import write_values
 from access.config.tree_reader import entry_value
 
 if TYPE_CHECKING:
     from lark import Tree
 
     from access.config.config_store import ConfigStore
+    from access.config.grammar_compiled import ParseContext
     from access.config.tree_reader import EntryRef
 
 
@@ -50,15 +51,25 @@ class ConfigList(list):
     (``config["key"] = [...]``), which rewrites every element.
 
     Args:
+    A repeat count is the one case where a node backs more than one element: ``6*9.0`` is
+    six elements written once. Assigning to any of them splits the run, so the notation
+    survives an edit -- the six become ``2*9.0, 8.0, 3*9.0``, not six separate values.
+
+    Args:
         data (list[Any]): The list data.
-        nodes (Sequence[Tree]): The value-type rule nodes, one per list element.
+        nodes (Sequence[Tree]): The node backing each element. A repeat node appears once
+            per element it covers, so this is one entry per element, not per node.
+        ctx (ParseContext): The compiled grammar, needed to parse the replacement for a
+            repeat run that an assignment has split.
     """
 
-    _nodes: list[Tree]  # Value-type rule nodes from the parse tree, one per list element.
+    _nodes: list[Tree]  # The parse tree node backing each list element.
+    _ctx: ParseContext  # Compiled grammar and per-parser settings.
 
-    def __init__(self, data: list[Any], nodes: Sequence[Tree]) -> None:
+    def __init__(self, data: list[Any], nodes: Sequence[Tree], ctx: ParseContext) -> None:
         super().__init__(data)
         self._nodes = list(nodes)
+        self._ctx = ctx
 
     def __setitem__(self, index: SupportsIndex | slice, value: Any) -> None:
         """Override to update both the list element(s) and the parse tree node(s).
@@ -77,17 +88,24 @@ class ConfigList(list):
         Raises:
             ValueError: If a slice assignment would change the list length.
         """
+        updated = list(self)
         if isinstance(index, slice):
-            nodes = self._nodes[index]
             values = list(value)
-            if len(values) != len(nodes):
-                raise ValueError(f"Slice assignment would change list length from {len(nodes)} to {len(values)}")
-            for node, item in zip(nodes, values, strict=True):
-                update_node_value(node, item)
-            super().__setitem__(index, values)
+            if len(values) != len(self._nodes[index]):
+                raise ValueError(
+                    f"Slice assignment would change list length from {len(self._nodes[index])} to {len(values)}"
+                )
+            updated[index] = values
         else:
-            update_node_value(self._nodes[index], value)
-            super().__setitem__(index, value)
+            updated[index] = value
+
+        # The whole list is written, not just the elements assigned to: a repeat node backs
+        # several of them at once, so the run it covers is rewritten as a unit. Writing a
+        # value back over itself reproduces its own token, so untouched ones do not move.
+        self._nodes[:] = write_values(self._nodes, updated, self._ctx.lark)
+        # Not *value*: for a slice it may have been a one-shot iterable, already drained
+        # above, and taking it a second time would leave the list short.
+        super().__setitem__(index, values if isinstance(index, slice) else value)
 
     def _unsupported(self, *args: Any, **kwargs: Any) -> NoReturn:
         """Reject a list operation the parse tree cannot follow.
@@ -119,40 +137,104 @@ class ConfigList(list):
     __imul__ = _unsupported  # type: ignore[assignment]
 
 
+class ConfigBlockList(list):
+    """The occurrences of a block the file writes more than once, one ``Config`` each.
+
+    A format may read a repeated block as separate records rather than merging them -- a
+    format may, where a reader stops at the first block of the name and so no single read
+    ever sees the merge. Each element here is a nested ``Config`` over one
+    occurrence, and writing through it reaches that occurrence alone.
+
+    Only the elements are editable, not the list. Adding or removing a whole block is a
+    change to the file's structure that nothing here knows how to write -- where the new
+    block would go, and how it should be spaced -- so those operations raise
+    ``NotImplementedError`` rather than leaving the list and the file disagreeing.
+
+    Args:
+        blocks (Sequence[Config]): One configuration per occurrence, in the order written.
+    """
+
+    def _unsupported(self, *args: Any, **kwargs: Any) -> NoReturn:
+        """Reject an operation that would add, remove or replace a whole block.
+
+        Args:
+            *args (Any): Ignored.
+            **kwargs (Any): Ignored.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        raise NotImplementedError(
+            "Adding, removing or replacing a whole occurrence of a repeated block is not "
+            "supported; edit the entries of one occurrence, or delete the key to remove all "
+            "of them"
+        )
+
+    append = _unsupported  # type: ignore[assignment]
+    extend = _unsupported  # type: ignore[assignment]
+    insert = _unsupported  # type: ignore[assignment]
+    remove = _unsupported  # type: ignore[assignment]
+    pop = _unsupported  # type: ignore[assignment]
+    clear = _unsupported  # type: ignore[assignment]
+    sort = _unsupported  # type: ignore[assignment]
+    reverse = _unsupported  # type: ignore[assignment]
+    __setitem__ = _unsupported  # type: ignore[assignment]
+    __delitem__ = _unsupported  # type: ignore[assignment]
+    __iadd__ = _unsupported  # type: ignore[assignment]
+    __imul__ = _unsupported  # type: ignore[assignment]
+
+
 class Config(dict):
     """A dict holding the contents of a parsed configuration file.
 
     Every write is mirrored into the parse tree the store owns, so that ``str(config)``
     reproduces the file with the change and nothing else. Keys are matched however the
-    format matches them: case-insensitively for a Fortran namelist, exactly for the rest.
+    format matches them: case-insensitively for some formats, exactly for others.
 
     Args:
         store (ConfigStore): The parse tree of one container and the entries in it.
     """
 
     _store: ConfigStore  # The parse tree behind this dict.
+    # The configuration this one is a block of, and the key it is stored under. None for the
+    # configuration of a whole file. Used to drop a block that has been emptied and cannot
+    # be written empty -- a derived type is one, since "a%" on its own means nothing.
+    _parent: tuple[Config, str] | None
 
     def __init__(self, store: ConfigStore) -> None:
         self._store = store
-        super().__init__({key: self._wrap(ref) for key, ref in store.refs.items()})
+        self._parent = None
+        super().__init__({key: self._wrap(key, ref) for key, ref in store.refs.items()})
 
-    def _wrap(self, ref: EntryRef) -> Any:
+    def _wrap(self, key: str, ref: EntryRef) -> Any:
         """Return the object standing for an entry in the dict.
 
         A list and a block are both handed out as something that keeps the parse tree in
         step: a ``ConfigList`` pairs each element with the node holding it, and a nested
-        ``Config`` does the same for the entries of a block.
+        ``Config`` does the same for the entries of a block. A block the file writes more
+        than once, in a format that reads those as separate records, becomes a
+        ``ConfigBlockList`` of one ``Config`` per occurrence.
 
         Args:
+            key (str): The normalised key the entry is stored under.
             ref (EntryRef): The entry to represent.
 
         Returns:
-            Any: The scalar, a ``ConfigList``, a nested ``Config``, or ``None``.
+            Any: The scalar, a ``ConfigList``, a nested ``Config``, a ``ConfigBlockList``,
+                or ``None``.
         """
         if ref.category == KEY_BLOCK:
-            return Config(self._store.child(ref))
+            blocks = [self._block(key, ref, index) for index in range(len(ref.block_nodes))]
+            return blocks[0] if len(blocks) == 1 else ConfigBlockList(blocks)
         value = entry_value(ref)
-        return ConfigList(value, ref.value_nodes) if ref.category == KEY_LIST else value
+        return ConfigList(value, ref.value_nodes, self._store.ctx) if ref.category == KEY_LIST else value
+
+    def _block(self, key: str, ref: EntryRef, index: int) -> Config:
+        """Return the nested configuration for one occurrence of a block."""
+        block = Config(self._store.child(ref, index))
+        # Tell it where it lives, so emptying it can remove it from here.
+        block._parent = (self, key)
+        return block
 
     def __getitem__(self, key: str) -> Any:
         """Override method to get item from dict.
@@ -199,7 +281,16 @@ class Config(dict):
             raise SyntaxError("Trying to assign a new value to an entire block")
         else:
             nodes = self._store.replace(key, value)
-            stored = ConfigList(value, nodes) if isinstance(value, list) else value
+            if isinstance(value, list):
+                # Update the list already stored rather than making a new one. Writing a
+                # list can replace the nodes behind it, and a caller holding the old one
+                # would otherwise go on writing through nodes no longer in the tree.
+                stored = dict.get(self, key)
+                assert isinstance(stored, ConfigList)
+                list.__setitem__(stored, slice(None), value)
+                stored._nodes[:] = nodes
+            else:
+                stored = value
             super().__setitem__(key, stored)
 
     def _add(self, key: str, raw_key: str, value: Any) -> None:
@@ -215,7 +306,7 @@ class Config(dict):
             value (Any): The value to store.
         """
         ref = self._store.add(key, raw_key, value)
-        stored = self._wrap(ref)
+        stored = self._wrap(key, ref)
         super().__setitem__(key, stored)
 
         if ref.category == KEY_BLOCK:
@@ -229,6 +320,25 @@ class Config(dict):
         key = self._store.ctx.normalise_key(key)
         super().__delitem__(key)
         self._store.remove(key)
+        self._drop_if_unwritable()
+
+    def _drop_if_unwritable(self) -> None:
+        """Remove this configuration from its parent if it is empty and unwritable.
+
+        A block whose rule is a plain repetition may hold nothing -- an empty block is
+        still a block. One written a component per line may not: once the last component
+        goes there is nothing left to write, and the lines
+        have already been removed from the tree. Leaving the empty block in the parent's
+        dict would make it disagree with the file.
+        """
+        if self or self._parent is None:
+            return
+        if self._store.ctx.info.is_repetition_rule(str(self._store.tree.data)):
+            return
+        parent, key = self._parent
+        dict.__delitem__(parent, key)
+        parent._store.refs.pop(key, None)
+        self._parent = None
 
     # --- Remaining mapping protocol ---
     #
