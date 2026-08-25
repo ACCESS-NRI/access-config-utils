@@ -4,8 +4,8 @@
 """Finding one's way around a Lark parse tree.
 
 Everything here reads a tree and reports what is in it. Nothing here changes one; that is
-``tree_edits``. The questions asked are always the same three: where are the entries, which
-children are comment lines, and where does a new entry belong.
+``tree_edits``. Four questions are asked: where are the entries, which children are comment
+lines, where does a new entry belong, and what values does a node hold.
 
 Lark parse tree structure
 -------------------------
@@ -137,13 +137,13 @@ def entry_insertion_index(container: Tree) -> int:
     outside the block entirely.
 
     The search is over the container's *direct* children even though the test for holding an
-    entry looks deeper: in a Fortran namelist one child can be a whole line carrying several
-    assignments, and a new entry has to go after that line rather than inside it.
+    entry looks deeper: one child can be a whole line carrying several assignments, and a
+    new entry has to go after that line rather than inside it.
 
     **A run of comment lines starting at that position is stepped over**, up to the first
     blank line, the next entry, or the end of the container. A comment there either carries
-    on from the trailing comment of the line above -- MOM6 documents most of its parameters
-    that way, beginning on the parameter's own line and continuing below it -- or heads what
+    on from the trailing comment of the line above -- a format may document a key that way,
+    beginning on the key's own line and continuing below it -- or heads what
     follows. Either way the new entry belongs after the whole run, and stopping at a blank
     line is what puts it *between* two comment blocks rather than inside the second one.
 
@@ -228,7 +228,7 @@ def index_positions(node: Tree | None, count: int) -> list[int] | None:
     implicit bound (``(2:)``, ``(:5)``, ``(:)``) is filled in from how many values there
     are. Positions are as written, so they may start anywhere, including at zero or below.
 
-    A qualifier names where an entry's values *begin*, not how many it may have: Fortran's
+    A qualifier names where an entry's values *begin*, not how many it may have:
     ``v(3) = 1, 2, 3`` fills three positions from the third.
 
     Args:
@@ -278,15 +278,15 @@ def place_indexed(
         slots (dict[int, tuple[Any, Tree | None]]): Value and backing node by position,
             added to in place. A position already taken is overwritten, as the later
             assignment wins.
-        positions (list[int] | None): Where the values go, or ``None`` to follow on from the
-            first position Fortran numbers.
+        positions (list[int] | None): Where the values go, or ``None`` to follow on from
+            the first position the format numbers.
         values (Sequence[Any]): The entry's values.
         refs (Sequence[Tree | None]): The node backing each value, ``None`` where the entry
             wrote the position without a value.
     """
     if positions is None:
-        # An unqualified assignment to an array otherwise written with indices starts at the
-        # first position Fortran numbers, which is one.
+        # An unqualified assignment to an array otherwise written with indices starts at
+        # the first position the format numbers, which is one.
         positions = [1 + offset for offset in range(len(values))]
     for position, value, ref in zip(positions, values, refs, strict=True):
         slots[position] = (value, ref)

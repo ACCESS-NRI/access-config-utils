@@ -86,7 +86,7 @@ def parse_entry_nodes(lark: Lark, container: str, snippet: str) -> list[Tree | T
     children = parsed.children if str(parsed.data) == container else [parsed]
 
     # Drop nodes that matched no text. A rule able to derive the empty string produces one
-    # of these -- Fortran's rule for the text between namelists is one -- and splicing it
+    # of these -- a rule for the text between blocks may be one -- and splicing it
     # would put a second empty node beside the container's own, which the grammar cannot
     # derive and the reconstructor therefore refuses to write out. Only the top level is
     # filtered: a block being created is legitimately an empty node, and it is nested rather
@@ -138,7 +138,7 @@ def remove_entry_node(entry_node: Tree, info: GrammarInfo) -> None:
 def prune_empty_wrappers(node: Tree, info: GrammarInfo) -> Tree:
     """Remove the nodes that existed only to wrap an entry that has just been deleted.
 
-    A grammar can require an entry where it puts one. Fortran's line rule does: it is an
+    A grammar can require an entry where it puts one. A line rule may: it is an
     assignment followed by an optional comment and newline, so deleting the assignment
     leaves a line the rule cannot derive, and the reconstructor refuses to write the file
     out. Such a wrapper is dropped along with the entry, taking that entry's trailing
@@ -177,8 +177,8 @@ def _holds_entry(node: Tree) -> bool:
 def merge_adjacent_repetitions(container: Tree, info: GrammarInfo) -> None:
     """Rejoin sibling nodes that became adjacent because an entry between them was removed.
 
-    A grammar can require entries and the text around them to alternate. Fortran's does:
-    the text between two namelists is one node, so removing a namelist leaves two such
+    A grammar can require entries and the text around them to alternate: where the text
+    between two blocks is one node, removing a block leaves two such
     nodes side by side, which the start rule cannot derive and the reconstructor therefore
     refuses to write out. Merging them restores a shape the grammar accepts, and preserves
     the text exactly, since the merged node holds both sets of children in order.
@@ -302,7 +302,7 @@ def _parse_values(lark: Lark, texts: Sequence[str]) -> list[Tree | Token]:
     """
     rule = KEY_LIST if len(texts) > 1 else KEY_VALUE
     # Whether an entry rule ends at its last value or takes the rest of the line with it is
-    # up to the format -- Fortran's stops, MOM6's and NUOPC's do not -- so offer both.
+    # up to the format -- some stop there, others do not -- so offer both.
     assignment = f"K = {', '.join(texts)}"
     try:
         fresh = lark.parse(assignment, start=rule)

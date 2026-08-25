@@ -37,7 +37,7 @@ Terminals whose pattern is a plain string are reproduced from the pattern, and t
 holding a key or a value are filled in from the caller's data. That leaves only whitespace
 and end-of-line. Any other regular-expression terminal has no entry here, and a derivation
 needing one is discarded -- which is how a derivation that would have to invent the text of
-a comment, or of a keyword closing a block, is pruned (a Fortran namelist has both: a
+a comment, or of a keyword closing a block, is pruned (a format may have both: a
 comment is free text, and ``&end`` is an alternative to ``/``).
 
 Matched on the terminal name *suffix*, because Lark renames terminals imported from another
@@ -57,16 +57,9 @@ class GrammarInfo:
             of the rule they define.
         terminals (Mapping[str, TerminalDef]): Terminal definitions, keyed by name.
 
-    Examples:
-        >>> from access.config.grammar_compiled import compile_grammar
-        >>> from access.config import MOM6InputParser
-        >>> info = compile_grammar(MOM6InputParser().grammar).info
-        >>> sorted(info.value_rules("value"))
-        ['bool', 'float', 'integer', 'string']
-        >>> info.value_rules("key_value")
-        frozenset()
-        >>> info.is_repetition_rule("block")
-        True
+    ``value_rules`` answers which value-type rules a position admits, and is empty for a
+    position that holds no value. ``is_repetition_rule`` says whether a rule is a plain
+    repetition, which is what tells a container that may be empty from one that may not.
     """
 
     rules_by_origin: Mapping[str, Sequence[Rule]]

@@ -108,9 +108,9 @@ def _block_contents_start_a_line(template: EntryTemplate) -> bool:
     """Report whether the contents of a new block would begin on their own line.
 
     A grammar may make the newline after a block header optional, so that a block can
-    legally open and close on one line (a Fortran namelist does: ``&NAME/`` is a valid if
-    unusual empty group). Preferring the form whose body is on its own line is what leaves
-    room for the keys about to be added to it.
+    legally open and close on one line, so that an empty block is written without a body.
+    Preferring the form whose body is on its own line is what leaves room for the keys about
+    to be added to it.
 
     Args:
         template (EntryTemplate): The template to inspect.
@@ -137,7 +137,7 @@ def shape_key(template: EntryTemplate) -> tuple[int, ...]:
     2. A new block's contents should start on their own line.
     3. Fewest newlines *other than* the one ending the entry, so no blank lines are added.
     4. Values parted by punctuation rather than by whitespace alone. A grammar may allow
-       both -- a Fortran namelist reads ``1 2 3`` as well as ``1, 2, 3`` -- and the run of
+       both -- a grammar may read ``1 2 3`` as well as ``1, 2, 3`` -- and the run of
        whitespace is the weaker of the two: a stricter reader of the same format may
        not split it. This outranks the next term, which would otherwise choose the
        whitespace form for having one character less of fixed text.

@@ -118,7 +118,7 @@ def _has_excess_entries(categories: tuple[str, ...], category: str) -> bool:
 
     Pruning as soon as a derivation holds a foreign entry, or a second one of the wanted
     category, is what keeps generation small. Without it a rule that allows several
-    assignments on one line (as a Fortran namelist does) swamps the derivation limit with
+    assignments on one line swamps the derivation limit with
     forms that would all be discarded later, and the single-assignment form is never
     reached.
 
@@ -189,20 +189,8 @@ def grammar_templates(info: GrammarInfo, container: str, category: str) -> tuple
         tuple[EntryTemplate, ...]: The usable templates, empty if the grammar cannot express
             such an entry in that container.
 
-    Examples:
-        >>> from access.config.grammar_compiled import compile_grammar
-        >>> from access.config import MOM6InputParser
-        >>> info = compile_grammar(MOM6InputParser().grammar).info
-        >>> shapes = [tuple(f.kind for f in t)
-        ...           for t in grammar_templates(info, "start", "key_value")]
-        >>> ('key', 'ws', 'literal', 'ws', 'value', 'ws', 'literal') in shapes
-        True
-
-        A combination the grammar cannot express yields nothing; MOM6 has no way to write
-        a key with no value at all.
-
-        >>> grammar_templates(info, "start", "key_null")
-        ()
+    A container and category the grammar cannot express together yields nothing at all,
+    which is how a caller learns the format has no syntax for such an entry.
     """
     memo = _TEMPLATE_CACHE.setdefault(info, {})
     cached = memo.get((container, category))

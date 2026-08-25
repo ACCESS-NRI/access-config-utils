@@ -29,17 +29,9 @@ The pipeline
 
 Because step 3 is validated by parsing, ranking only decides which *valid* rendering is
 used. It can change how the output looks, never whether it is correct.
-
-Examples:
-    Synthesis is reached through the ordinary mapping interface; a new key is written in the
-    format's own syntax, spaced like the entries around it.
-
-    >>> from access.config import MOM6InputParser
-    >>> config = MOM6InputParser().parse("A = 1\\n")
-    >>> config["B"] = [2, 3]
-    >>> print(str(config), end="")
-    A = 1
-    B = 2, 3
+Synthesis is reached through the ordinary mapping interface: assigning a key the
+configuration does not have writes it in the format's own syntax, spaced like the entries
+around it.
 """
 
 from __future__ import annotations

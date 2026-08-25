@@ -38,8 +38,8 @@ A grammar written against this package must:
 Two rules aliased to the same category must produce **distinguishable children**. The
 reconstructor picks the rule to write a node with by matching that node's children, and Lark
 filters anonymous string tokens out of the tree before it looks, so punctuation that tells
-two syntaxes apart has to sit in a rule of its own -- ``assign: "="`` in ``nuopc_config``,
-``separator: ","`` in ``fortran_nml``.
+two syntaxes apart has to sit in a rule of its own: a bare ``"="`` or ``","`` between two
+otherwise identical shapes leaves the two indistinguishable once the tree is built.
 
 Where the consequences are spelled out: the parse tree these rules produce in
 ``parse_tree_ops``, the value types in ``grammar_values``, how an entry is written back out
@@ -96,7 +96,7 @@ works out where each entry's values land.
 ELIDED_RULE: Final = "elided"
 """Name of the rule marking a list position written as nothing between two separators.
 
-``x = 1, , 3`` skips its second element, which Fortran leaves at whatever the variable held.
+``x = 1, , 3`` skips its second element, which the reader is expected to leave unset.
 One node per position skipped, so the count survives into the tree; the reader turns each
 into the same absent-node a position no indexed entry wrote already has.
 """

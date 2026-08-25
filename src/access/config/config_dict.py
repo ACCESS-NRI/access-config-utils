@@ -141,8 +141,8 @@ class ConfigBlockList(list):
     """The occurrences of a block the file writes more than once, one ``Config`` each.
 
     A format may read a repeated block as separate records rather than merging them -- a
-    Fortran namelist does, because ``READ`` stops at the first group of the name and so no
-    single read ever sees the merge. Each element here is a nested ``Config`` over one
+    format may, where a reader stops at the first block of the name and so no single read
+    ever sees the merge. Each element here is a nested ``Config`` over one
     occurrence, and writing through it reaches that occurrence alone.
 
     Only the elements are editable, not the list. Adding or removing a whole block is a
@@ -189,7 +189,7 @@ class Config(dict):
 
     Every write is mirrored into the parse tree the store owns, so that ``str(config)``
     reproduces the file with the change and nothing else. Keys are matched however the
-    format matches them: case-insensitively for a Fortran namelist, exactly for the rest.
+    format matches them: case-insensitively for some formats, exactly for others.
 
     Args:
         store (ConfigStore): The parse tree of one container and the entries in it.
@@ -325,9 +325,9 @@ class Config(dict):
     def _drop_if_unwritable(self) -> None:
         """Remove this configuration from its parent if it is empty and unwritable.
 
-        A block whose rule is a plain repetition may hold nothing -- an empty namelist group
-        is still a namelist group. A derived type may not: it is written a component per
-        line, so once the last component goes there is nothing left to write, and the lines
+        A block whose rule is a plain repetition may hold nothing -- an empty block is
+        still a block. One written a component per line may not: once the last component
+        goes there is nothing left to write, and the lines
         have already been removed from the tree. Leaving the empty block in the parent's
         dict would make it disagree with the file.
         """

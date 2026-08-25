@@ -178,16 +178,8 @@ def probe_entry_style(container: Tree) -> EntryStyle:
     Returns:
         EntryStyle: The whitespace to copy, or a style with ``has_donor`` false.
 
-    Examples:
-        The effect, through the public interface: an unusually spaced neighbour is matched
-        rather than normalised, because a minimal diff matters more than tidiness.
-
-        >>> from access.config import MOM6InputParser
-        >>> config = MOM6InputParser().parse("A   =   1\\n")
-        >>> config["B"] = 2
-        >>> print(str(config), end="")
-        A   =   1
-        B   =   2
+    An unusually spaced neighbour is matched rather than normalised: a key added beside
+    ``A   =   1`` is written ``B   =   2``, since a minimal diff matters more than tidiness.
     """
     entries = entries_of(container)
     if not entries:
@@ -227,19 +219,8 @@ def probe_sibling_block_style(container: Tree) -> EntryStyle:
         EntryStyle: The whitespace to copy, or a style with ``has_donor`` false when no
             sibling block holds an entry -- including the new block itself, which is empty.
 
-    Examples:
-        A new block is laid out like the block next to it, not like a fresh file.
-
-        >>> from access.config import NUOPCParser
-        >>> config = NUOPCParser().parse("OLD::\\n  P = 1\\n::\\n")
-        >>> config["NEW"] = {"X": 2}
-        >>> print(str(config), end="")
-        OLD::
-          P = 1
-        ::
-        NEW::
-          X = 2
-        ::
+    A new block is laid out like the block next to it, not like a fresh file: if the block
+    above indents its entries, so does this one.
     """
     for entry in reversed(entries_of(container)):
         if entry.data != KEY_BLOCK:

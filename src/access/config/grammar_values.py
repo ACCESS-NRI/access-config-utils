@@ -63,10 +63,10 @@ def _string_to_str(value: str, token_text: str) -> str:
 
 
 def _fortran_string_to_str(value: str, token_text: str) -> str:
-    """Quote a string the Fortran way, doubling any quote character it contains.
+    """Quote a string the way ``fortran_string`` does, doubling any quote it contains.
 
-    Unlike ``_string_to_str``, no value is out of reach: Fortran escapes a quote by writing
-    it twice, so a string holding both quote characters can still be written. The quote
+    Unlike ``_string_to_str``, no value is out of reach: that rule escapes a quote by
+    doubling it, so a string holding both quote characters can still be written. The quote
     already in use is kept, so rewriting a value does not restyle the line.
 
     Args:
@@ -82,12 +82,12 @@ def _fortran_string_to_str(value: str, token_text: str) -> str:
 
 
 def _is_fortran_bare_word(value: Any) -> bool:
-    """Report whether a value can be written as an unquoted word in a Fortran namelist.
+    """Report whether a value can be written as an unquoted word by ``fortran_identifier``.
 
     Narrower than a Python identifier in two ways. The word has to be ASCII, since that is
-    all the grammar's terminal matches, and it must not be one of Fortran's logical
-    spellings: written bare, ``true`` is not the string "true" but ``.true.``, so a value
-    that reads back as a logical has to be refused rather than silently change type.
+    all the grammar's terminal matches, and it must not be one of the logical spellings that
+    rule sits beside: written bare, ``true`` is not the string "true" but ``.true.``, so a
+    value that reads back as a logical has to be refused rather than silently change type.
     """
     return type(value) is str and re.fullmatch(r"(?!(?i:t|f|true|false)\Z)[A-Za-z_][A-Za-z0-9_]*", value) is not None
 
@@ -95,7 +95,7 @@ def _is_fortran_bare_word(value: Any) -> bool:
 def _logical_to_str(value: bool, token_text: str) -> str:
     """Convert a bool to a string, keeping the notation of the original token.
 
-    Fortran spells a logical several ways, so rewriting one should not also restyle it. The
+    A grammar may spell a logical several ways, so rewriting one should not restyle it. The
     dots, the case and the length of the word are all kept: ``.TRUE.`` stays dotted, upper
     and spelled out, a bare ``t`` stays a bare letter, and ``true`` stays a whole word.
 
@@ -115,11 +115,11 @@ def _logical_to_str(value: bool, token_text: str) -> str:
 
 
 def _exponent_letter(token_text: str) -> str:
-    """Put back the ``e`` Fortran allows a real to leave out before a signed exponent.
+    """Put back the ``e`` a real may leave out before a signed exponent.
 
-    ``1+0`` is 1.0 and ``5-1`` is 0.5 -- the exponent letter is optional when the exponent
-    carries a sign, which Python's ``float`` does not accept. A sign at the start is not an
-    exponent, so the search for one begins past it.
+    A grammar may admit ``1+0`` for 1.0 and ``5-1`` for 0.5, writing the exponent's sign
+    in place of the letter, which Python's ``float`` does not accept. A sign at the start
+    is not an exponent, so the search for one begins past it.
 
     Args:
         token_text (str): The token as the file wrote it.
@@ -138,7 +138,7 @@ def _exponent_letter(token_text: str) -> str:
 def _float_to_str(value: float, token_text: str) -> str:
     """Convert a float to a string using the exponent notation of the original token.
 
-    This preserves Fortran-style exponent notation (e.g. ``1.0d10`` or ``1.0D10``) when
+    This preserves the exponent notation of the token (e.g. ``1.0d10`` or ``1.0D10``) when
     round-trip serialising a value back into its token text.
 
     Args:
@@ -175,7 +175,7 @@ class ValueTypeHandler:
       value of the ``Token`` object (since ``Token`` is a subclass of ``str``, it can be
       passed directly).
     - Serialisation: a function that converts a Python value back into token text, given
-      the previous token text so that notation specifics (e.g. Fortran ``D`` exponent) can
+      the previous token text so that notation specifics (e.g. a ``D`` exponent) can
       be preserved. This is used when updating value-type rule nodes with new values.
 
     Args:
@@ -184,7 +184,7 @@ class ValueTypeHandler:
         from_token (Callable[[str], Any]): Converts token text (the ``str`` value matched
             by the terminal) into the corresponding Python value.
         to_token (Callable[[Any, str], str]): Converts a Python value back into token
-            text, given the previous token text (to preserve notation, e.g. Fortran ``D``
+            text, given the previous token text (to preserve notation, e.g. a ``D``
             exponent).
         seed_token (Callable[[Any], str]): Produces stand-in "previous token text" for a
             value that has none, i.e. one being written for a key that does not exist yet.
@@ -216,7 +216,8 @@ class ValueTypeHandler:
 VALUE_TYPE_HANDLER_REGISTRY: dict[str, ValueTypeHandler] = {
     "logical": ValueTypeHandler(
         type_check=lambda value: type(value) is bool,
-        # Every Fortran spelling is an optional dot then T or F, so the letter decides.
+        # Every spelling this rule admits is a dot or nothing, then T or F: the letter
+        # is what decides.
         from_token=lambda token: str(token).lstrip(".")[:1].lower() == "t",
         to_token=_logical_to_str,
         seed_token=lambda value: ".true.",
@@ -252,7 +253,7 @@ VALUE_TYPE_HANDLER_REGISTRY: dict[str, ValueTypeHandler] = {
         type_check=lambda value: type(value) is float,
         from_token=lambda token: float(token.replace("D", "E").replace("d", "e")),
         to_token=lambda value, token: _float_to_str(value, token),
-        # The "d" makes _float_to_str emit a Fortran double exponent.
+        # The "d" makes _float_to_str emit a double exponent.
         seed_token=lambda value: "0.0d0",
     ),
     "complex": ValueTypeHandler(
@@ -332,13 +333,14 @@ VALUE_RULE_PRIORITY: tuple[str, ...] = (
 Several handlers accept the same Python type, so the choice has to be made deterministically
 rather than left to whichever grammar rule happens to match first:
 
-- ``logical`` before ``bool``, so a Fortran-style grammar writes ``.true.``, not ``True``.
-- ``float`` before ``double``, so plain notation is preferred over a Fortran ``D`` exponent.
+- ``logical`` before ``bool``, so a grammar admitting both writes ``.true.``, not ``True``.
+- ``float`` before ``double``, so plain notation is preferred over a ``D`` exponent.
 - ``string`` before ``identifier``, so quoting is preferred wherever it is allowed, and bare
   words are used only by grammars that have no ``string`` rule.
 
 Only rules the grammar actually admits are considered, so a format picks the first entry it
-supports: ``True`` becomes ``.true.`` in a namelist but ``True`` in a MOM6 input file.
+supports: ``True`` becomes ``.true.`` where a grammar has ``logical``, ``True`` where it
+ has only ``bool``.
 
 This expresses a preference, not a restriction. The caller tries each accepting rule in turn
 and validates the result, so the order changes how output looks but never what it means. A

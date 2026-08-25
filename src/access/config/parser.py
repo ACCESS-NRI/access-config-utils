@@ -91,8 +91,7 @@ class ConfigParser(ABC):
         Nearly always just ``"block"``. A format with more than one kind of block declares
         them all, most-addable first: the first name is the one new entries are written
         into, and a block held by any of the others is read and edited but not added to.
-        A Fortran derived type is one, written a component per line rather than as a
-        delimited body.
+        A block written one component per line, rather than as a delimited body, is one.
 
         Returns:
             Sequence[str]: The rule names.
@@ -107,16 +106,16 @@ class ConfigParser(ABC):
         key assigned in both keeps the last value, which is what a format uses repetition to
         express when it uses it at all.
 
-        ``"separate"`` reads them as a list of blocks, one per occurrence. A Fortran
-        namelist needs this: ``READ`` scans forward and stops at the first group of the
-        name, so a program reading the group once sees the first occurrence, one reading it
-        twice sees each in turn, and neither of those is the merge. Keeping the occurrences
-        is the only reading all of them can be recovered from.
+        ``"separate"`` reads them as a list of blocks, one per occurrence. A format whose
+        reader scans forward and stops at the first block of the name needs this: a program
+        reading the block once sees the first occurrence, one reading it twice sees each in
+        turn, and neither of those is the merge. Keeping the occurrences is the only reading
+        all of them can be recovered from.
 
         This applies only to the first of ``block_rules``. A block held by any other rule
         merges whatever the policy, because repeating one of those means something else: a
-        Fortran derived type spells one component per line, so ``a%b`` and ``a%c`` are two
-        writings of the single key ``a`` and merging them is what reads them correctly.
+        block spelled one component per line makes ``a%b`` and ``a%c`` two writings of the
+        single key ``a``, and merging them is what reads them correctly.
 
         Returns:
             str: ``"merge"`` or ``"separate"``.
@@ -129,7 +128,7 @@ class ConfigParser(ABC):
 
         Several value types accept the same Python type, so the order decides how a value is
         written: whether a ``bool`` becomes ``.true.`` or ``True``, or a ``float`` uses a
-        Fortran ``D`` exponent. Only rules the grammar admits are considered.
+        double-precision exponent. Only rules the grammar admits are considered.
 
         Returns:
             Sequence[str]: The rule names, most preferred first.

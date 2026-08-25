@@ -256,7 +256,7 @@ class EntryReader(Interpreter):
         unqualified assignment to a key already written with indices joins the same array.
 
         An unqualified assignment over an entry that holds *more* values joins it too, and
-        for the same reason: Fortran writes from the first position and leaves the rest,
+        for the same reason: a format may write from the first position and leave the rest,
         so ``v = 1, 2`` then ``v = 3`` is ``[3, 2]``, not the scalar ``3``. Taking the
         later entry whole would drop the positions it does not reach, with nothing to show
         for it. A later entry at least as long covers every position, so it simply wins.
@@ -430,9 +430,9 @@ class EntryReader(Interpreter):
         ``a%c = 2`` are two entries under the single key ``A``: those are merged, since
         dropping the earlier ones loses data silently.
 
-        A format may instead read a repeated block as *separate records*, and a Fortran
-        namelist does -- ``READ`` stops at the first group of the name, so no single read
-        ever sees the merge. Then each occurrence is kept, and the caller is handed a list
+        A format may instead read a repeated block as *separate records*, where a reader
+        stops at the first block of the name and so no single read ever sees the merge.
+        Then each occurrence is kept, and the caller is handed a list
         of blocks. Only the format's primary block rule can repeat this way; see
         ``ConfigParser.repeated_blocks``.
 
