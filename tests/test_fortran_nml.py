@@ -60,6 +60,37 @@ class TestGroupDelimiters:
         """
         assert dict(parser.parse(source)) == {"LIST": {"TEST": "a"}}
 
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "$g\n x = 1\n$end\n",
+            "$g\n x = 1\n/\n",
+            "&g\n x = 1\n$end\n",
+            "$g\n x = 1\n&end\n",
+        ],
+    )
+    def test_a_group_may_open_with_a_dollar(self, parser, source) -> None:
+        """Test the older ``$`` delimiter, and that the one written is the one written back.
+
+        gfortran accepts ``$name`` opened and ``$end`` or ``/`` closed, in any mix with
+        ``&``. Each delimiter is a rule of its own so the reconstructor can tell them
+        apart -- an anonymous literal is filtered out of the tree, and ``$g`` would come
+        back as ``&g``.
+        """
+        config = parser.parse(source)
+
+        assert dict(config["G"]) == {"X": 1}
+        assert str(config) == source
+
+    def test_a_bare_dollar_does_not_close_a_group(self, parser) -> None:
+        """Test that ``$name … $`` is refused, as gfortran refuses it.
+
+        Some readers take it -- f90nml's own ``dollar.nml`` is written with it -- but the
+        compiler gives iostat 5010 for it, so it is not a spelling to accept silently.
+        """
+        with pytest.raises(UnexpectedInput):
+            parser.parse("$g\n x = 1\n$\n")
+
     def test_the_group_name_may_be_followed_by_the_body_on_one_line(self, parser) -> None:
         """Test the optional ``line_end`` between the group name and its block."""
         source = "&LIST TEST='a' Z=1/"
@@ -626,6 +657,31 @@ class TestFreeTextBetweenGroups:
         """
         with pytest.raises(UnexpectedInput):
             parser.parse("&A\n  x = 1\n&B\n  y = 2\n/\n")
+
+    def test_a_dollar_group_is_not_free_text_either(self, parser) -> None:
+        """Test the second lookahead, which closes the same hole for the older delimiter.
+
+        This file used to parse, return only ``OTHER``, and round-trip byte for byte with
+        ``MYGRP`` missing entirely -- the exact failure the ``&`` lookahead was added for.
+        """
+        source = "$mygrp\n  x = 1\n$end\n&other\n  y = 2\n/\n"
+        config = parser.parse(source)
+
+        assert list(config) == ["MYGRP", "OTHER"]
+        assert str(config) == source
+
+    @pytest.mark.parametrize("comment", ["$ ---- a comment ----", "$", "$   spaced"])
+    def test_a_bare_dollar_still_starts_free_text(self, parser, comment) -> None:
+        """Test that the lookahead needs a name after the ``$`` before it stops being text.
+
+        WW3 writes its comments this way, 884 lines of them in the namelists on hand, so
+        excluding every ``$`` line would refuse files that have nothing wrong with them.
+        """
+        source = f"{comment}\n&g\n  x = 1\n/\n"
+        config = parser.parse(source)
+
+        assert list(config) == ["G"]
+        assert str(config) == source
 
 
 class TestRejected:

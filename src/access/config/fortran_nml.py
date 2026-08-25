@@ -19,6 +19,9 @@ class FortranNMLParser(ConfigParser):
     one-dimensional qualifiers is gathered into a single list, with a null wherever no entry
     wrote a position.
 
+    A group may open with ``&`` or the older ``$`` and close with ``/``, ``&end`` or
+    ``$end``.
+
     A group whose body this cannot derive raises, rather than being read as the free text
     that may surround a group: a file that round-trips with a whole group missing from the
     configuration is worse than one that is refused.
@@ -28,7 +31,7 @@ class FortranNMLParser(ConfigParser):
     derived type (``a(1)%b``), and one naming no positions at all (a stride of zero). Nor
     are character substrings implemented, a list cannot yet hold a null element written as
     ``x = 1,,3``, values cannot be separated by whitespace alone, and a group has to be
-    closed -- the next ``&`` does not end it.
+    closed -- neither the next ``&`` nor a bare ``$`` ends it.
 
     Note: ``inf`` and ``nan`` are read as the floats they are, but cannot be written. Python
     spells them as bare words that no format reads back as a number, so assigning one raises
@@ -69,9 +72,20 @@ class FortranNMLParser(ConfigParser):
 // are added to, and a transparent rule collapses away for a single-namelist file.
 start: random_text? namelist (random_text? namelist)* random_text?
 
+// A group opens with "&" or the older "$", and closes with "/", "&end" or "$end" -- all four
+// accepted by the compiler. A bare "$" as terminator is not: gfortran rejects it, so it is
+// left out even though some readers take it. Each delimiter is a rule of its own rather than
+// an alternation of literals, because Lark filters an anonymous literal out of the tree and
+// the reconstructor would then have nothing to tell "&" from "$" -- rewriting one as the
+// other. This is the same device as "separator" and "eq"; see grammar_contract.
 namelist.2: nml_start key line_end? block nml_end -> key_block
-nml_start: ws* "&"
-nml_end:  ws* ("/"|/&end/i) line_end
+nml_start: ws* (amp_open | dollar_open)
+amp_open: "&"
+dollar_open: "$"
+nml_end:  ws* (slash_close | amp_close | dollar_close) line_end
+slash_close: "/"
+amp_close: /&end/i
+dollar_close: /\\$end/i
 
 // The block contents rule must be *named* "block", not aliased to it, so that the name can
 // be used as a Lark start symbol when parsing the text of a new entry.
@@ -132,11 +146,16 @@ empty_line: line_end
 line_end: (fortran_comment|ws*) NEWLINE
 separator: ","
 
-// Free text between namelist groups. A line starting with "&" is never part of it: without
-// that, a group whose body the grammar cannot derive is quietly read as text instead, and
-// the file round-trips with the whole group missing from the configuration.
+// Free text between namelist groups. A line starting with a group delimiter is never part of
+// it: without that, a group whose body the grammar cannot derive is quietly read as text
+// instead, and the file round-trips with the whole group missing from the configuration. Both
+// delimiters have to be excluded, or a "$" group is swallowed exactly as an "&" one once was.
+//
+// "$" is excluded only when a name follows it, which is what makes it a group. WW3's inputs
+// use a bare "$" as their own comment marker -- 884 lines of it in the namelists on hand --
+// and those are ordinary free text.
 random_text: (ANYTHING|NEWLINE)*
-ANYTHING: /(?![ \\t]*&)[^\\n]+/
+ANYTHING: /(?![ \\t]*&)(?![ \\t]*\\$[A-Za-z])[^\\n]+/
 
 // Fortran writes an infinity or a not-a-number as a bare word. Read as one, rather than as
 // the string "inf", which is what the bare-word rule below would otherwise make of it.
