@@ -114,6 +114,27 @@ def _logical_to_str(value: bool, token_text: str) -> str:
     return text.upper() if token_text.isupper() else text
 
 
+def _exponent_letter(token_text: str) -> str:
+    """Put back the ``e`` Fortran allows a real to leave out before a signed exponent.
+
+    ``1+0`` is 1.0 and ``5-1`` is 0.5 -- the exponent letter is optional when the exponent
+    carries a sign, which Python's ``float`` does not accept. A sign at the start is not an
+    exponent, so the search for one begins past it.
+
+    Args:
+        token_text (str): The token as the file wrote it.
+
+    Returns:
+        str: The same number in a spelling ``float`` accepts.
+    """
+    body = token_text[1:] if token_text[:1] in "+-" else token_text
+    position = max(body.rfind("+"), body.rfind("-"))
+    if position < 0 or any(letter in token_text.lower() for letter in "ed"):
+        return token_text
+    offset = position + len(token_text) - len(body)
+    return f"{token_text[:offset]}e{token_text[offset:]}"
+
+
 def _float_to_str(value: float, token_text: str) -> str:
     """Convert a float to a string using the exponent notation of the original token.
 
@@ -219,6 +240,14 @@ VALUE_TYPE_HANDLER_REGISTRY: dict[str, ValueTypeHandler] = {
         # No exponent character, so _float_to_str uses Python's own notation.
         seed_token=lambda value: "0.0",
     ),
+    "bare_exponent": ValueTypeHandler(
+        type_check=lambda value: type(value) is float,
+        from_token=lambda token: float(_exponent_letter(token)),
+        to_token=lambda value, token: _float_to_str(value, token),
+        # Nothing writes this notation from scratch; a value written into such a node
+        # takes the plain one, which every grammar admitting this rule also admits.
+        seed_token=lambda value: "0.0",
+    ),
     "double": ValueTypeHandler(
         type_check=lambda value: type(value) is float,
         from_token=lambda token: float(token.replace("D", "E").replace("d", "e")),
@@ -289,6 +318,7 @@ VALUE_RULE_PRIORITY: tuple[str, ...] = (
     "integer",
     "float",
     "double",
+    "bare_exponent",
     "complex",
     "double_complex",
     "fortran_string",

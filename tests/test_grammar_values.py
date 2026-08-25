@@ -205,6 +205,37 @@ class TestFloatNotation:
             VALUE_TYPE_HANDLER_REGISTRY[rule].to_token(complex(math.inf, 0.0), "(1.0, 2.0)")
 
 
+class TestBareExponent:
+    """The exponent letter a Fortran real may leave out when the exponent is signed."""
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [("1+0", 1.0), ("5-1", 0.5), ("1.5+2", 150.0), ("-2-1", -0.2), ("+3+1", 30.0)],
+    )
+    def test_the_letter_is_put_back_before_converting(self, text, expected) -> None:
+        """Test the spellings ``float`` cannot take, confirmed against gfortran."""
+        assert VALUE_TYPE_HANDLER_REGISTRY["bare_exponent"].from_token(text) == expected
+
+    @pytest.mark.parametrize("text", ["1.5", "-2.5", "1e5", "1E5", "-1e-5", "+0.0"])
+    def test_an_ordinary_spelling_is_left_alone(self, text) -> None:
+        """Test that a number already carrying an exponent letter is not touched.
+
+        The search for a sign starts past a leading one, so ``-2.5`` is not read as an
+        exponent, and a text holding ``e`` or ``d`` is left to be parsed as it stands.
+        """
+        assert VALUE_TYPE_HANDLER_REGISTRY["bare_exponent"].from_token(text) == float(text)
+
+    def test_the_plain_float_handler_is_untouched(self) -> None:
+        """Test that the notation stayed out of the handler every format shares.
+
+        The registry is keyed by rule name, so teaching ``float`` this spelling would teach
+        it to every grammar importing ``config.float`` -- none of which can produce it.
+        """
+        assert VALUE_TYPE_HANDLER_REGISTRY["float"].from_token("1.5") == 1.5
+        with pytest.raises(ValueError):
+            VALUE_TYPE_HANDLER_REGISTRY["float"].from_token("1+0")
+
+
 class TestSelectValueRule:
     """Choosing the rule to write a value with, among those the grammar admits."""
 

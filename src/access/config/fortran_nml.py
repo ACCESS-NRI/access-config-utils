@@ -17,11 +17,10 @@ class FortranNMLParser(ConfigParser):
 
     Derived types, array qualifiers and repeat counts are all read. An array written with
     one-dimensional qualifiers is gathered into a single list, with a null wherever no entry
-    wrote a position.
-
-    A group may open with ``&`` or the older ``$`` and close with ``/``, ``&end`` or
-    ``$end``. Values may be parted by commas or by blanks, and a list may skip a
-    position by writing nothing between two separators (``x = 1, , 3``).
+    wrote a position. A group may open with ``&`` or the older ``$`` and close with ``/``,
+    ``&end`` or ``$end``. Values may be parted by commas or by blanks, a list may skip a
+    position by writing nothing between two separators (``x = 1, , 3``), and a real may
+    leave out the exponent letter before a signed exponent (``1+0`` is 1.0).
 
     A group written more than once is read as one block per occurrence rather than merged;
     see ``repeated_blocks``. An unqualified assignment over a longer entry overlays it from
@@ -144,6 +143,7 @@ REPEAT_COUNT: /[0-9]+\\*/
 ?scalar: logical
       | integer
       | float
+      | bare_exponent
       | double
       | complex
       | double_complex
@@ -175,6 +175,13 @@ ANYTHING: /(?![ \\t]*&)(?![ \\t]*\\$[A-Za-z])[^\\n]+/
 // the string "inf", which is what the bare-word rule below would otherwise make of it.
 float: SIGNED_FLOAT | IEEE
 IEEE.2: /[-+]?(inf(inity)?|nan)(?![A-Za-z0-9_])/i
+
+// The exponent letter may be left out when the exponent carries a sign, so "1+0" is 1.0 and
+// "5-1" is 0.5 -- confirmed against gfortran. A value-type rule of its own rather than a
+// wider "float": the registry is keyed by rule name, so folding it in would teach every
+// format's "float" a notation only this one can write.
+bare_exponent: BARE_EXPONENT
+BARE_EXPONENT.2: /[-+]?[0-9]+(\\.[0-9]*)?[-+][0-9]+(?![A-Za-z0-9_.])/
 
 // Fortran writes a logical as an optional dot, T or F, and an optional rest of the word: all
 // of ".true.", "true", ".t.", ".t" and a bare "T" mean the same thing, in either case. This

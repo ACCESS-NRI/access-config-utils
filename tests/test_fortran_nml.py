@@ -554,6 +554,23 @@ class TestValueTypes:
         assert config["L"]["X"] == expected
         assert str(config) == source
 
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [("1+0", 1.0), ("5-1", 0.5), ("1.5+2", 150.0), ("-2-1", -0.2)],
+    )
+    def test_the_exponent_letter_may_be_left_out(self, parser, text, expected) -> None:
+        """Test ``BARE_EXPONENT``: a signed exponent needs no ``e`` before it.
+
+        ``1+0`` is 1.0 and ``5-1`` is 0.5, confirmed against gfortran. Python's ``float``
+        does not accept the spelling, so the handler puts the letter back before converting
+        -- while the token keeps the text the file had, so the round trip is unaffected.
+        """
+        source = f"&L\n  x = {text}\n/\n"
+        config = parser.parse(source)
+
+        assert config["L"]["X"] == expected
+        assert str(config) == source
+
     def test_a_not_a_number_is_a_float(self, parser) -> None:
         """Test NaN, which needs a test of its own: it does not compare equal to itself."""
         source = "&L\n  x = nan\n/\n"
