@@ -68,9 +68,12 @@ class EntryRef:
             ``key_block`` and ``key_null``. A repeat node appears once per element it
             covers. ``None`` marks an array position no entry wrote, which therefore has no
             value and cannot be written through.
-        block_node (Tree | None): The ``block`` node holding the entry's contents, for a
-            ``key_block``; ``None`` otherwise.
-        addable (bool): Whether a new entry can be spliced into *block_node*. False for a
+        block_nodes (tuple[Tree, ...]): The ``block`` nodes holding the entry's contents,
+            for a ``key_block``; empty otherwise. More than one when the file writes the
+            block several times and the format reads those as separate records rather than
+            merging them -- see ``ConfigParser.repeated_blocks``. ``block_node`` reads the
+            first, for the callers that only ever have one.
+        addable (bool): Whether a new entry can be spliced into a block node. False for a
             block merged from several in the file, whose node is not itself in the parse
             tree, and for one held by a rule that is not a Lark start symbol.
         values (tuple[Any, ...] | None): The values, for an array gathered from several
@@ -87,9 +90,14 @@ class EntryRef:
     category: str
     entry_nodes: tuple[Tree, ...]
     value_nodes: tuple[Tree | None, ...] = ()
-    block_node: Tree | None = None
+    block_nodes: tuple[Tree, ...] = ()
     addable: bool = True
     values: tuple[Any, ...] | None = None
+
+    @property
+    def block_node(self) -> Tree | None:
+        """Tree | None: The first block node, or ``None`` if this is not a ``key_block``."""
+        return self.block_nodes[0] if self.block_nodes else None
 
 
 def merge_blocks(first: Tree, second: Tree) -> Tree:
@@ -383,10 +391,16 @@ class EntryReader(Interpreter):
     def key_block(self, tree: Tree) -> None:
         """Interpreter callback for ``"key_block"`` rule nodes.
 
-        A key can name more than one block. A derived type spells one component per line, so
-        ``a%b = 1`` and ``a%c = 2`` are two entries under the single key ``A``, and the same
-        happens when a file repeats a namelist group name. The blocks are merged rather than
-        the last one winning, since dropping the earlier ones loses data silently.
+        A key can name more than one block, and what that means depends on which rule holds
+        the contents. A derived type spells one component per line, so ``a%b = 1`` and
+        ``a%c = 2`` are two entries under the single key ``A``: those are merged, since
+        dropping the earlier ones loses data silently.
+
+        A format may instead read a repeated block as *separate records*, and a Fortran
+        namelist does -- ``READ`` stops at the first group of the name, so no single read
+        ever sees the merge. Then each occurrence is kept, and the caller is handed a list
+        of blocks. Only the format's primary block rule can repeat this way; see
+        ``ConfigParser.repeated_blocks``.
 
         Args:
             tree (Tree): Rule node produced by the ``"key_block"`` grammar rule.
@@ -407,12 +421,33 @@ class EntryReader(Interpreter):
                 previous = self._refs.get(key)
                 if previous is not None and previous.category != KEY_BLOCK:
                     raise ValueError(f"'{key}' is assigned a value and used as a block")
-                merged = child if previous is None else merge_blocks(previous.block_node, child)
-                # Only an unmerged block held by the format's primary block rule has a body
-                # a new entry can be written into: that is the only Lark start symbol.
-                addable = merged is child and str(child.data) == self._ctx.block_rules[0]
-                self._record(key, EntryRef(KEY_BLOCK, (tree,), block_node=merged, addable=addable))
+                self._record(key, self._block_ref(tree, child, previous))
                 return
+
+    def _block_ref(self, tree: Tree, body: Tree, previous: EntryRef | None) -> EntryRef:
+        """Build the reference for a block, folding it into any earlier one for the key.
+
+        Args:
+            tree (Tree): The ``key_block`` node.
+            body (Tree): The child rule node holding the block's contents.
+            previous (EntryRef | None): The reference already recorded for this key.
+
+        Returns:
+            EntryRef: The reference to record.
+        """
+        primary = str(body.data) == self._ctx.block_rules[0]
+        if previous is None:
+            # Only a block held by the format's primary block rule has a body a new entry
+            # can be written into: that is the only Lark start symbol.
+            return EntryRef(KEY_BLOCK, (tree,), block_nodes=(body,), addable=primary)
+        if primary and self._ctx.repeated_blocks == "separate":
+            # Another record of the same block. Every occurrence is a real node in the tree,
+            # so each stays addable in its own right.
+            return EntryRef(KEY_BLOCK, (tree,), block_nodes=(*previous.block_nodes, body), addable=True)
+        # Merged: the result is a node the parse tree does not contain, so nothing can be
+        # spliced into it and have that reach the file.
+        merged = merge_blocks(previous.block_nodes[-1], body)
+        return EntryRef(KEY_BLOCK, (tree,), block_nodes=(*previous.block_nodes[:-1], merged), addable=False)
 
     def key_null(self, tree: Tree) -> None:
         """Interpreter callback for ``"key_null"`` rule nodes.

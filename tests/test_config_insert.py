@@ -159,7 +159,7 @@ class TestEntryMatches:
 
         for body, expected in ((empty, True), (filled, False)):
             node = entry_node("key_block", "z", body)
-            refs = {"z": EntryRef("key_block", (node,), block_node=body)}
+            refs = {"z": EntryRef("key_block", (node,), block_nodes=(body,))}
             assert entry_matches(refs, "z", {"a": 1}) is expected
 
 

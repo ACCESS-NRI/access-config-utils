@@ -246,6 +246,7 @@ class FakeContext:
         info: Any = None,
         lark: Any = None,
         block_rules: tuple[str, ...] = ("block",),
+        repeated_blocks: str = "merge",
     ) -> None:
         self.case_sensitive_keys = case_sensitive
         self.info = info
@@ -253,6 +254,7 @@ class FakeContext:
         self.entry_templates: dict[tuple[str, str], str] = {}
         self.value_rule_priority: tuple[str, ...] = ()
         self.block_rules = block_rules
+        self.repeated_blocks = repeated_blocks
 
     def normalise_key(self, key: str) -> str:
         """Normalise as a real ``ParseContext`` would."""
@@ -284,9 +286,9 @@ class FakeStore:
         self._added = added or {}
         self._text = text
 
-    def child(self, ref: EntryRef) -> "FakeStore":
-        """Return a store over the block *ref* names."""
-        self.calls.append(("child", ref))
+    def child(self, ref: EntryRef, index: int = 0) -> "FakeStore":
+        """Return a store over the occurrence of the block *ref* names."""
+        self.calls.append(("child", (ref, index) if index else ref))
         return FakeStore(ctx=self.ctx)
 
     def replace(self, key: str, value: Any) -> tuple[Tree, ...]:

@@ -137,6 +137,53 @@ class ConfigList(list):
     __imul__ = _unsupported  # type: ignore[assignment]
 
 
+class ConfigBlockList(list):
+    """The occurrences of a block the file writes more than once, one ``Config`` each.
+
+    A format may read a repeated block as separate records rather than merging them -- a
+    Fortran namelist does, because ``READ`` stops at the first group of the name and so no
+    single read ever sees the merge. Each element here is a nested ``Config`` over one
+    occurrence, and writing through it reaches that occurrence alone.
+
+    Only the elements are editable, not the list. Adding or removing a whole block is a
+    change to the file's structure that nothing here knows how to write -- where the new
+    block would go, and how it should be spaced -- so those operations raise
+    ``NotImplementedError`` rather than leaving the list and the file disagreeing.
+
+    Args:
+        blocks (Sequence[Config]): One configuration per occurrence, in the order written.
+    """
+
+    def _unsupported(self, *args: Any, **kwargs: Any) -> NoReturn:
+        """Reject an operation that would add, remove or replace a whole block.
+
+        Args:
+            *args (Any): Ignored.
+            **kwargs (Any): Ignored.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        raise NotImplementedError(
+            "Adding, removing or replacing a whole occurrence of a repeated block is not "
+            "supported; edit the entries of one occurrence, or delete the key to remove all "
+            "of them"
+        )
+
+    append = _unsupported  # type: ignore[assignment]
+    extend = _unsupported  # type: ignore[assignment]
+    insert = _unsupported  # type: ignore[assignment]
+    remove = _unsupported  # type: ignore[assignment]
+    pop = _unsupported  # type: ignore[assignment]
+    clear = _unsupported  # type: ignore[assignment]
+    sort = _unsupported  # type: ignore[assignment]
+    reverse = _unsupported  # type: ignore[assignment]
+    __setitem__ = _unsupported  # type: ignore[assignment]
+    __delitem__ = _unsupported  # type: ignore[assignment]
+    __iadd__ = _unsupported  # type: ignore[assignment]
+    __imul__ = _unsupported  # type: ignore[assignment]
+
+
 class Config(dict):
     """A dict holding the contents of a parsed configuration file.
 
@@ -164,22 +211,30 @@ class Config(dict):
 
         A list and a block are both handed out as something that keeps the parse tree in
         step: a ``ConfigList`` pairs each element with the node holding it, and a nested
-        ``Config`` does the same for the entries of a block.
+        ``Config`` does the same for the entries of a block. A block the file writes more
+        than once, in a format that reads those as separate records, becomes a
+        ``ConfigBlockList`` of one ``Config`` per occurrence.
 
         Args:
             key (str): The normalised key the entry is stored under.
             ref (EntryRef): The entry to represent.
 
         Returns:
-            Any: The scalar, a ``ConfigList``, a nested ``Config``, or ``None``.
+            Any: The scalar, a ``ConfigList``, a nested ``Config``, a ``ConfigBlockList``,
+                or ``None``.
         """
         if ref.category == KEY_BLOCK:
-            block = Config(self._store.child(ref))
-            # Tell it where it lives, so emptying it can remove it from here.
-            block._parent = (self, key)
-            return block
+            blocks = [self._block(key, ref, index) for index in range(len(ref.block_nodes))]
+            return blocks[0] if len(blocks) == 1 else ConfigBlockList(blocks)
         value = entry_value(ref)
         return ConfigList(value, ref.value_nodes, self._store.ctx) if ref.category == KEY_LIST else value
+
+    def _block(self, key: str, ref: EntryRef, index: int) -> Config:
+        """Return the nested configuration for one occurrence of a block."""
+        block = Config(self._store.child(ref, index))
+        # Tell it where it lives, so emptying it can remove it from here.
+        block._parent = (self, key)
+        return block
 
     def __getitem__(self, key: str) -> Any:
         """Override method to get item from dict.

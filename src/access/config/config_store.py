@@ -62,17 +62,19 @@ class ConfigStore:
         self.fallback_style = EntryStyle()
         self.refs = read_entries(tree, ctx)
 
-    def child(self, ref: EntryRef) -> ConfigStore:
+    def child(self, ref: EntryRef, index: int = 0) -> ConfigStore:
         """Return the store for the contents of a block held by this container.
 
         Args:
             ref (EntryRef): A ``key_block`` reference read from this container.
+            index (int): Which occurrence to open, for a block the file writes more than
+                once and this format reads as separate records. Zero for every other block,
+                which has exactly one.
 
         Returns:
-            ConfigStore: A store over the block's own contents.
+            ConfigStore: A store over that block's own contents.
         """
-        assert ref.block_node is not None
-        return ConfigStore(ref.block_node, self.ctx, addable=ref.addable)
+        return ConfigStore(ref.block_nodes[index], self.ctx, addable=ref.addable)
 
     def replace(self, key: str, value: Any) -> tuple[Tree, ...]:
         """Write a new value into the nodes of an entry that already exists.

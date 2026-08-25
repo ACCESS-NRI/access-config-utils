@@ -52,6 +52,17 @@ class FortranNMLParser(ConfigParser):
         return (BLOCK_RULE, "dtype_body")
 
     @property
+    def repeated_blocks(self) -> str:
+        """str: ``"separate"`` -- a group written twice is two records, not one merge.
+
+        Fortran's ``READ`` scans forward and stops at the first group of the name, so a
+        program reading a group once sees the first occurrence and one reading it in a loop
+        sees each in turn. Merging them would report a set of values no single ``READ``
+        returns, so each occurrence is kept and handed out as its own block.
+        """
+        return "separate"
+
+    @property
     def grammar(self) -> str:
         return """
 // "start" must be a non-transparent rule: the root node is the container that new entries

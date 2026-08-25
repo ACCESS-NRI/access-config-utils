@@ -190,6 +190,62 @@ class TestBlocksWrittenMoreThanOnce:
         assert read_entries(container(first), FakeContext())["a"].addable
         assert not read_entries(container(first, second), FakeContext())["a"].addable
 
+    def test_block_node_reads_the_first_of_several(self) -> None:
+        """Test the convenience view, for the callers that only ever have one block."""
+        body = Tree("block", [])
+        refs = read_entries(container(entry_node("key_block", "a", body)), FakeContext())
+
+        assert refs["a"].block_node is body
+        assert EntryRef("key_value", ()).block_node is None
+
+
+class TestRepeatedBlocksKeptApart:
+    """A format that reads a block written twice as two records rather than one merge."""
+
+    @staticmethod
+    def separate() -> FakeContext:
+        """Return a context whose primary block rule keeps its repetitions apart."""
+        return FakeContext(repeated_blocks="separate")
+
+    def test_each_occurrence_is_kept(self) -> None:
+        """Test that both bodies are recorded, in the order the file writes them."""
+        first_body = Tree("block", [entry_node("key_value", "b", value_node())])
+        second_body = Tree("block", [entry_node("key_value", "c", value_node())])
+        first = entry_node("key_block", "a", first_body)
+        second = entry_node("key_block", "a", second_body)
+
+        refs = read_entries(container(first, second), self.separate())
+
+        assert refs["a"].block_nodes == (first_body, second_body)
+        assert refs["a"].entry_nodes == (first, second)
+
+    def test_every_occurrence_stays_addable(self) -> None:
+        """Test that a kept occurrence is a real node in the tree, so it has a body.
+
+        This is what a merged block cannot offer: its node is not in the parse tree, so
+        splicing an entry into it would change nothing that gets written out.
+        """
+        first = entry_node("key_block", "a", Tree("block", []))
+        second = entry_node("key_block", "a", Tree("block", []))
+
+        assert read_entries(container(first, second), self.separate())["a"].addable
+
+    def test_a_secondary_block_rule_merges_whatever_the_policy(self) -> None:
+        """Test that only the primary block rule repeats as records.
+
+        Repeating one of the others means something else: a Fortran derived type spells one
+        component per line, so two of them are two writings of a single key.
+        """
+        first = entry_node("key_block", "a", Tree("dtype_body", [entry_node("key_value", "b", value_node())]))
+        second = entry_node("key_block", "a", Tree("dtype_body", [entry_node("key_value", "c", value_node())]))
+        ctx = FakeContext(block_rules=("block", "dtype_body"), repeated_blocks="separate")
+
+        refs = read_entries(container(first, second), ctx)
+
+        assert len(refs["a"].block_nodes) == 1
+        assert len(refs["a"].block_node.children) == 2
+        assert not refs["a"].addable
+
     def test_a_secondary_block_rule_cannot_be_added_to(self) -> None:
         """Test that only the format's primary block rule accepts a new entry.
 

@@ -100,6 +100,30 @@ class ConfigParser(ABC):
         return (BLOCK_RULE,)
 
     @property
+    def repeated_blocks(self) -> str:
+        """What it means for a file to write the same block twice.
+
+        ``"merge"``, the default, reads the two as one block holding the entries of both. A
+        key assigned in both keeps the last value, which is what a format uses repetition to
+        express when it uses it at all.
+
+        ``"separate"`` reads them as a list of blocks, one per occurrence. A Fortran
+        namelist needs this: ``READ`` scans forward and stops at the first group of the
+        name, so a program reading the group once sees the first occurrence, one reading it
+        twice sees each in turn, and neither of those is the merge. Keeping the occurrences
+        is the only reading all of them can be recovered from.
+
+        This applies only to the first of ``block_rules``. A block held by any other rule
+        merges whatever the policy, because repeating one of those means something else: a
+        Fortran derived type spells one component per line, so ``a%b`` and ``a%c`` are two
+        writings of the single key ``a`` and merging them is what reads them correctly.
+
+        Returns:
+            str: ``"merge"`` or ``"separate"``.
+        """
+        return "merge"
+
+    @property
     def value_rule_priority(self) -> Sequence[str]:
         """Order in which value-type rules are tried when writing a value for a new key.
 
@@ -127,6 +151,7 @@ class ConfigParser(ABC):
             self.entry_templates,
             tuple(self.value_rule_priority),
             tuple(self.block_rules),
+            self.repeated_blocks,
         )
 
         # Parse text. Here we add a newline character to simplify the writting of the

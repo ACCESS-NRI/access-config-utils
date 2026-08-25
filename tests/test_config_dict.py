@@ -18,7 +18,7 @@ from conftest import FakeContext, FakeStore, entry_node, value_node
 from lark import Tree
 
 from access.config import config_dict
-from access.config.config_dict import Config, ConfigList
+from access.config.config_dict import Config, ConfigBlockList, ConfigList
 from access.config.tree_reader import EntryRef
 
 
@@ -28,7 +28,7 @@ def ref(category: str = "key_value", key: str = "a", values: int = 1) -> EntryRe
     node = entry_node(category, key, *nodes)
     if category == "key_block":
         body = Tree("block", [])
-        return EntryRef(category, (entry_node(category, key, body),), block_node=body)
+        return EntryRef(category, (entry_node(category, key, body),), block_nodes=(body,))
     return EntryRef(category, (node,), nodes)
 
 
@@ -159,7 +159,7 @@ class TestAddingAKey:
         """
         inner = FakeStore({}, added={"x": ref("key_value", "x")})
         store = FakeStore({}, added={"blk": ref("key_block", "blk")})
-        store.child = lambda reference: inner  # type: ignore[method-assign]
+        store.child = lambda reference, index=0: inner  # type: ignore[method-assign]
         config = Config(store)
 
         config["blk"] = {"x": 1}
@@ -204,7 +204,7 @@ class TestDroppingAnEmptiedBlock:
         inner = FakeStore({"x": ref("key_value", "x")}, ctx=FakeContext(info=Info()))
         inner.tree = Tree(block_rule, [])
         outer = FakeStore({"blk": ref("key_block", "blk")}, ctx=FakeContext(info=Info()))
-        outer.child = lambda reference: inner  # type: ignore[method-assign]
+        outer.child = lambda reference, index=0: inner  # type: ignore[method-assign]
         return Config(outer), outer
 
     def test_a_derived_type_goes_when_its_last_component_does(self) -> None:
@@ -455,3 +455,43 @@ class TestConfigList:
 
         with pytest.raises(NotImplementedError, match="assign a whole new list"):
             operation(listed)
+
+
+class TestConfigBlockList:
+    """The list handed out for a block the file writes more than once."""
+
+    @pytest.fixture
+    def blocks(self) -> ConfigBlockList:
+        """Return a list standing for two occurrences of one block."""
+        return ConfigBlockList([Config(FakeStore()), Config(FakeStore())])
+
+    def test_holds_one_configuration_per_occurrence(self, blocks) -> None:
+        """Test that the occurrences are reachable by index, in the order written."""
+        assert len(blocks) == 2
+        assert all(isinstance(block, Config) for block in blocks)
+
+    @pytest.mark.parametrize(
+        "operation",
+        [
+            lambda blocks: blocks.append({}),
+            lambda blocks: blocks.extend([{}]),
+            lambda blocks: blocks.insert(0, {}),
+            lambda blocks: blocks.remove(blocks[0]),
+            lambda blocks: blocks.pop(),
+            lambda blocks: blocks.clear(),
+            lambda blocks: blocks.sort(),
+            lambda blocks: blocks.reverse(),
+            lambda blocks: blocks.__setitem__(0, {}),
+            lambda blocks: blocks.__delitem__(0),
+            lambda blocks: blocks.__iadd__([{}]),
+            lambda blocks: blocks.__imul__(2),
+        ],
+    )
+    def test_refuses_to_add_remove_or_replace_a_whole_block(self, blocks, operation) -> None:
+        """Test that only the entries of an occurrence are editable, not the list itself.
+
+        Where a new occurrence would go, and how it should be spaced, is not something the
+        list can answer, so these would leave it and the file disagreeing.
+        """
+        with pytest.raises(NotImplementedError, match="occurrence of a repeated block"):
+            operation(blocks)

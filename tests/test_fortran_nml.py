@@ -507,12 +507,84 @@ def test_fortran_nml_derived_type_merges_across_lines(parser):
     assert str(config) == text
 
 
-def test_fortran_nml_repeated_group_merges(parser):
-    """Test that a namelist group named twice in one file merges rather than overwriting."""
+def test_fortran_nml_repeated_group_reads_as_separate_records(parser):
+    """Test that a group named twice reads as one block per occurrence, not one merge.
+
+    Fortran's ``READ`` scans forward and stops at the first group of the name, so a program
+    reading the group once sees the first occurrence and one reading it in a loop sees each
+    in turn. Neither of those is the merge, and only the occurrences can produce both.
+    """
     text = "&L\n V = 1\n/\n&L\n W = 2\n/\n"
     config = parser.parse(text)
 
-    assert dict(config["L"]) == {"V": 1, "W": 2}
+    assert [dict(block) for block in config["L"]] == [{"V": 1}, {"W": 2}]
+    assert str(config) == text
+
+
+def test_fortran_nml_a_key_repeated_across_groups_stays_with_its_own_group(parser):
+    """Test that neither occurrence's value is lost when both assign the same key.
+
+    Merging reported the last value for such a key while keeping the keys only the first
+    one set, which is a combination no single ``READ`` returns.
+    """
+    text = "&L\n V = 1\n P = 9\n/\n&L\n V = 2\n/\n"
+    config = parser.parse(text)
+
+    assert [dict(block) for block in config["L"]] == [{"V": 1, "P": 9}, {"V": 2}]
+    assert str(config) == text
+
+
+def test_fortran_nml_a_group_written_once_is_not_a_list(parser):
+    """Test that the usual case is untouched: one occurrence is handed out as a block."""
+    config = parser.parse("&L\n V = 1\n/\n")
+
+    assert dict(config["L"]) == {"V": 1}
+
+
+def test_fortran_nml_one_occurrence_is_edited_on_its_own(parser):
+    """Test that writing through one occurrence leaves every other one as it was."""
+    text = "&L\n V = 1\n/\n&L\n V = 2\n/\n"
+    config = parser.parse(text)
+
+    config["L"][1]["V"] = 5
+
+    assert str(config) == "&L\n V = 1\n/\n&L\n V = 5\n/\n"
+
+
+def test_fortran_nml_a_repeated_group_accepts_a_new_key(parser):
+    """Test that each occurrence is addable, being a real block node in the tree.
+
+    A merged block is a node the parse tree does not contain, so nothing could be spliced
+    into it. Keeping the occurrences apart means each one has a body of its own again.
+    """
+    text = "&L\n V = 1\n/\n&L\n W = 2\n/\n"
+    config = parser.parse(text)
+
+    config["L"][0]["Z"] = 7
+
+    assert str(config) == "&L\n V = 1\n Z = 7\n/\n&L\n W = 2\n/\n"
+
+
+def test_fortran_nml_deleting_a_repeated_group_removes_every_occurrence(parser):
+    """Test that the key does not come back the next time the file is read."""
+    config = parser.parse("&L\n V = 1\n/\n&L\n W = 2\n/\n")
+
+    del config["L"]
+
+    assert str(config) == ""
+
+
+def test_fortran_nml_a_derived_type_still_merges(parser):
+    """Test that separate records are for repeated groups only, not derived types.
+
+    ``a%b`` and ``a%c`` are two writings of the single key ``A``: they are held by the
+    format's *secondary* block rule, which merges whatever the policy for repeated groups
+    is, since each line carries one component of the same value.
+    """
+    text = "&L\n filename%met = 'x'\n filename%out = 'y'\n/\n"
+    config = parser.parse(text)
+
+    assert dict(config["L"]["FILENAME"]) == {"MET": "x", "OUT": "y"}
     assert str(config) == text
 
 

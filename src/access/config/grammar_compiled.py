@@ -71,6 +71,9 @@ class ParseContext:
             a new value.
         block_rules (tuple[str, ...]): Names of the rules holding block contents, the one
             new entries are written into first.
+        repeated_blocks (str): What a file writing the same block twice means, ``"merge"``
+            or ``"separate"``. Applies only to the first of *block_rules*; see
+            ``ConfigParser.repeated_blocks``.
     """
 
     grammar: CompiledGrammar
@@ -78,6 +81,7 @@ class ParseContext:
     entry_templates: Mapping[tuple[str, str], str]
     value_rule_priority: tuple[str, ...]
     block_rules: tuple[str, ...] = (BLOCK_RULE,)
+    repeated_blocks: str = "merge"
 
     @property
     def lark(self) -> Lark:
