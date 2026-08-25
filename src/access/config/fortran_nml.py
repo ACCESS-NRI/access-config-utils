@@ -20,7 +20,7 @@ class FortranNMLParser(ConfigParser):
     wrote a position.
 
     A group may open with ``&`` or the older ``$`` and close with ``/``, ``&end`` or
-    ``$end``.
+    ``$end``. Values may be parted by commas or by blanks.
 
     A group whose body this cannot derive raises, rather than being read as the free text
     that may surround a group: a file that round-trips with a whole group missing from the
@@ -30,7 +30,7 @@ class FortranNMLParser(ConfigParser):
     two of them cannot be read as one: a multidimensional index (``v(1,2)``), an index on a
     derived type (``a(1)%b``), and one naming no positions at all (a stride of zero). Nor
     are character substrings implemented, a list cannot yet hold a null element written as
-    ``x = 1,,3``, values cannot be separated by whitespace alone, and a group has to be
+    ``x = 1,,3``, and a group has to be
     closed -- neither the next ``&`` nor a bare ``$`` ends it.
 
     Note: ``inf`` and ``nan`` are read as the floats they are, but cannot be written. Python
@@ -103,8 +103,12 @@ block: (nml_line | empty_line)*
 key_derived: ws* key index? "%" dtype_body -> key_block
 dtype_body: key_value | key_list | key_null | key_derived
 
+// Two values may be parted by a comma, by a line break, or by whitespace alone: Fortran
+// treats a blank as a value separator, and WW3's inputs use it throughout ("v = 1 2 3", and
+// "MODEL(4)%FORCING = 'ocn' 'ocn' 'atm'"). A bare "ws" here and not a newline: a list that ran
+// on across a line break with nothing between the values would swallow the line below it.
 key_value: ws* key index? eq ws* value
-key_list: ws* key index? eq ws* value ((line_break|ws* separator) ws* value)+
+key_list: ws* key index? eq ws* value ((line_break|ws* separator|ws) ws* value)+
 key_null: ws* key index? eq ws*
 
 // The value may also start on the line after the "=", which MOM6's test inputs do for their
@@ -112,7 +116,7 @@ key_null: ws* key index? eq ws*
 // rules above: optional, it doubles the derivations Earley explores for every assignment in
 // the file, and costs five times the parse time on a large namelist.
 wrapped_value: ws* key index? eq line_end ws* value -> key_value
-wrapped_list: ws* key index? eq line_end ws* value ((line_break|ws* separator) ws* value)+ -> key_list
+wrapped_list: ws* key index? eq line_end ws* value ((line_break|ws* separator|ws) ws* value)+ -> key_list
 line_break: ws* separator line_end
 
 // An array qualifier: "v(3)", "v(2:5)", "v(1:7:2)" or "v(1,2)". Deliberately one opaque

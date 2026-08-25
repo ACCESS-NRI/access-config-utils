@@ -161,6 +161,43 @@ class TestAssignmentForms:
         assert dict(config["L"]) == {"FILES": ["a", "b"], "EMPTY": None, "Z": 1}
         assert str(config) == source
 
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("1 2 3", [1, 2, 3]),
+            ("1  2   3", [1, 2, 3]),
+            ("'ocn' 'atm' 'ice'", ["ocn", "atm", "ice"]),
+            ("hello world", ["hello", "world"]),
+            ("1 T", [1, True]),
+            ("1 , 2 3", [1, 2, 3]),
+            ("2*7 1", [7, 7, 1]),
+        ],
+    )
+    def test_a_blank_may_part_two_values(self, parser, text, expected) -> None:
+        """Test that whitespace alone separates values, as Fortran says it does.
+
+        Verified against gfortran: ``v = 1 2 3 4`` reads as four elements. WW3's inputs
+        are written this way throughout -- ``MODEL(4)%FORCING = 'ocn' 'ocn' 'atm'`` -- and
+        it was the single biggest reason a namelist here failed to parse.
+        """
+        source = f"&L\nV = {text}\n/\n"
+        config = parser.parse(source)
+
+        assert config["L"]["V"] == expected
+        assert str(config) == source
+
+    def test_two_assignments_on_a_line_need_no_comma(self, parser) -> None:
+        """Test that a blank between values does not swallow the key that follows.
+
+        ``BAREWORD``'s ``(?![ \\t]*=)`` lookahead is what keeps ``b`` from being read as a
+        second value of ``a`` now that a blank alone can part two values.
+        """
+        source = "&L\nA = 1 B = 2\n/\n"
+        config = parser.parse(source)
+
+        assert dict(config["L"]) == {"A": 1, "B": 2}
+        assert str(config) == source
+
     def test_a_list_continues_across_lines(self, parser) -> None:
         """Test ``line_break``: a separator and a newline carry a list to the next line."""
         source = "&LIST\nTEST='a', \n'b', \n'c'\n/\n"
@@ -695,7 +732,6 @@ class TestRejected:
             "&LIST\nTEST = 'unterminated\n/",
             "%TEST\na=1\n%TEST",
             "TEST%\na=1\nTEST%",
-            "&TEST\na=1 2\n/",
             "&TEST\na=1 \n2\n/",
             "BLOCK\n TEST ='a'/",
             "&BLOCK\n VAR1=1\n&e",
@@ -707,9 +743,9 @@ class TestRejected:
         """Test that each of these raises rather than parsing.
 
         Which ``UnexpectedInput`` Lark raises depends on how far it got, and that is not a
-        promise the parser makes. Notable cases: values cannot be separated by whitespace
-        alone, a group has to be closed rather than ended by the next "&", and a list cannot
-        yet hold an elided element written as ``1,,3``.
+        promise the parser makes. Notable cases: a group has to be closed rather than ended
+        by the next "&", a list may be parted by blanks on one line but not carried onto the
+        next without a separator, and it cannot yet hold an elided element as ``1,,3``.
         """
         with pytest.raises(UnexpectedInput):
             parser.parse(source)

@@ -87,9 +87,9 @@ def _rank_key(template: EntryTemplate, style: EntryStyle, order: int) -> tuple[i
     Returns:
         tuple[int, ...]: The sort key.
     """
-    ends_line, block_ok, newlines, literal_length, negated_ws, keys = shape_key(template)
+    ends_line, block_ok, newlines, parted, literal_length, negated_ws, keys = shape_key(template)
     mismatch = 0 if style_matches(template, style) else 1
-    return (ends_line, block_ok, newlines, literal_length, mismatch, negated_ws, keys, order)
+    return (ends_line, block_ok, newlines, parted, literal_length, mismatch, negated_ws, keys, order)
 
 
 def _ranked_templates(info: GrammarInfo, container: str, category: str, style: EntryStyle) -> list[EntryTemplate]:
