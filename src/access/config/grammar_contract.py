@@ -93,6 +93,14 @@ up one value: ``v(1) = 1`` beside ``v(2) = 2`` is the two-element ``v``. ``place
 works out where each entry's values land.
 """
 
+ELIDED_RULE: Final = "elided"
+"""Name of the rule marking a list position written as nothing between two separators.
+
+``x = 1, , 3`` skips its second element, which Fortran leaves at whatever the variable held.
+One node per position skipped, so the count survives into the tree; the reader turns each
+into the same absent-node a position no indexed entry wrote already has.
+"""
+
 REPEAT_RULE: Final = "repeat"
 """Name of the rule holding a repeat count, ``n*v`` for *v* repeated *n* times.
 

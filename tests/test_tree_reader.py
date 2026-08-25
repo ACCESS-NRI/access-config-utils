@@ -199,6 +199,35 @@ class TestBlocksWrittenMoreThanOnce:
         assert EntryRef("key_value", ()).block_node is None
 
 
+class TestElidedElements:
+    """A list position written as nothing between two separators."""
+
+    def test_a_skipped_position_backs_no_node(self) -> None:
+        """Test that an ``elided`` child becomes an absent node, and so a null value.
+
+        That is the same shape a position no indexed entry wrote already has, which is what
+        makes it read as ``None`` and refuse to be written through.
+        """
+        first, second = value_node("integer", "1"), value_node("integer", "3")
+        node = entry_node("key_list", "v", first, Tree("elided", []), second)
+
+        refs = read_entries(container(node), FakeContext())
+
+        assert refs["v"].value_nodes == (first, None, second)
+        assert entry_value(refs["v"]) == [1, None, 3]
+
+    def test_an_entry_of_nothing_but_skipped_positions_is_refused(self) -> None:
+        """Test that a list has to hold at least one real value.
+
+        Every position absent means the entry says nothing at all, and there would be no
+        value node to read a type from.
+        """
+        node = entry_node("key_list", "v", Tree("elided", []), Tree("elided", []))
+
+        with pytest.raises(ValueError, match="No values found"):
+            read_entries(container(node), FakeContext())
+
+
 class TestRepeatedBlocksKeptApart:
     """A format that reads a block written twice as two records rather than one merge."""
 

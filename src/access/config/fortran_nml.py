@@ -20,7 +20,12 @@ class FortranNMLParser(ConfigParser):
     wrote a position.
 
     A group may open with ``&`` or the older ``$`` and close with ``/``, ``&end`` or
-    ``$end``. Values may be parted by commas or by blanks.
+    ``$end``. Values may be parted by commas or by blanks, and a list may skip a
+    position by writing nothing between two separators (``x = 1, , 3``).
+
+    A group written more than once is read as one block per occurrence rather than merged;
+    see ``repeated_blocks``. An unqualified assignment over a longer entry overlays it from
+    the first position, as Fortran does, so ``x = 1, 2`` then ``x = 3`` is ``[3, 2]``.
 
     A group whose body this cannot derive raises, rather than being read as the free text
     that may surround a group: a file that round-trips with a whole group missing from the
@@ -29,9 +34,8 @@ class FortranNMLParser(ConfigParser):
     Note: three qualifiers are not gathered, and keep their text in the key instead, so that
     two of them cannot be read as one: a multidimensional index (``v(1,2)``), an index on a
     derived type (``a(1)%b``), and one naming no positions at all (a stride of zero). Nor
-    are character substrings implemented, a list cannot yet hold a null element written as
-    ``x = 1,,3``, and a group has to be
-    closed -- neither the next ``&`` nor a bare ``$`` ends it.
+    are character substrings implemented, nor a character value continued across lines, and
+    a group has to be closed -- neither the next ``&`` nor a bare ``$`` ends it.
 
     Note: ``inf`` and ``nan`` are read as the floats they are, but cannot be written. Python
     spells them as bare words that no format reads back as a number, so assigning one raises
@@ -108,7 +112,7 @@ dtype_body: key_value | key_list | key_null | key_derived
 // "MODEL(4)%FORCING = 'ocn' 'ocn' 'atm'"). A bare "ws" here and not a newline: a list that ran
 // on across a line break with nothing between the values would swallow the line below it.
 key_value: ws* key index? eq ws* value
-key_list: ws* key index? eq ws* value ((line_break|ws* separator|ws) ws* value)+
+key_list: ws* key index? eq ws* value ((line_break|ws* separator elided*|ws) ws* value)+
 key_null: ws* key index? eq ws*
 
 // The value may also start on the line after the "=", which MOM6's test inputs do for their
@@ -116,7 +120,7 @@ key_null: ws* key index? eq ws*
 // rules above: optional, it doubles the derivations Earley explores for every assignment in
 // the file, and costs five times the parse time on a large namelist.
 wrapped_value: ws* key index? eq line_end ws* value -> key_value
-wrapped_list: ws* key index? eq line_end ws* value ((line_break|ws* separator|ws) ws* value)+ -> key_list
+wrapped_list: ws* key index? eq line_end ws* value ((line_break|ws* separator elided*|ws) ws* value)+ -> key_list
 line_break: ws* separator line_end
 
 // An array qualifier: "v(3)", "v(2:5)", "v(1:7:2)" or "v(1,2)". Deliberately one opaque
@@ -145,6 +149,12 @@ REPEAT_COUNT: /[0-9]+\\*/
       | double_complex
       | fortran_string
       | fortran_identifier
+
+// A list may skip a position by writing nothing between two separators: "v = 1, , 3" leaves
+// the second element unset, which gfortran reports as the variable's previous value and this
+// reads as a null, exactly like a position no indexed entry wrote. One "elided" node per
+// position skipped, so the count survives into the tree.
+elided: ws* separator
 
 empty_line: line_end
 line_end: (fortran_comment|ws*) NEWLINE

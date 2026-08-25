@@ -186,6 +186,38 @@ class TestAssignmentForms:
         assert config["L"]["V"] == expected
         assert str(config) == source
 
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("1, , 3", [1, None, 3]),
+            ("1,,3", [1, None, 3]),
+            ("1, , , 4", [1, None, None, 4]),
+            ("1, , 3, 4", [1, None, 3, 4]),
+        ],
+    )
+    def test_a_list_may_skip_a_position(self, parser, text, expected) -> None:
+        """Test that nothing between two separators leaves that element unset.
+
+        gfortran reads ``v = 1, , 3, 4`` as ``[1, <unchanged>, 3, 4]``, so the skipped
+        position holds whatever the variable had. Nothing in the file backs it, which is the
+        same shape as a position no indexed entry wrote: it reads as a null and refuses to
+        be written through.
+        """
+        source = f"&L\nV = {text}\n/\n"
+        config = parser.parse(source)
+
+        assert config["L"]["V"] == expected
+        assert str(config) == source
+
+    def test_a_skipped_position_cannot_be_written(self, parser) -> None:
+        """Test that the null is not a value: there is no text behind it to change."""
+        config = parser.parse("&L\nV = 1, , 3\n/\n")
+
+        with pytest.raises((TypeError, ValueError)):
+            config["L"]["V"][1] = 9
+
+        assert str(config) == "&L\nV = 1, , 3\n/\n"
+
     def test_two_assignments_on_a_line_need_no_comma(self, parser) -> None:
         """Test that a blank between values does not swallow the key that follows.
 
@@ -736,7 +768,6 @@ class TestRejected:
             "BLOCK\n TEST ='a'/",
             "&BLOCK\n VAR1=1\n&e",
             "&L\n  nonsense @@@\n/\n",
-            "&L\n  x = 1,,3\n/\n",
         ],
     )
     def test_malformed_input_raises(self, parser, source) -> None:
@@ -744,8 +775,8 @@ class TestRejected:
 
         Which ``UnexpectedInput`` Lark raises depends on how far it got, and that is not a
         promise the parser makes. Notable cases: a group has to be closed rather than ended
-        by the next "&", a list may be parted by blanks on one line but not carried onto the
-        next without a separator, and it cannot yet hold an elided element as ``1,,3``.
+        by the next "&", and a list may be parted by blanks on one line but not carried onto
+        the next without a separator -- ``a=1 \\n2`` would swallow the line below it.
         """
         with pytest.raises(UnexpectedInput):
             parser.parse(source)

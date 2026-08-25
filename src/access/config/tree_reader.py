@@ -30,6 +30,7 @@ from lark import Token, Tree
 from lark.visitors import Interpreter
 
 from access.config.grammar_contract import (
+    ELIDED_RULE,
     INDEX_RULE,
     KEY_BLOCK,
     KEY_LIST,
@@ -361,24 +362,32 @@ class EntryReader(Interpreter):
         return self._ctx.normalise_key(key_token.value)
 
     @staticmethod
-    def _value_nodes(tree: Tree) -> tuple[Tree, ...]:
+    def _value_nodes(tree: Tree) -> tuple[Tree | None, ...]:
         """Return the value-type rule nodes among an entry's children.
 
         Args:
             tree (Tree): A ``"key_value"`` or ``"key_list"`` rule node.
 
         Returns:
-            tuple[Tree, ...]: The value-type rule nodes, in the order written.
+            tuple[Tree | None, ...]: The node backing each element, in order written,
+                and ``None`` for a position the list skipped between two separators.
 
         Raises:
-            ValueError: If there are none.
+            ValueError: If there are no values at all.
         """
-        found = [child for child in tree.children if is_value_node(child)]
-        if not found:
+        found: list[Tree | None] = []
+        for child in tree.children:
+            if isinstance(child, Tree) and child.data == ELIDED_RULE:
+                # A skipped position backs no node at all, which is what makes it read
+                # as a null and unwritable -- the shape an unwritten array position has.
+                found.append(None)
+            elif is_value_node(child):
+                # A repeat node holds several values at once, so it appears once per value
+                # it covers and the nodes are no longer one-to-one with the tree's children.
+                found.extend([child] * len(node_values(child)))
+        if all(node is None for node in found):
             raise ValueError("No values found in Tree")
-        # A repeat node holds several values at once, so it appears once per value it
-        # covers and the references are no longer one-to-one with the nodes in the tree.
-        return tuple(node for node in found for _ in node_values(node))
+        return tuple(found)
 
     def key_value(self, tree: Tree) -> None:
         """Interpreter callback for ``"key_value"`` rule nodes.
