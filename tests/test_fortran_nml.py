@@ -152,8 +152,8 @@ class TestAssignmentForms:
     def test_a_value_may_start_on_the_line_after_its_equals(self, parser) -> None:
         """Test ``wrapped_value`` and ``wrapped_list``.
 
-        MOM6's test inputs write their longer lists that way. A key with nothing after it at
-        all is still a valueless one, so this does not swallow the assignment that follows.
+        Real files write their longer lists that way. A key with nothing after it at all is
+        still a valueless one, so this does not swallow the assignment that follows.
         """
         source = "&L\n  files =\n      'a',\n      'b',\n  empty =\n  z = 1\n/\n"
         config = parser.parse(source)
