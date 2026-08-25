@@ -295,6 +295,31 @@ class TestArrayQualifiers:
         assert config["L"]["N_AERO"] == expected
         assert str(config) == source
 
+    @pytest.mark.parametrize(
+        ("lines", "expected"),
+        [
+            (["x = 1, 2", "x = 3"], [3, 2]),
+            (["x = 1, 2, 3", "x = 9"], [9, 2, 3]),
+            (["x = 1, 2, 3", "x = 8, 9"], [8, 9, 3]),
+            (["x = 3*7", "x = 1"], [1, 7, 7]),
+            # A later entry at least as long covers every position, so it simply wins.
+            (["x = 1", "x = 2"], 2),
+            (["x = 1, 2", "x = 3, 4, 5"], [3, 4, 5]),
+        ],
+    )
+    def test_an_unqualified_reassignment_overlays_what_is_there(self, parser, lines, expected) -> None:
+        """Test that a second assignment writes from position one and leaves the rest.
+
+        Fortran does not reset the variable: ``x = 1, 2`` then ``x = 3`` is ``[3, 2]``.
+        Taking the later entry whole reported the scalar ``3`` and dropped the second
+        element with no error -- the overlay the qualified ``x(1) = 3`` already got right.
+        """
+        source = "&L\n" + "".join(f"  {line}\n" for line in lines) + "/\n"
+        config = parser.parse(source)
+
+        assert config["L"]["X"] == expected
+        assert str(config) == source
+
     def test_a_valueless_assignment_may_carry_one(self, parser) -> None:
         """Test that a qualified null sets one position of the array the others fill in."""
         source = "&L\n  v(2) = 3\n  v(1) =\n/\n"

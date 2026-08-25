@@ -254,6 +254,12 @@ class EntryReader(Interpreter):
         any left unwritten -- by a stride, or by indices that skip -- read as null. An
         unqualified assignment to a key already written with indices joins the same array.
 
+        An unqualified assignment over an entry that holds *more* values joins it too, and
+        for the same reason: Fortran writes from the first position and leaves the rest,
+        so ``v = 1, 2`` then ``v = 3`` is ``[3, 2]``, not the scalar ``3``. Taking the
+        later entry whole would drop the positions it does not reach, with nothing to show
+        for it. A later entry at least as long covers every position, so it simply wins.
+
         Args:
             key (str): The normalised key.
             tree (Tree): The entry rule node.
@@ -271,7 +277,7 @@ class EntryReader(Interpreter):
             # A qualifier this does not model, a multidimensional one. Keeping it in the key
             # is what stops "v(1,1)" and "v(3,3)" from being read as the same key.
             return f"{key}({index.children[0]})"
-        if index is None and key not in self._slots:
+        if index is None and key not in self._slots and not self._overwrites_partly(key, len(values)):
             return key
         if key not in self._slots:
             self._slots[key] = self._seed_slots(key)
@@ -279,6 +285,25 @@ class EntryReader(Interpreter):
         merged_values, merged_nodes = flatten_slots(self._slots[key])
         self._record(key, EntryRef(KEY_LIST, (tree,), tuple(merged_nodes), values=tuple(merged_values)))
         return None
+
+    def _overwrites_partly(self, key: str, count: int) -> bool:
+        """Report whether an entry of *count* values leaves part of *key* standing.
+
+        Only then does an unqualified assignment have to join the array rather than replace
+        it. Answering ``False`` for the equal-length case is what keeps ``x = 1`` then
+        ``x = 2`` the scalar ``2`` rather than the one-element list the array path builds.
+
+        Args:
+            key (str): The normalised key.
+            count (int): How many values the entry being read holds.
+
+        Returns:
+            bool: True if the key already holds more values than that.
+        """
+        ref = self._refs.get(key)
+        if ref is None or ref.category not in (KEY_VALUE, KEY_LIST):
+            return False
+        return len(ref.value_nodes) > count
 
     def _seed_slots(self, key: str) -> dict[int, tuple[Any, Tree | None]]:
         """Lay out what a key holds as array positions, so an indexed entry can join it.
