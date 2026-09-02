@@ -121,6 +121,30 @@ class TestAllocationStrategy:
         with pytest.raises(ValueError, match=">= 1"):
             FixedAllocation(n_cores=-4)
 
+    def test_fixed_takes_a_fraction_instead_of_a_count(self) -> None:
+        spec = FixedAllocation(core_fraction=0.25)
+        assert spec.core_fraction == 0.25
+        # The count is not knowable until the budget is: nothing here has seen one yet.
+        assert spec.n_cores is None
+
+    def test_fixed_needs_one_of_the_two(self) -> None:
+        with pytest.raises(ValueError, match="exactly one of n_cores and core_fraction"):
+            FixedAllocation()
+
+    def test_fixed_refuses_both_at_once(self) -> None:
+        # They say the same thing, so stating both is a contradiction waiting to happen
+        # rather than a count with a fallback.
+        with pytest.raises(ValueError, match="exactly one of n_cores and core_fraction"):
+            FixedAllocation(n_cores=4, core_fraction=0.25)
+
+    @pytest.mark.parametrize("fraction", [0.0, -0.5, 1.5])
+    def test_fixed_fraction_outside_the_unit_range_raises(self, fraction: float) -> None:
+        with pytest.raises(ValueError, match=r"core_fraction must be in \(0.0, 1.0\]"):
+            FixedAllocation(core_fraction=fraction)
+
+    def test_fixed_fraction_of_the_whole_budget_is_allowed(self) -> None:
+        assert FixedAllocation(core_fraction=1.0).core_fraction == 1.0
+
     # --- Ratio mode ---
 
     def test_ratio_valid(self) -> None:
@@ -176,6 +200,27 @@ class TestAllocationStrategy:
     def test_free_max_less_than_min_raises(self) -> None:
         with pytest.raises(ValueError, match="max_cores"):
             FreeAllocation(min_cores=4, max_cores=2)
+
+    def test_free_takes_fractional_bounds(self) -> None:
+        spec = FreeAllocation(min_core_fraction=0.45, max_core_fraction=0.55)
+        assert (spec.min_core_fraction, spec.max_core_fraction) == (0.45, 0.55)
+        # The absolute bounds keep their defaults: the fractions have not been resolved.
+        assert (spec.min_cores, spec.max_cores) == (1, None)
+
+    @pytest.mark.parametrize("field", ["min_core_fraction", "max_core_fraction"])
+    @pytest.mark.parametrize("fraction", [0.0, -0.5, 1.5])
+    def test_free_fraction_outside_the_unit_range_raises(self, field: str, fraction: float) -> None:
+        with pytest.raises(ValueError, match=rf"{field} must be in \(0.0, 1.0\]"):
+            FreeAllocation(**{field: fraction})
+
+    def test_free_max_fraction_less_than_min_fraction_raises(self) -> None:
+        with pytest.raises(ValueError, match="max_core_fraction"):
+            FreeAllocation(min_core_fraction=0.5, max_core_fraction=0.25)
+
+    def test_free_mixes_absolute_and_fractional_bounds(self) -> None:
+        # Legal at construction; what they come to together is settled on resolution.
+        spec = FreeAllocation(min_cores=8, max_core_fraction=0.5)
+        assert (spec.min_cores, spec.max_core_fraction) == (8, 0.5)
 
     # --- Subcomponents and constraints ---
 
@@ -250,7 +295,18 @@ class TestAllocationStrategy:
 class TestRootAllocation:
     """The root cannot size itself, and no other mode can be the root."""
 
-    @pytest.mark.parametrize("field", ["n_cores", "weight", "min_cores", "max_cores"])
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "n_cores",
+            "weight",
+            "min_cores",
+            "max_cores",
+            "core_fraction",
+            "min_core_fraction",
+            "max_core_fraction",
+        ],
+    )
     def test_it_cannot_state_a_size(self, field: str) -> None:
         # Not rejected at construction - unwritable. Every sizing field belongs to a mode
         # that takes a *share* of a parent's cores, which the root never does.
@@ -275,6 +331,126 @@ class TestRootAllocation:
 
 
 # ---------------------------------------------------------------------------
+# Fractional bounds
+# ---------------------------------------------------------------------------
+
+
+class TestFractionalBounds:
+    """What a share of the budget comes to once the budget is known."""
+
+    # --- Fixed ---
+
+    def test_a_fixed_fraction_resolves_to_a_count(self) -> None:
+        assert FixedAllocation(core_fraction=0.25)._resolve_fractions(416).n_cores == 104
+
+    def test_a_fixed_fraction_rounds_down(self) -> None:
+        # Half of 51 cores is 25.5, and 25 is the half that two siblings can both have.
+        assert FixedAllocation(core_fraction=0.5)._resolve_fractions(51).n_cores == 25
+
+    @pytest.mark.parametrize("fractions", [(0.5, 0.5), (0.5, 0.25, 0.25), (1 / 3, 1 / 3, 1 / 3), (0.15, 0.85)])
+    def test_fixed_siblings_that_fit_the_budget_keep_fitting_it(self, fractions: tuple[float, ...]) -> None:
+        # The property rounding down is here for: shares that fit resolve to counts that
+        # fit, at every total. Rounding to the nearest count instead puts two half-shares
+        # at 26 cores each on 51, and the search finds nothing on every odd total.
+        for total_cores in range(len(fractions), 500):
+            resolved = [FixedAllocation(core_fraction=f)._resolve_fractions(total_cores).n_cores for f in fractions]
+            assert sum(resolved) <= total_cores, f"{fractions} over-subscribe {total_cores} cores as {resolved}"
+
+    def test_a_resolved_fixed_allocation_states_no_fraction(self) -> None:
+        # Resolution replaces the fraction rather than adding to it, so what comes out is
+        # an ordinary FixedAllocation and nothing downstream can tell the difference.
+        resolved = FixedAllocation(core_fraction=0.25)._resolve_fractions(416)
+        assert resolved == FixedAllocation(n_cores=104)
+
+    def test_a_fixed_fraction_never_resolves_below_one_core(self) -> None:
+        # 1% of 20 cores is a fifth of a core; a component still needs one.
+        assert FixedAllocation(core_fraction=0.01)._resolve_fractions(20).n_cores == 1
+
+    # --- Free ---
+
+    def test_free_bounds_round_outwards(self) -> None:
+        # Rounding the pair outwards is what keeps the share it brackets inside the band:
+        # half of 415 is 207.5, and both 207 and 208 are within a hair of half the machine.
+        resolved = FreeAllocation(min_core_fraction=0.5, max_core_fraction=0.5)._resolve_fractions(415)
+        assert (resolved.min_cores, resolved.max_cores) == (207, 208)
+
+    def test_a_share_that_lands_on_a_whole_number_stays_there(self) -> None:
+        # 0.29 * 100 is 28.999999999999996, and flooring that would say 28.
+        resolved = FreeAllocation(min_core_fraction=0.29)._resolve_fractions(100)
+        assert resolved.min_cores == 29
+
+    def test_a_free_fraction_never_resolves_below_one_core(self) -> None:
+        assert FreeAllocation(min_core_fraction=0.001)._resolve_fractions(100).min_cores == 1
+
+    def test_one_fractional_bound_leaves_the_other_alone(self) -> None:
+        resolved = FreeAllocation(min_core_fraction=0.5)._resolve_fractions(400)
+        assert (resolved.min_cores, resolved.max_cores) == (200, None)
+
+    def test_an_absolute_minimum_is_a_floor_under_the_fraction(self) -> None:
+        # "a tenth of the machine, but never fewer than 64 cores"
+        guarded = FreeAllocation(min_cores=64, min_core_fraction=0.1)
+        assert guarded._resolve_fractions(400).min_cores == 64
+        assert guarded._resolve_fractions(4000).min_cores == 400
+
+    def test_an_absolute_maximum_is_a_cap_over_the_fraction(self) -> None:
+        guarded = FreeAllocation(max_cores=64, max_core_fraction=0.1)
+        assert guarded._resolve_fractions(400).max_cores == 40
+        assert guarded._resolve_fractions(4000).max_cores == 64
+
+    def test_bounds_that_cross_on_this_budget_are_rejected(self) -> None:
+        # Contradictory only at this size, which is exactly what makes it worth saying out
+        # loud: left alone it would surface much later as a search that found nothing.
+        crossing = FreeAllocation(min_cores=40, max_core_fraction=0.01)
+        with pytest.raises(ValueError, match=r"min_cores=40 and max_cores=4, which admits no core count"):
+            crossing._resolve_fractions(400)
+
+    def test_a_crossing_bound_names_where_it_is(self) -> None:
+        tree = RootAllocation(subcomponents={"a": FreeAllocation(min_cores=40, max_core_fraction=0.01)})
+        with pytest.raises(ValueError, match=r"FreeAllocation at root.a: on 400 core\(s\)"):
+            tree._resolve_fractions(400)
+
+    # --- The tree ---
+
+    def test_a_tree_without_fractions_is_handed_straight_back(self) -> None:
+        # Identity, not equality: an untouched search must cost nothing, and a caller that
+        # kept a reference still holds the object being searched under.
+        tree = RootAllocation(
+            subcomponents={"a": FixedAllocation(n_cores=4), "b": FreeAllocation(min_cores=2, max_cores=8)}
+        )
+        assert tree._resolve_fractions(400) is tree
+
+    def test_a_fraction_anywhere_rebuilds_the_branch_holding_it(self) -> None:
+        untouched = FixedAllocation(n_cores=4)
+        tree = RootAllocation(
+            subcomponents={
+                "a": untouched,
+                "b": FreeAllocation(subcomponents={"c": FreeAllocation(max_core_fraction=0.5)}),
+            }
+        )
+
+        resolved = tree._resolve_fractions(400)
+
+        assert resolved is not tree
+        # Only the branch that held a fraction is rebuilt; the rest is the same object.
+        assert resolved.subcomponents["a"] is untouched
+        assert resolved.subcomponents["b"].subcomponents["c"].max_cores == 200
+
+    def test_a_mode_that_cannot_hold_a_fraction_is_left_as_it_is(self) -> None:
+        ratio = RatioAllocation(weight=3)
+        assert ratio._resolve_fractions(400) is ratio
+
+    def test_a_resolved_tree_is_still_a_usable_memo_key(self) -> None:
+        # The enumerator keys its subtree memo on the strategy object, so a rebuilt tree
+        # has to hash and compare like the equivalent hand-written one.
+        resolved = RootAllocation(subcomponents={"a": FixedAllocation(core_fraction=0.5)})._resolve_fractions(400)
+        expected = RootAllocation(subcomponents={"a": FixedAllocation(n_cores=200)})
+
+        assert resolved == expected
+        assert hash(resolved) == hash(expected)
+        assert {resolved: "memo"}[expected] == "memo"
+
+
+# ---------------------------------------------------------------------------
 # resolve_root_strategy
 # ---------------------------------------------------------------------------
 
@@ -284,13 +460,13 @@ class TestResolveRootStrategy:
 
     def test_none_builds_an_all_free_tree_under_a_root(self) -> None:
         root = ParallelComponent("r", subcomponents=(ParallelComponent("a"), ParallelComponent("b")))
-        resolved = resolve_root_strategy(root, None)
+        resolved = resolve_root_strategy(root, None, 16)
         assert resolved == RootAllocation(subcomponents={"a": FreeAllocation(), "b": FreeAllocation()})
 
     def test_a_valid_strategy_is_returned_unchanged(self) -> None:
         comp = ParallelComponent("r", subcomponents=(ParallelComponent("a"),))
         given = RootAllocation(subcomponents={"a": FixedAllocation(n_cores=4)})
-        assert resolve_root_strategy(comp, given) is given
+        assert resolve_root_strategy(comp, given, 16) is given
 
     @pytest.mark.parametrize(
         "allocations",
@@ -301,12 +477,44 @@ class TestResolveRootStrategy:
         # is no per-mode judgement about which fields happen to have been left alone.
         comp = ParallelComponent("r")
         with pytest.raises(TypeError, match="allocations must be a RootAllocation"):
-            resolve_root_strategy(comp, allocations)
+            resolve_root_strategy(comp, allocations, 16)
 
     def test_a_mismatched_tree_is_rejected(self) -> None:
         comp = ParallelComponent("r", subcomponents=(ParallelComponent("a"),))
         with pytest.raises(ValueError, match=r"no allocation given at root for \{'a'\}"):
-            resolve_root_strategy(comp, RootAllocation())
+            resolve_root_strategy(comp, RootAllocation(), 16)
+
+    def test_fractions_are_resolved_against_the_budget(self) -> None:
+        # The tree the enumerator receives never holds a fraction: this is the one place
+        # that knows both the strategy and the budget its shares are of.
+        comp = ParallelComponent("r", subcomponents=(ParallelComponent("a"), ParallelComponent("b")))
+        given = RootAllocation(
+            subcomponents={
+                "a": FixedAllocation(core_fraction=0.25),
+                "b": FreeAllocation(min_core_fraction=0.5, max_core_fraction=0.75),
+            }
+        )
+
+        resolved = resolve_root_strategy(comp, given, 400)
+
+        assert resolved.subcomponents["a"] == FixedAllocation(n_cores=100)
+        assert resolved.subcomponents["b"] == FreeAllocation(min_cores=200, max_cores=300)
+
+    def test_the_same_tree_resolves_differently_on_a_different_budget(self) -> None:
+        # The point of the whole feature: one strategy, every total of a scaling study.
+        comp = ParallelComponent("r", subcomponents=(ParallelComponent("a"),))
+        given = RootAllocation(subcomponents={"a": FixedAllocation(core_fraction=0.5)})
+
+        assert resolve_root_strategy(comp, given, 400).subcomponents["a"].n_cores == 200
+        assert resolve_root_strategy(comp, given, 4000).subcomponents["a"].n_cores == 2000
+
+    def test_the_name_check_runs_before_the_fractions_are_resolved(self) -> None:
+        # A typo in a component name is the more useful thing to hear about, and resolving
+        # first would report the arithmetic of a tree that was never going to be used.
+        comp = ParallelComponent("r", subcomponents=(ParallelComponent("a"),))
+        given = RootAllocation(subcomponents={"typo": FreeAllocation(min_core_fraction=0.9, max_cores=2)})
+        with pytest.raises(ValueError, match="unknown component names"):
+            resolve_root_strategy(comp, given, 400)
 
 
 # ---------------------------------------------------------------------------

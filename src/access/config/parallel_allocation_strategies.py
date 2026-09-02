@@ -22,6 +22,13 @@ as one of the following subclasses of ``AllocationStrategy``:
 The ``RootAllocation`` states no core count of its own, because the root component always
 receives the whole budget.
 
+``FixedAllocation`` and ``FreeAllocation`` may state their core counts as a fraction of the
+whole budget instead of as an absolute number, which is what makes one strategy tree usable
+across a scaling study: ``FreeAllocation(min_core_fraction=0.45, max_core_fraction=0.55)``
+asks for roughly half the machine, whatever the machine turns out to be. The fractions are
+shares of ``iter_layouts``' ``total_cores``, as in ``MaxCoreFractionConstraint``, and are
+turned into core counts once, before the search starts.
+
 Just like components, allocation strategies may have constraints attached to them, which
 filter out layouts that do not meet certain criteria. This enables to set more stringent
 constraints than the ones defined in the component tree and further restrict the layouts
@@ -31,11 +38,12 @@ that are enumerated.
 from __future__ import annotations
 
 import logging
+import math
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import ClassVar
+from typing import ClassVar, Self
 
 from access.config.parallel_component import GroupConstraint, LocalConstraint, ParallelComponent
 
@@ -48,6 +56,70 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Fractional bounds
+# ---------------------------------------------------------------------------
+
+# A share of the budget is snapped to the nearest whole number of cores before it is
+# rounded, because the product is rarely exact: 0.29 * 100 is 28.999999999999996, and
+# flooring that would hand back 28 cores for a bound that plainly says 29. A product this
+# close to a whole number was meant to be that number. MaxCoreFractionConstraint dodges the
+# same trap by comparing quotients rather than multiplying.
+_FRACTION_REL_TOL = 1e-9
+
+
+def _validate_fraction(owner: str, name: str, value: float) -> None:
+    """Check that *value* is a usable share of the budget.
+
+    Args:
+        owner (str): Class name, for the error message.
+        name (str): Field name, for the error message.
+        value (float): The fraction to check.
+
+    Raises:
+        ValueError: If *value* is not in ``(0.0, 1.0]``.
+    """
+    if not (0.0 < value <= 1.0):
+        raise ValueError(f"{owner}.{name} must be in (0.0, 1.0], got {value}.")
+
+
+def _cores_from_fraction(fraction: float, total_cores: int, rounding: Callable[[float], int]) -> int:
+    """Return the core count *fraction* of *total_cores* comes to, never less than 1.
+
+    *rounding* decides which way a share falling between two core counts goes:
+    ``math.floor`` for a lower bound and ``math.ceil`` for an upper one, so that a band
+    written as a pair of fractions still contains the share it brackets, and ``round`` for
+    a count meant to be a single value.
+
+    Args:
+        fraction (float): Share of the budget, in ``(0.0, 1.0]``.
+        total_cores (int): The whole budget the share is taken from.
+        rounding (Callable[[float], int]): How to turn a fractional share into a count.
+
+    Returns:
+        int: The core count, floored at 1 - however small the share, it still names a core.
+
+    Examples:
+        >>> import math
+        >>> _cores_from_fraction(0.5, 415, math.floor)
+        207
+        >>> _cores_from_fraction(0.5, 415, math.ceil)
+        208
+
+        A share landing on a whole number stays there, even when the arithmetic does not:
+
+        >>> 0.29 * 100
+        28.999999999999996
+        >>> _cores_from_fraction(0.29, 100, math.floor)
+        29
+    """
+    exact = fraction * total_cores
+    nearest = round(exact)
+    if nearest >= 1 and math.isclose(exact, nearest, rel_tol=_FRACTION_REL_TOL):
+        return nearest
+    return max(1, rounding(exact))
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +286,23 @@ class AllocationStrategy(ABC):
         """
         return None
 
+    def _resolve_own_fractions(self, total_cores: int, path: str) -> dict[str, object]:
+        """Return the field changes turning this node's fractional bounds into core counts.
+
+        Called once per node by ``_resolve_fractions``, before the search. The default
+        states no change, which is the whole answer for a mode that cannot carry a
+        fraction.
+
+        Args:
+            total_cores (int): The whole budget the fractions are shares of.
+            path (str): Dotted path to this strategy, for the error message.
+
+        Returns:
+            dict[str, object]: Field names and their resolved values, empty when this
+                strategy states no fractional bound.
+        """
+        return {}
+
     # --- Shared behaviour --------------------------------------------------
 
     def resolve_tpr_range(self, inherited: tuple[int, int]) -> tuple[int, int]:
@@ -289,6 +378,46 @@ class AllocationStrategy(ABC):
         for sub in component.subcomponents:
             self.subcomponents[sub.name]._validate_names(sub, f"{path}.{sub.name}")
 
+    def _resolve_fractions(self, total_cores: int, path: str = "root") -> Self:
+        """Return this strategy tree with every fractional bound turned into a core count.
+
+        Resolving once, here, is what keeps the fractions out of the search: by the time
+        the enumerator sees a strategy its bounds are plain core counts, so nothing
+        downstream - the sibling scheduling, the per-mode share iterators, the subtree
+        memo - needs to know that a fraction was ever written down.
+
+        A tree stating no fractional bound anywhere is returned as it stands rather than
+        rebuilt into an equal copy, so the common case costs nothing and a caller holding
+        a reference to their strategy still holds the object the search runs on.
+
+        Args:
+            total_cores (int): The whole budget the fractions are shares of.
+            path (str): Dotted path to this strategy, for the error messages.
+
+        Returns:
+            Self: The resolved strategy, or this one unchanged when it holds no fraction.
+
+        Raises:
+            ValueError: If a resolved lower bound comes out above its resolved upper bound.
+
+        Examples:
+            >>> band = FreeAllocation(min_core_fraction=0.25, max_core_fraction=0.5)
+            >>> resolved = band._resolve_fractions(400)
+            >>> (resolved.min_cores, resolved.max_cores)
+            (100, 200)
+
+            A tree with nothing to resolve is handed straight back:
+
+            >>> absolute = FreeAllocation(min_cores=4)
+            >>> absolute._resolve_fractions(400) is absolute
+            True
+        """
+        changes = self._resolve_own_fractions(total_cores, path)
+        subs = {name: sub._resolve_fractions(total_cores, f"{path}.{name}") for name, sub in self.subcomponents.items()}
+        if any(sub is not self.subcomponents[name] for name, sub in subs.items()):
+            changes["subcomponents"] = subs
+        return replace(self, **changes) if changes else self
+
 
 @dataclass(frozen=True, kw_only=True)
 class RootAllocation(AllocationStrategy):
@@ -297,10 +426,11 @@ class RootAllocation(AllocationStrategy):
     This adds no fields to ``AllocationStrategy``, and that is the whole content of the
     class. Everything a root may legitimately state - a thread range, sub-strategies,
     constraints - already lives on the base, while every field that would size a component
-    (``n_cores``, ``weight``, ``min_cores``, ``max_cores``) lives on one of the modes
-    below. The root receives all of ``total_cores`` by definition, so a size given for it
-    could only be ignored; making it a distinct type means it cannot be written down in
-    the first place, rather than being written down and then rejected.
+    (``n_cores``, ``weight``, ``min_cores``, ``max_cores``, and the fractional bounds that
+    stand in for them) lives on one of the modes below. The root receives all of
+    ``total_cores`` by definition, so a size given for it could only be ignored; making it
+    a distinct type means it cannot be written down in the first place, rather than being
+    written down and then rejected.
 
     A root is never one of a parent's sub-strategies, so it declares no ``_phase`` and
     nesting one raises ``AttributeError`` naming this class when the scheduler orders the
@@ -345,29 +475,74 @@ class RootAllocation(AllocationStrategy):
 class FixedAllocation(AllocationStrategy):
     """Fixed allocation: the component receives exactly ``n_cores`` cores.
 
+    The count is given either directly or as ``core_fraction`` of the whole budget -
+    exactly one of the two, since they say the same thing. A fraction is resolved before
+    the search starts, so ``FixedAllocation(core_fraction=0.25)`` asks for 104 cores of 416
+    and for 1300 of 5200. It lands on one count and stays there: where a component only
+    admits certain core counts, a ``FreeAllocation`` over a band of fractions is the mode
+    that can find one.
+
+    A share that does not come to a whole number of cores is rounded **down**. That is what
+    keeps a group of fixed siblings within the budget at every total: shares summing to no
+    more than the whole budget resolve to counts summing to no more than the whole budget,
+    for any total. Rounding to the nearest count instead would put two half-shares at 26
+    cores each on a 51 core budget, and the search would find nothing on every odd total -
+    which is exactly the sort of failure fractional bounds exist to avoid. The core the
+    rounding gives up is not lost: it is left for whatever siblings can flex, or idle.
+
     See ``AllocationStrategy`` for the fields shared by every mode.
 
     Args:
-        n_cores (int): Cores this component must receive. Must be >= 1.
+        n_cores (int | None): Cores this component must receive. Must be >= 1. ``None`` (the
+            default) takes the count from *core_fraction* instead.
+        core_fraction (float | None): Cores this component must receive, as a share of the
+            whole budget. Must be in ``(0.0, 1.0]``. ``None`` (the default) takes the count
+            from *n_cores* instead.
 
     Raises:
-        ValueError: If ``n_cores`` < 1.
+        ValueError: If neither or both of ``n_cores`` and ``core_fraction`` are given, if
+            ``n_cores`` < 1, or if ``core_fraction`` is outside ``(0.0, 1.0]``.
 
     Examples:
         >>> FixedAllocation(12).n_cores
         12
+
+        A fraction names no count until the budget is known:
+
+        >>> quarter = FixedAllocation(core_fraction=0.25)
+        >>> (quarter.n_cores, quarter._resolve_fractions(416).n_cores)
+        (None, 104)
     """
 
     # Carved out of the budget before anything else: a fixed count is not negotiable, so
     # the siblings that can flex should flex around it.
     _phase: ClassVar[int] = 0
 
-    n_cores: int
+    n_cores: int | None = None
+    core_fraction: float | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.n_cores < 1:
-            raise ValueError(f"FixedAllocation.n_cores must be >= 1, got {self.n_cores}.")
+        if (self.n_cores is None) == (self.core_fraction is None):
+            raise ValueError(
+                "FixedAllocation takes exactly one of n_cores and core_fraction, got "
+                f"n_cores={self.n_cores} and core_fraction={self.core_fraction}."
+            )
+        if self.n_cores is not None and self.n_cores < 1:
+            raise ValueError(
+                f"FixedAllocation.n_cores must be >= 1, got {self.n_cores}. A share of the "
+                "budget goes in core_fraction."
+            )
+        if self.core_fraction is not None:
+            _validate_fraction("FixedAllocation", "core_fraction", self.core_fraction)
+
+    def _resolve_own_fractions(self, total_cores: int, path: str) -> dict[str, object]:
+        """Turn ``core_fraction`` into the one count it names on this budget."""
+        if self.core_fraction is None:
+            return {}
+        # Down rather than to nearest, so that fixed siblings whose shares fit the budget
+        # resolve to counts that fit it too - see the note in the class docstring.
+        return {"n_cores": _cores_from_fraction(self.core_fraction, total_cores, math.floor), "core_fraction": None}
 
     @classmethod
     def _iter_core_shares(cls, allocs: Sequence[FixedAllocation], budget: int) -> Iterator[tuple[int, ...]]:
@@ -471,20 +646,44 @@ class FreeAllocation(AllocationStrategy):
     down: there is no default mode, and an omitted sub-component is an error rather than
     a free one.
 
+    A bound may be written as an absolute core count, as a fraction of the whole budget, or
+    as both. The fractions are what make one strategy tree usable across a scaling study,
+    since ``min_core_fraction=0.45`` means the same thing on 416 cores as it does on 5200.
+    Where a bound is written both ways the absolute one is a guard rail the fraction cannot
+    cross: ``min_cores`` is a floor under the resolved minimum, ``max_cores`` a cap over the
+    resolved maximum.
+
     See ``AllocationStrategy`` for the fields shared by every mode.
 
     Args:
         min_cores (int): Lower bound on core count. Must be >= 1. Defaults to 1.
         max_cores (int | None): Upper bound on core count, or ``None`` for no upper
             bound. Must be >= ``min_cores`` when provided. Defaults to ``None``.
+        min_core_fraction (float | None): Lower bound as a share of the whole budget, in
+            ``(0.0, 1.0]``. Rounded down to a core count, then combined with *min_cores* by
+            taking whichever is larger. ``None`` (the default) leaves *min_cores* to stand
+            on its own.
+        max_core_fraction (float | None): Upper bound as a share of the whole budget, in
+            ``(0.0, 1.0]``. Rounded up to a core count, then combined with *max_cores* by
+            taking whichever is smaller. ``None`` (the default) leaves *max_cores* to stand
+            on its own.
 
     Raises:
-        ValueError: If ``min_cores`` < 1, or ``max_cores`` < ``min_cores``.
+        ValueError: If ``min_cores`` < 1, if ``max_cores`` < ``min_cores``, if either
+            fraction falls outside ``(0.0, 1.0]``, or if ``max_core_fraction`` <
+            ``min_core_fraction``.
 
     Examples:
         >>> alloc = FreeAllocation(min_cores=4, max_cores=6)
         >>> (alloc.min_cores, alloc.max_cores)
         (4, 6)
+
+        A band of fractions resolves against the budget it is searched on:
+
+        >>> band = FreeAllocation(min_core_fraction=0.45, max_core_fraction=0.55)
+        >>> resolved = band._resolve_fractions(416)
+        >>> (resolved.min_cores, resolved.max_cores)
+        (187, 229)
     """
 
     # Served last: free siblings divide whatever the other modes left behind.
@@ -492,6 +691,8 @@ class FreeAllocation(AllocationStrategy):
 
     min_cores: int = 1
     max_cores: int | None = None
+    min_core_fraction: float | None = None
+    max_core_fraction: float | None = None
 
     @classmethod
     def _reserved_cores(cls, allocs: Sequence[FreeAllocation]) -> int:
@@ -501,9 +702,69 @@ class FreeAllocation(AllocationStrategy):
     def __post_init__(self) -> None:
         super().__post_init__()
         if self.min_cores < 1:
-            raise ValueError(f"FreeAllocation.min_cores must be >= 1, got {self.min_cores}.")
+            raise ValueError(
+                f"FreeAllocation.min_cores must be >= 1, got {self.min_cores}. A share of the "
+                "budget goes in min_core_fraction."
+            )
         if self.max_cores is not None and self.max_cores < self.min_cores:
             raise ValueError(f"FreeAllocation.max_cores ({self.max_cores}) must be >= min_cores ({self.min_cores}).")
+        self._validate_fractions()
+
+    def _validate_fractions(self) -> None:
+        """Check the fractional bounds on their own and against each other.
+
+        Split out of ``__post_init__`` to keep each of the two halves - the absolute bounds
+        and the fractional ones - readable on its own.
+
+        Raises:
+            ValueError: If either fraction falls outside ``(0.0, 1.0]``, or if
+                ``max_core_fraction`` < ``min_core_fraction``.
+        """
+        if self.min_core_fraction is not None:
+            _validate_fraction("FreeAllocation", "min_core_fraction", self.min_core_fraction)
+        if self.max_core_fraction is not None:
+            _validate_fraction("FreeAllocation", "max_core_fraction", self.max_core_fraction)
+        if (
+            self.min_core_fraction is not None
+            and self.max_core_fraction is not None
+            and self.max_core_fraction < self.min_core_fraction
+        ):
+            raise ValueError(
+                f"FreeAllocation.max_core_fraction ({self.max_core_fraction}) must be >= "
+                f"min_core_fraction ({self.min_core_fraction})."
+            )
+
+    def _resolve_own_fractions(self, total_cores: int, path: str) -> dict[str, object]:
+        """Turn the fractional bounds into core counts, guarded by the absolute ones."""
+        if self.min_core_fraction is None and self.max_core_fraction is None:
+            return {}
+
+        min_cores = self.min_cores
+        if self.min_core_fraction is not None:
+            min_cores = max(min_cores, _cores_from_fraction(self.min_core_fraction, total_cores, math.floor))
+
+        max_cores = self.max_cores
+        if self.max_core_fraction is not None:
+            from_fraction = _cores_from_fraction(self.max_core_fraction, total_cores, math.ceil)
+            max_cores = from_fraction if max_cores is None else min(max_cores, from_fraction)
+
+        if max_cores is not None and max_cores < min_cores:
+            # Rejected here rather than left to yield nothing, because an empty search
+            # is the hardest failure to explain after the fact: the bounds contradict each
+            # other only at this budget, and nothing downstream still knows the fractions
+            # they came from.
+            raise ValueError(
+                f"FreeAllocation at {path}: on {total_cores} core(s) the bounds resolve to "
+                f"min_cores={min_cores} and max_cores={max_cores}, which admits no core count. "
+                "Widen the fractions, or drop the absolute bound guarding them."
+            )
+
+        return {
+            "min_cores": min_cores,
+            "max_cores": max_cores,
+            "min_core_fraction": None,
+            "max_core_fraction": None,
+        }
 
     def _core_range(self, max_available: int) -> range:
         """Return the core counts this allocation may take from *max_available*.
@@ -677,6 +938,10 @@ def iter_core_splits(
     The total assigned may be less than *parent_cores*; the unused cores are left idle.
     Use ``MaxWastedCoreFractionConstraint`` on the parent component to restrict idle cores.
 
+    Every bound here is an absolute core count: a strategy tree reaches the enumerator
+    through ``resolve_root_strategy``, which has already turned any fractional bound into
+    the count it names on this budget.
+
     Args:
         strategies (Sequence[AllocationStrategy]): One strategy per sub-component, in
             declaration order - normally straight from ``strategies_for``.
@@ -707,28 +972,37 @@ def iter_core_splits(
     yield from _iter_phase_splits(groups, reserved_after, names, 0, parent_cores, [0] * len(strategies))
 
 
-def resolve_root_strategy(component: ParallelComponent, allocations: RootAllocation | None) -> RootAllocation:
-    """Validate *allocations* against the component tree, or build an all-free default.
+def resolve_root_strategy(
+    component: ParallelComponent, allocations: RootAllocation | None, total_cores: int
+) -> RootAllocation:
+    """Settle the strategy tree to search under: validate it, and resolve its fractions.
 
     Being the root is a role a strategy is given rather than a property it has, so the
     ``RootAllocation`` type is checked here, at the boundary, and not at construction.
     The check is by ``isinstance`` rather than by annotation alone because this package
     ships no type information and callers are not required to run a type checker.
 
+    This is also where a bound written as a share of the budget becomes a core count, which
+    is why the budget is an argument: the tree handed back always states absolute counts, so
+    the enumerator never meets a fraction. A tree that holds none is returned unchanged.
+
     Args:
         component (ParallelComponent): Root of the component tree to lay the strategy over.
         allocations (RootAllocation | None): The caller's strategy tree, or ``None`` to
             build an all-free one mirroring *component*.
+        total_cores (int): The whole budget, which the fractional bounds are shares of.
 
     Returns:
-        RootAllocation: The strategy tree to search under.
+        RootAllocation: The strategy tree to search under, free of fractional bounds.
 
     Raises:
         TypeError: If *allocations* is not a ``RootAllocation``.
         ValueError: If the strategy tree does not name exactly *component*'s
-            sub-components, at any depth.
+            sub-components at any depth, or if a bound resolves to an empty range on
+            *total_cores*.
     """
     if allocations is None:
+        # An all-free tree states no bound at all, so there is nothing in it to resolve.
         return RootAllocation(
             subcomponents={sub.name: FreeAllocation._tree_for(sub) for sub in component.subcomponents}
         )
@@ -739,4 +1013,4 @@ def resolve_root_strategy(component: ParallelComponent, allocations: RootAllocat
             "or bound cannot describe it; set those on a sub-component, or change total_cores."
         )
     allocations._validate_names(component)
-    return allocations
+    return allocations._resolve_fractions(total_cores)

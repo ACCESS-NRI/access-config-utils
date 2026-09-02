@@ -318,7 +318,10 @@ def iter_layouts(
             own because *component* always receives the whole budget; its ``tpr_range`` is
             the thread range every component inherits unless it overrides it, and its
             ``subcomponents``, ``local_constraints`` and ``group_constraints`` are honoured
-            as usual.
+            as usual. A ``FixedAllocation`` or ``FreeAllocation`` bound may be written as a
+            fraction of *total_cores* instead of as a core count, which is what lets one
+            strategy tree serve a whole scaling study; the fractions are resolved to counts
+            before the first layout is enumerated.
 
     Yields:
         ComponentLayout: Each valid layout tree, in enumeration order.
@@ -344,7 +347,7 @@ def iter_layouts(
     """
     if total_cores < 1:
         raise ValueError(f"total_cores must be >= 1, got {total_cores}.")
-    root_strategy = resolve_root_strategy(component, allocations)
+    root_strategy = resolve_root_strategy(component, allocations, total_cores)
     # A search per call, so its memo lives and dies with the returned iterator and nothing
     # is retained between calls.
     return _log_if_empty(_LayoutSearch(total_cores).run(component, root_strategy), component, total_cores)

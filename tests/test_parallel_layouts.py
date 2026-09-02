@@ -372,6 +372,55 @@ class TestEmptyResultDiagnostics:
 
 
 # ---------------------------------------------------------------------------
+# iter_layouts — fractional bounds
+# ---------------------------------------------------------------------------
+
+
+class TestIterLayoutsFractionalBounds:
+    """One strategy tree, several budgets - what a scaling study needs."""
+
+    @pytest.mark.parametrize(("total_cores", "expected_atm"), [(16, 8), (64, 32), (160, 80)])
+    def test_one_strategy_serves_every_budget(self, domain_2d: Domain, total_cores: int, expected_atm: int) -> None:
+        # The same object at every size: written in absolute cores this would need three
+        # strategies, or a function rebuilding one per budget.
+        atm = ParallelComponent("atm", domain=domain_2d)
+        ocn = ParallelComponent("ocn", domain=domain_2d)
+        coupled = ParallelComponent("coupled", subcomponents=(atm, ocn))
+        allocations = RootAllocation(
+            subcomponents={
+                "atm": FixedAllocation(core_fraction=0.5),
+                "ocn": FreeAllocation(min_core_fraction=0.25, max_core_fraction=0.5),
+            }
+        )
+
+        layouts = list(iter_layouts(coupled, total_cores=total_cores, allocations=allocations))
+
+        assert layouts
+        for layout in layouts:
+            atm_sub = next(sl for sl in layout.sub_layouts if sl.name == "atm")
+            ocn_sub = next(sl for sl in layout.sub_layouts if sl.name == "ocn")
+            assert atm_sub.n_cores == expected_atm
+            assert total_cores // 4 <= ocn_sub.n_cores <= total_cores // 2
+
+    def test_the_caller_keeps_their_strategy_object(self, domain_2d: Domain) -> None:
+        # Resolution rebuilds the tree it is handed; it must not touch the caller's.
+        allocations = RootAllocation(subcomponents={"atm": FixedAllocation(core_fraction=0.5)})
+        comp = ParallelComponent("coupled", subcomponents=(ParallelComponent("atm", domain=domain_2d),))
+
+        assert list(iter_layouts(comp, total_cores=16, allocations=allocations))
+        assert allocations.subcomponents["atm"] == FixedAllocation(core_fraction=0.5)
+
+    def test_bounds_that_cross_on_this_budget_are_reported_eagerly(self, domain_2d: Domain) -> None:
+        # Like every other argument error, this surfaces on the call rather than on the
+        # first layout requested.
+        comp = ParallelComponent("coupled", subcomponents=(ParallelComponent("atm", domain=domain_2d),))
+        allocations = RootAllocation(subcomponents={"atm": FreeAllocation(min_cores=64, max_core_fraction=0.1)})
+
+        with pytest.raises(ValueError, match="admits no core count"):
+            iter_layouts(comp, total_cores=16, allocations=allocations)
+
+
+# ---------------------------------------------------------------------------
 # iter_layouts — component trees
 # ---------------------------------------------------------------------------
 
