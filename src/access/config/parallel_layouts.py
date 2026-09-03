@@ -169,7 +169,7 @@ class _LayoutSearch:
         all_constraints = component.local_constraints + strategy.local_constraints
 
         if component.subcomponents:
-            candidates = self._iter_parent_candidates(component, n_cores, effective_tpr_range, strategy)
+            candidates = self._iter_branch_candidates(component, n_cores, effective_tpr_range, strategy)
         else:
             candidates = _iter_leaf_candidates(component, n_cores, effective_tpr_range)
 
@@ -182,14 +182,14 @@ class _LayoutSearch:
                 continue
             yield candidate
 
-    def _iter_parent_candidates(
+    def _iter_branch_candidates(
         self,
         component: ParallelComponent,
         n_cores: int,
         tpr_range: tuple[int, int],
         strategy: AllocationStrategy,
     ) -> Iterator[ComponentLayout]:
-        """Yield the ways a parent can divide *n_cores* among its sub-components.
+        """Yield the ways a branch component can divide *n_cores* among its sub-components.
 
         A split survives only if every sub-component has at least one layout for its share
         and the combination satisfies the group constraints of both the component and its

@@ -22,6 +22,25 @@ as one of the following subclasses of ``AllocationStrategy``:
 The ``RootAllocation`` states no core count of its own, because the root component always
 receives the whole budget.
 
+Three words for these pieces recur throughout the module:
+
+* A **node** is one component's entry in the strategy tree.
+* A node's **mode** is the ``AllocationStrategy`` subclass it uses, that is, *how* the node
+  states its size. Siblings need not share a mode.
+* A mode's **phase** is where it sits in the order sibling groups are served in: the fixed
+  counts are carved out of the budget first, then the ratio multiplier is chosen from what
+  they left, then the free siblings absorb the remainder. See ``iter_core_splits``.
+
+The two trees stand side by side, one strategy node per component, and it is the mode of
+each node that differs::
+
+    component tree          strategy tree
+    --------------          -------------
+    model                   RootAllocation(tpr_range=(1, 4))
+    |-- UM7                 |-- "UM7":   FreeAllocation(tpr_range=(1, 4))
+    |-- MOM5                |-- "MOM5":  RatioAllocation(3)
+    `-- CICE5               `-- "CICE5": FixedAllocation(12)
+
 ``FixedAllocation`` and ``FreeAllocation`` may state their core counts as a fraction of the
 whole budget instead of as an absolute number, which is what makes one strategy tree usable
 across a scaling study: ``FreeAllocation(min_core_fraction=0.45, max_core_fraction=0.55)``
@@ -142,8 +161,8 @@ class AllocationStrategy(ABC):
     receives into ``n_cores // threads_per_rank`` MPI ranks, choosing its thread count from
     ``tpr_range``.
 
-    Constrains can be attached to an allocation strategy. These will be added to the
-    Component's own constraints and will be checked when enumerating layouts. This allows to
+    Constraints can be attached to an allocation strategy. These will be added to the
+    component's own constraints and will be checked when enumerating layouts. This allows to
     set more stringent constraints than the ones defined in the component tree and further
     restrict the layouts that are enumerated.
 
@@ -163,8 +182,8 @@ class AllocationStrategy(ABC):
             range from the enclosing strategy, and ultimately from the root's, which is
             never ``None``. Setting it here is how components get *different* thread counts:
             give the root ``(1, 1)`` and one leaf ``(1, 4)`` and only that leaf is threaded.
-            A component only spends cores itself if it is a leaf, so on a parent this acts
-            purely as the default inherited by its sub-components.
+            Only a leaf component spends cores itself, so on a parent this acts purely
+            as the default inherited by its sub-components.
         subcomponents (Mapping[str, AllocationStrategy]): Allocation strategies for direct
             sub-components, keyed by component name. Omit (or pass ``{}``) for leaf
             components. Every sub-component of the matching component must appear, since
@@ -222,11 +241,12 @@ class AllocationStrategy(ABC):
 
     # --- Per-mode contract -------------------------------------------------
 
-    # Where this mode sits in the scheduling order. Groups are served in ascending phase
-    # order, so a mode that must be carved out of the budget before its siblings can be
-    # sized declares a lower number. There is deliberately no default: a mode that does
-    # not declare one fails loudly on the first search rather than being served last by
-    # accident. Ties break on class name, so the order is always deterministic.
+    # This mode's phase - see the module docstring. Sibling groups are served in
+    # ascending phase order, so a mode that has to be carved out of the budget before its
+    # siblings can be sized declares a lower number than they do. There is deliberately no
+    # default: a mode that does not declare one fails loudly on the first search rather
+    # than being served last by accident. Ties break on class name, so the order is always
+    # deterministic.
     _phase: ClassVar[int]
 
     @classmethod
@@ -432,9 +452,9 @@ class RootAllocation(AllocationStrategy):
     a distinct type means it cannot be written down in the first place, rather than being
     written down and then rejected.
 
-    A root is never one of a parent's sub-strategies, so it declares no ``_phase`` and
-    nesting one raises ``AttributeError`` naming this class when the scheduler orders the
-    group.
+    A root is never one of a parent's sub-strategies, so it declares no ``_phase``.
+    Nesting one inside another strategy therefore raises ``AttributeError`` naming this
+    class, as soon as the scheduler tries to order the sibling group it was put in.
 
     Args:
         tpr_range (tuple[int, int]): Inclusive ``(min, max)`` range of OpenMP threads per
@@ -490,6 +510,10 @@ class FixedAllocation(AllocationStrategy):
     which is exactly the sort of failure fractional bounds exist to avoid. The core the
     rounding gives up is not lost: it is left for whatever siblings can flex, or idle.
 
+    Nothing here is particular to leaf components: a parent may be fixed too, and then
+    divides exactly that count among its own sub-components. Several siblings of one parent
+    may be fixed as well, in which case they are sized together as one group.
+
     See ``AllocationStrategy`` for the fields shared by every mode.
 
     Args:
@@ -540,8 +564,8 @@ class FixedAllocation(AllocationStrategy):
         """Turn ``core_fraction`` into the one count it names on this budget."""
         if self.core_fraction is None:
             return {}
-        # Down rather than to nearest, so that fixed siblings whose shares fit the budget
-        # resolve to counts that fit it too - see the note in the class docstring.
+        # Round down rather than to nearest, so that fixed siblings whose shares fit the
+        # budget resolve to counts that fit it too - see the note in the class docstring.
         return {"n_cores": _cores_from_fraction(self.core_fraction, total_cores, math.floor), "core_fraction": None}
 
     @classmethod
@@ -588,7 +612,14 @@ class RatioAllocation(AllocationStrategy):
     See ``AllocationStrategy`` for the fields shared by every mode.
 
     Args:
-        weight (int): Relative weight among ratio-allocated siblings. Must be >= 1.
+        weight (int): Relative weight among ratio-allocated siblings. Must be >= 1. The
+            ratio is not written down in one place: each sibling carries its own weight and
+            the ratio is what they form together, so ``RatioAllocation(3)`` beside
+            ``RatioAllocation(2)`` *is* the 3:2 ratio. Weights only mean anything among
+            direct siblings, so a ratio spanning three of them is one common proportion -
+            A:B = 2:3 with B:C = 5:4 is written as A:B:C = 10:15:12. The name is ``weight``
+            rather than ``scale`` because the scale is the part it leaves open: the shared
+            multiplier ``k`` is chosen per search, from whatever the parent holds.
 
     Raises:
         ValueError: If ``weight`` < 1.
@@ -863,6 +894,8 @@ def _group_by_mode(
 
     A mode that declares no ``_phase`` raises ``AttributeError`` naming its class — which
     is the intended failure for a new mode that forgot to say where it belongs.
+
+    See the module docstring for what *mode* and *phase* mean.
     """
     groups: dict[type[AllocationStrategy], list[tuple[int, AllocationStrategy]]] = {}
     for i, strategy in enumerate(strategies):
@@ -929,7 +962,8 @@ def iter_core_splits(
     counts carved out first, then the ratio multiplier, then the free remainder — with each
     group offered what the earlier phases left, less what the later ones have reserved.
     Nothing here knows which modes exist: a new mode joins the schedule by declaring a
-    phase and implementing ``_iter_core_shares``.
+    phase and implementing ``_iter_core_shares``. See the module docstring for what *mode*
+    and *phase* mean, and the example below for the ordering in action.
 
     This is a sibling-group algorithm rather than per-node behaviour, which is why it sits
     at module level and not on ``AllocationStrategy``: the ratio siblings share one
@@ -951,13 +985,25 @@ def iter_core_splits(
 
     Yields:
         tuple[int, ...]: One core count per strategy, in the same order.
+
+    Examples:
+        Four siblings on 16 cores - ``A`` fixed at 4, ``B`` and ``C`` in a 3:2 ratio, ``D``
+        free with at least one core - show the phases in order. ``A`` is carved out first,
+        then each ratio multiplier ``k``, then ``D`` takes what is left::
+
+            (4, 3, 2, 1) ... (4, 3, 2, 7)   # k = 1
+            (4, 6, 4, 1), (4, 6, 4, 2)      # k = 2
+
+        There is no ``k = 3``: it would need 15 of the 12 cores ``A`` left behind. And the
+        ``k = 2`` rows stop at 2 cores for ``D`` rather than 3 because ``D`` reserves its
+        ``min_cores`` before the ratio group is served.
     """
     groups = _group_by_mode(strategies)
 
     if len(groups) == 1 and [i for i, _ in groups[0][1]] == list(range(len(strategies))):
         # One mode, holding every position in order: the share *is* the split, with nothing
         # to carve out first and nothing to rearrange. This is the default all-free
-        # strategy tree, and by far the hottest shape.
+        # strategy tree, and the most common shape by far.
         mode, entries = groups[0]
         yield from _iter_group_shares(mode, entries, names, parent_cores)
         return
