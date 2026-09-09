@@ -32,6 +32,14 @@ one layout per sub-component is a layout of the parent, whose rank count is then
 its sub-components' rank counts. So the parent's layouts for one division are every such
 combination, and its layouts overall are those of all its divisions together.
 
+A parent may instead declare that its sub-components *share* its cores rather than divide
+them (``CoreSharing.SHARED``), and then there is no division to enumerate: each
+sub-component is offered every count that fits, independently of its siblings, so what is
+handed down is their product. Such a parent's cores and ranks are those of the
+sub-component that reaches furthest into its range rather than the totals over them all.
+Everything else - the recursion, the constraint filtering, the memoisation - is the same,
+and the product is the reason a shared parent's children are worth pinning down.
+
 That combining step is where the numbers come from: two sub-components with 30 layouts each
 already give the parent 900 for a single division, before the next division is even tried.
 It is why a three-component model yields 14k layouts on 24 cores and 9.0M on 144.
@@ -70,9 +78,10 @@ from access.config.parallel_allocation_strategies import (
     AllocationStrategy,
     RootAllocation,
     iter_core_splits,
+    iter_shared_core_shares,
     resolve_root_strategy,
 )
-from access.config.parallel_component import ComponentLayout, ParallelComponent
+from access.config.parallel_component import ComponentLayout, CoreSharing, ParallelComponent
 
 __all__ = [
     "iter_layouts",
@@ -212,7 +221,7 @@ class _LayoutSearch:
         thread_range: tuple[int, int],
         strategy: AllocationStrategy,
     ) -> Iterator[ComponentLayout]:
-        """Yield the ways a branch component can divide *n_cores* among its sub-components.
+        """Yield the ways a branch component can spend *n_cores* on its sub-components.
 
         A split survives only if every sub-component has at least one layout for its share
         and the combination satisfies the group constraints of both the component and its
@@ -222,23 +231,32 @@ class _LayoutSearch:
             component (ParallelComponent): The branch component, which has sub-components
                 and so spends no cores on ranks of its own.
             n_cores (int): Cores this component holds, to be divided among its
-                sub-components. A division may leave some idle.
+                sub-components, or shared by them when its ``core_sharing`` says so.
+                Either way some may be left idle.
             thread_range (tuple[int, int]): Inclusive ``(min, max)`` range of OpenMP threads
                 per rank, already resolved for this component, and inherited from here by
                 every sub-component that does not override it.
             strategy (AllocationStrategy): The strategy node laid over *component*, whose
-                sub-strategies decide how the cores may be divided.
+                sub-strategies decide the counts the sub-components may take.
 
         Yields:
-            ComponentLayout: One layout per surviving (division, sub-layout combination)
-                pair, with ``threads_per_rank`` and ``decomposition`` left ``None`` because
-                a branch runs no ranks itself.
+            ComponentLayout: One layout per surviving (core assignment, sub-layout
+                combination) pair, with ``threads_per_rank`` and ``decomposition`` left
+                ``None`` because a branch runs no ranks itself.
         """
         sub_names = tuple(sub.name for sub in component.subcomponents)
         sub_strategies = strategy.strategies_for(sub_names)
         all_group_constraints = component.group_constraints + strategy.group_constraints
-
-        for core_split in iter_core_splits(sub_strategies, n_cores, sub_names):
+        shared = component.core_sharing is CoreSharing.SHARED
+        sub_offsets = tuple(sub.core_offset for sub in component.subcomponents)
+        # Partitioned sub-components divide the cores between them; shared ones each take
+        # what they need from the same range, so their counts are a product, not a split.
+        core_splits = (
+            iter_shared_core_shares(sub_strategies, n_cores, sub_names, sub_offsets)
+            if shared
+            else iter_core_splits(sub_strategies, n_cores, sub_names)
+        )
+        for core_split in core_splits:
             sub_options = [
                 self._cached_component_layouts(sub, c, thread_range, sub_strategy)
                 for sub, c, sub_strategy in zip(component.subcomponents, core_split, sub_strategies, strict=True)
@@ -253,10 +271,16 @@ class _LayoutSearch:
                 yield ComponentLayout(
                     name=component.name,
                     n_cores=n_cores,
-                    n_ranks=sum(sub.n_ranks for sub in combo),
+                    n_ranks=(
+                        max(sub.core_offset + sub.n_ranks for sub in combo)
+                        if shared
+                        else sum(sub.n_ranks for sub in combo)
+                    ),
                     threads_per_rank=None,
                     decomposition=None,
                     sub_layouts=combo,
+                    core_sharing=component.core_sharing,
+                    core_offset=component.core_offset,
                 )
 
 
@@ -300,6 +324,7 @@ def _iter_leaf_candidates(
                 n_ranks=n_ranks,
                 threads_per_rank=threads_per_rank,
                 decomposition=decomposition,
+                core_offset=component.core_offset,
             )
 
 
@@ -340,11 +365,12 @@ def iter_layouts(
 ) -> Iterator[ComponentLayout]:
     """Yield the valid ``ComponentLayout`` trees for *component* one at a time.
 
-    The root component receives all *total_cores*. Every parent divides the cores it holds
-    among its sub-components according to *allocations*, and every leaf turns the cores it
-    receives into ``n_cores // threads_per_rank`` MPI ranks of ``threads_per_rank``
-    OpenMP threads, for each thread count in its range that divides its allocation.
-    Constraints filter the candidates at each level.
+    The root component receives all *total_cores*. Every parent passes the cores it holds
+    to its sub-components according to *allocations* - divided between them, or shared by
+    them when its ``core_sharing`` says so - and every leaf turns the cores it receives
+    into ``n_cores // threads_per_rank`` MPI ranks of ``threads_per_rank`` OpenMP threads,
+    for each thread count in its range that divides its allocation. Constraints filter the
+    candidates at each level.
 
     Because cores rather than ranks are divided, components may use different thread counts:
     set ``AllocationStrategy.thread_range`` on the sub-components that should be threaded,
@@ -355,7 +381,8 @@ def iter_layouts(
     yields 14k layouts on 24 cores, 2.2M on 96 and 9.0M on 144), so materialising them all
     to inspect the first few, or to filter them down, is often the dominant cost. Take
     ``list()`` of it only once the search is known to be small. Arguments are validated
-    eagerly, before the first layout is requested.
+    eagerly, before the first layout is requested, with the one exception noted under
+    ``Raises``.
 
     Note: an empty result has many possible causes, like fixed allocations that do not fit
     the budget, no thread count in a component's range that divides its core allocation, or
@@ -388,7 +415,11 @@ def iter_layouts(
     Raises:
         TypeError: If *allocations* is not a ``RootAllocation``.
         ValueError: If *total_cores* < 1, or if the strategy tree does not name exactly
-            *component*'s sub-components, at any depth.
+            *component*'s sub-components, at any depth. A ``WeightedAllocation`` laid over
+            a sub-component whose parent shares its cores is a ``ValueError`` too, but the
+            one this call cannot raise eagerly: a strategy's mode is not consulted until
+            the parent holding it is reached, so it surfaces on the first layout requested
+            rather than here.
 
     Examples:
         Take the first valid layout without enumerating the rest:

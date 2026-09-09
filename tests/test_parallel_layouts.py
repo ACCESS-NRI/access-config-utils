@@ -27,6 +27,7 @@ from access.config.parallel_allocation_strategies import (
 )
 from access.config.parallel_component import (
     ComponentLayout,
+    CoreSharing,
     GroupConstraint,
     LocalConstraint,
     ParallelComponent,
@@ -910,3 +911,167 @@ class TestIterLayoutsConstraints:
         for layout in layouts:
             assert layout.decomposition is not None
             assert layout.decomposition.grid[0] % 2 == 0
+
+
+class TestIterLayoutsSharedCores:
+    """Searching a tree in which some sub-components take turns on the same cores.
+
+    The shape here is ACCESS-OM3's: a pool of components sharing one range of cores, beside
+    an ocean that has a range of its own.
+    """
+
+    @staticmethod
+    def _offset_model(offset: int) -> ParallelComponent:
+        """A pool of two, the second starting *offset* cores into the range."""
+        return ParallelComponent(
+            name="coupled",
+            subcomponents=(
+                ParallelComponent(
+                    "pool",
+                    core_sharing=CoreSharing.SHARED,
+                    subcomponents=(ParallelComponent("cpl"), ParallelComponent("ice", core_offset=offset)),
+                ),
+            ),
+        )
+
+    @pytest.mark.parametrize(("pool_cores", "expected"), [(24, 0), (28, 1)])
+    def test_a_pool_must_reach_past_its_offset_children(self, pool_cores: int, expected: int) -> None:
+        """A child starting 16 cores in and running 12 needs a range reaching 28, not 24."""
+
+        layouts = list(
+            iter_layouts(
+                self._offset_model(16),
+                pool_cores,
+                allocations=RootAllocation(
+                    subcomponents={
+                        "pool": FixedAllocation(
+                            pool_cores,
+                            subcomponents={"cpl": FixedAllocation(24), "ice": FixedAllocation(12)},
+                        )
+                    }
+                ),
+            )
+        )
+        assert len(layouts) == expected
+        if layouts:
+            pool = layouts[0].sub_layouts[0]
+            assert pool.used_cores == 28
+            assert [child.core_offset for child in pool.sub_layouts] == [0, 16]
+
+    def test_an_offset_leaves_a_child_less_of_the_range_to_spend(self) -> None:
+        """A free child starting partway in is offered only what fits after its offset."""
+
+        layouts = list(
+            iter_layouts(
+                self._offset_model(6),
+                8,
+                allocations=RootAllocation(
+                    subcomponents={
+                        "pool": FixedAllocation(
+                            8,
+                            subcomponents={"cpl": FixedAllocation(8), "ice": FreeAllocation()},
+                        )
+                    }
+                ),
+            )
+        )
+        ice_cores = {layout.sub_layouts[0].sub_layouts[1].n_cores for layout in layouts}
+        assert ice_cores == {1, 2}, "starting at core 6 of 8 leaves room for one or two cores"
+
+    @staticmethod
+    def _model(pool_children: tuple[str, ...] = ("cpl", "ice")) -> ParallelComponent:
+        return ParallelComponent(
+            name="coupled",
+            subcomponents=(
+                ParallelComponent(
+                    "pool",
+                    core_sharing=CoreSharing.SHARED,
+                    subcomponents=tuple(ParallelComponent(name) for name in pool_children),
+                ),
+                ParallelComponent("ocn"),
+            ),
+        )
+
+    def test_pool_holds_its_largest_child_so_the_total_adds_up(self) -> None:
+        layouts = list(
+            iter_layouts(
+                self._model(),
+                12,
+                allocations=RootAllocation(
+                    subcomponents={
+                        "pool": FixedAllocation(
+                            4, subcomponents={"cpl": FixedAllocation(4), "ice": FixedAllocation(2)}
+                        ),
+                        "ocn": FixedAllocation(8),
+                    }
+                ),
+            )
+        )
+        (layout,) = layouts
+        pool, ocn = layout.sub_layouts
+        assert (pool.n_cores, ocn.n_cores) == (4, 8)
+        assert layout.idle_cores == 0
+        # The children would total 6 if they divided the pool; sharing it, they need 4.
+        assert pool.used_cores == 4
+        assert {child.name: child.n_cores for child in pool.sub_layouts} == {"cpl": 4, "ice": 2}
+
+    def test_children_are_enumerated_independently(self) -> None:
+        """Each shared child is offered every count that fits: the interior is a product."""
+
+        layouts = list(
+            iter_layouts(
+                self._model(),
+                6,
+                allocations=RootAllocation(
+                    subcomponents={
+                        "pool": FixedAllocation(
+                            2,
+                            subcomponents={
+                                "cpl": FreeAllocation(max_cores=2),
+                                "ice": FreeAllocation(max_cores=2),
+                            },
+                        ),
+                        "ocn": FixedAllocation(4),
+                    }
+                ),
+            )
+        )
+        interiors = {tuple(child.n_cores for child in layout.sub_layouts[0].sub_layouts) for layout in layouts}
+        assert interiors == {(1, 1), (1, 2), (2, 1), (2, 2)}
+
+    def test_weighted_allocation_is_rejected_under_a_shared_parent(self) -> None:
+        with pytest.raises(ValueError, match="WeightedAllocation cannot allocate 'ice'"):
+            list(
+                iter_layouts(
+                    self._model(),
+                    12,
+                    allocations=RootAllocation(
+                        subcomponents={
+                            "pool": FixedAllocation(
+                                4,
+                                subcomponents={"cpl": FixedAllocation(4), "ice": WeightedAllocation(1)},
+                            ),
+                            "ocn": FixedAllocation(8),
+                        }
+                    ),
+                )
+            )
+
+    def test_a_child_that_cannot_fit_the_pool_yields_nothing(self) -> None:
+        assert (
+            list(
+                iter_layouts(
+                    self._model(),
+                    12,
+                    allocations=RootAllocation(
+                        subcomponents={
+                            "pool": FixedAllocation(
+                                2, subcomponents={"cpl": FixedAllocation(4), "ice": FixedAllocation(2)}
+                            ),
+                            "ocn": FixedAllocation(8),
+                        }
+                    ),
+                )
+            )
+            == []
+        )

@@ -8,7 +8,13 @@ from unittest.mock import patch
 import pytest
 
 from access.config import parallel_component
-from access.config.parallel_component import ComponentLayout, GroupConstraint, LocalConstraint, ParallelComponent
+from access.config.parallel_component import (
+    ComponentLayout,
+    CoreSharing,
+    GroupConstraint,
+    LocalConstraint,
+    ParallelComponent,
+)
 from access.config.parallel_domain import Domain, DomainDecompositionSpec
 from access.config.parallel_mpi_grid import MPICartesianGrid
 
@@ -245,3 +251,110 @@ class TestIterDecompositions:
         specs = ParallelComponent("ocean", domain=domain_2d).iter_decompositions(0)
         with pytest.raises(ValueError, match="n_ranks must be >= 1"):
             next(specs)
+
+
+def _leaf(name: str, n_cores: int) -> ComponentLayout:
+    """A single-threaded leaf holding *n_cores* cores, for building parents by hand."""
+    return ComponentLayout(name=name, n_cores=n_cores, n_ranks=n_cores, threads_per_rank=1, decomposition=None)
+
+
+class TestSharedCores:
+    """A parent whose sub-components take turns on its cores instead of dividing them."""
+
+    def _pool(self, n_cores: int, children: tuple[ComponentLayout, ...]) -> ComponentLayout:
+        return ComponentLayout(
+            name="pool",
+            n_cores=n_cores,
+            n_ranks=max(child.core_offset + child.n_ranks for child in children),
+            threads_per_rank=None,
+            decomposition=None,
+            sub_layouts=children,
+            core_sharing=CoreSharing.SHARED,
+        )
+
+    def test_holds_its_largest_child_not_their_total(self) -> None:
+        pool = self._pool(24, (_leaf("ice", 24), _leaf("atm", 12), _leaf("rof", 12)))
+        assert pool.used_cores == 24
+        assert pool.idle_cores == 0
+        assert pool.n_ranks == 24
+
+    def test_counts_cores_left_over_as_idle(self) -> None:
+        pool = self._pool(32, (_leaf("ice", 24), _leaf("atm", 12)))
+        assert pool.used_cores == 24
+        assert pool.idle_cores == 8
+
+    def test_rejects_a_child_larger_than_the_parent(self) -> None:
+        with pytest.raises(ValueError, match="reach 40 core"):
+            self._pool(24, (_leaf("ice", 40),))
+
+    def test_rejects_a_rank_total_that_is_not_the_largest_child(self) -> None:
+        with pytest.raises(ValueError, match="share its cores"):
+            ComponentLayout(
+                name="pool",
+                n_cores=24,
+                n_ranks=36,  # the sum of the children, which is the partitioned rule
+                threads_per_rank=None,
+                decomposition=None,
+                sub_layouts=(_leaf("ice", 24), _leaf("atm", 12)),
+                core_sharing=CoreSharing.SHARED,
+            )
+
+    def test_partitioned_is_the_default_and_still_sums(self) -> None:
+        children = (_leaf("atm", 24), _leaf("ocn", 12))
+        parent = ComponentLayout(
+            name="model", n_cores=64, n_ranks=36, threads_per_rank=None, decomposition=None, sub_layouts=children
+        )
+        assert parent.core_sharing is CoreSharing.PARTITIONED
+        assert parent.used_cores == 36
+        assert parent.idle_cores == 28
+
+    def test_reaches_as_far_as_its_furthest_child_not_its_biggest(self) -> None:
+        """A child starting partway in can need more of the range than the largest one."""
+
+        pool = self._pool(28, (_leaf("ice", 24), dataclasses.replace(_leaf("rof", 12), core_offset=16)))
+        assert pool.used_cores == 28, "rof starts at 16 and runs 12, so the range has to reach 28"
+        assert pool.idle_cores == 0
+        assert pool.n_ranks == 28
+
+    def test_rejects_a_child_reaching_past_the_parent(self) -> None:
+        with pytest.raises(ValueError, match="reach 28 core"):
+            self._pool(24, (_leaf("ice", 24), dataclasses.replace(_leaf("rof", 12), core_offset=16)))
+
+    def test_rejects_an_offset_on_a_multi_threaded_child(self) -> None:
+        """An offset is a core index, so it only means a PE index at one core per rank."""
+
+        threaded = ComponentLayout(
+            name="ice", n_cores=24, n_ranks=12, threads_per_rank=2, decomposition=None, core_offset=4
+        )
+        with pytest.raises(ValueError, match="only means the same thing as a PE index"):
+            self._pool(28, (threaded,))
+
+    def test_partitioned_parents_place_their_children_themselves(self) -> None:
+        with pytest.raises(ValueError, match="cannot be placed"):
+            ComponentLayout(
+                name="model",
+                n_cores=64,
+                n_ranks=36,
+                threads_per_rank=None,
+                decomposition=None,
+                sub_layouts=(_leaf("atm", 24), dataclasses.replace(_leaf("ocn", 12), core_offset=24)),
+            )
+
+    def test_component_rejects_offsets_under_a_partitioned_parent(self) -> None:
+        with pytest.raises(ValueError, match="Offsets only mean something"):
+            ParallelComponent("model", subcomponents=(ParallelComponent("atm", core_offset=4),))
+
+    def test_component_rejects_a_negative_offset(self) -> None:
+        with pytest.raises(ValueError, match="core_offset must be >= 0"):
+            ParallelComponent("atm", core_offset=-1)
+
+    def test_layout_rejects_a_negative_offset(self) -> None:
+        # The layout validates the bound itself rather than trusting the component it
+        # resolves: it is public, and a caller may build one by hand.
+        with pytest.raises(ValueError, match="core_offset must be >= 0"):
+            ComponentLayout(name="ice", n_cores=4, n_ranks=4, threads_per_rank=1, decomposition=None, core_offset=-1)
+
+    def test_component_declares_the_rule(self) -> None:
+        assert ParallelComponent("model").core_sharing is CoreSharing.PARTITIONED
+        pool = ParallelComponent("pool", subcomponents=(ParallelComponent("ice"),), core_sharing=CoreSharing.SHARED)
+        assert pool.core_sharing is CoreSharing.SHARED
