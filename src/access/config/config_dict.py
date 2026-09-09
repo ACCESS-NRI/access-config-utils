@@ -57,16 +57,17 @@ class ConfigList(list):
 
     Args:
         data (list[Any]): The list data.
-        nodes (Sequence[Tree]): The node backing each element. A repeat node appears once
+        nodes (Sequence[Tree | None]): The node backing each element, or ``None`` where an
+            array position no entry wrote has none. A repeat node appears once
             per element it covers, so this is one entry per element, not per node.
         ctx (ParseContext): The compiled grammar, needed to parse the replacement for a
             repeat run that an assignment has split.
     """
 
-    _nodes: list[Tree]  # The parse tree node backing each list element.
+    _nodes: list[Tree | None]  # The node backing each element, None where the file wrote nothing.
     _ctx: ParseContext  # Compiled grammar and per-parser settings.
 
-    def __init__(self, data: list[Any], nodes: Sequence[Tree], ctx: ParseContext) -> None:
+    def __init__(self, data: list[Any], nodes: Sequence[Tree | None], ctx: ParseContext) -> None:
         super().__init__(data)
         self._nodes = list(nodes)
         self._ctx = ctx
@@ -89,13 +90,17 @@ class ConfigList(list):
             ValueError: If a slice assignment would change the list length.
         """
         updated = list(self)
+        # Held for the super() call below rather than reusing *value*: for a slice that may
+        # have been a one-shot iterable, already drained here, and taking it a second time
+        # would leave the list short.
+        assigned: Any = value
         if isinstance(index, slice):
-            values = list(value)
-            if len(values) != len(self._nodes[index]):
+            assigned = list(value)
+            if len(assigned) != len(self._nodes[index]):
                 raise ValueError(
-                    f"Slice assignment would change list length from {len(self._nodes[index])} to {len(values)}"
+                    f"Slice assignment would change list length from {len(self._nodes[index])} to {len(assigned)}"
                 )
-            updated[index] = values
+            updated[index] = assigned
         else:
             updated[index] = value
 
@@ -103,9 +108,7 @@ class ConfigList(list):
         # several of them at once, so the run it covers is rewritten as a unit. Writing a
         # value back over itself reproduces its own token, so untouched ones do not move.
         self._nodes[:] = write_values(self._nodes, updated, self._ctx.lark)
-        # Not *value*: for a slice it may have been a one-shot iterable, already drained
-        # above, and taking it a second time would leave the list short.
-        super().__setitem__(index, values if isinstance(index, slice) else value)
+        super().__setitem__(index, assigned)
 
     def _unsupported(self, *args: Any, **kwargs: Any) -> NoReturn:
         """Reject a list operation the parse tree cannot follow.

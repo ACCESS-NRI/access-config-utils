@@ -76,7 +76,7 @@ class ConfigStore:
         """
         return ConfigStore(ref.block_nodes[index], self.ctx, addable=ref.addable)
 
-    def replace(self, key: str, value: Any) -> tuple[Tree, ...]:
+    def replace(self, key: str, value: Any) -> tuple[Tree | None, ...]:
         """Write a new value into the nodes of an entry that already exists.
 
         Args:
@@ -84,7 +84,9 @@ class ConfigStore:
             value (Any): The new value: a scalar, or a whole list of the same length.
 
         Returns:
-            tuple[Tree, ...]: The value-type rule nodes now holding the value.
+            tuple[Tree | None, ...]: The value-type rule nodes now holding the value.
+                ``None`` where an array position no entry wrote has no node to hold one,
+                as in ``EntryRef.value_nodes``.
 
         Raises:
             TypeError: If the new value's type does not match what the entry holds.
@@ -102,7 +104,11 @@ class ConfigStore:
         else:
             if ref.category != KEY_VALUE:
                 raise TypeError(f"Trying to change the type of variable '{key}'")
-            update_node_value(ref.value_nodes[0], value)
+            node = ref.value_nodes[0]
+            # A None node means an array position the file never wrote, which only a
+            # key_list entry can have; a key_value always has the one node it names.
+            assert node is not None
+            update_node_value(node, value)
         return ref.value_nodes
 
     def add(self, key: str, raw_key: str, value: Any) -> EntryRef:
