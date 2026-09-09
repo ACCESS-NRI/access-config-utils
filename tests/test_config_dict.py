@@ -13,6 +13,9 @@ would skip both the key normalisation and the tree update; a fake store is the o
 see that a call arrived, rather than inferring it from text that happened to come out right.
 """
 
+from collections.abc import Iterator
+from unittest.mock import patch
+
 import pytest
 from conftest import FakeContext, FakeStore, entry_node, value_node
 from lark import Tree
@@ -371,11 +374,12 @@ class TestConfigList:
         return [value_node(text=str(index)) for index in range(3)]
 
     @pytest.fixture
-    def values(self, nodes, monkeypatch) -> tuple[ConfigList, list]:
+    def values(self, nodes) -> Iterator[tuple[ConfigList, list]]:
         """Return a list over those nodes, the tree write recorded rather than made.
 
         ``write_values`` takes the whole list, because a repeat node backs several elements
-        at once and the run it covers is rewritten as a unit.
+        at once and the run it covers is rewritten as a unit. The patch is on the module
+        under test, not where the name comes from: each consumer holds its own reference.
         """
         written: list[list] = []
 
@@ -383,8 +387,8 @@ class TestConfigList:
             written.append(list(new_values))
             return list(refs)
 
-        monkeypatch.setattr(config_dict, "write_values", record)
-        return ConfigList([0, 1, 2], nodes, FakeContext()), written
+        with patch.object(config_dict, "write_values", record):
+            yield ConfigList([0, 1, 2], nodes, FakeContext()), written
 
     def test_an_element_update_reaches_its_node(self, values, nodes) -> None:
         """Test the pairing: element *i* writes to the node holding element *i*."""

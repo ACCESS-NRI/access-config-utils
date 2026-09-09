@@ -11,6 +11,10 @@ whichever pair it happens to admit rather than two differing in one term.
 ``info`` is passed as ``None`` throughout: with generation faked, nothing looks at it.
 """
 
+from collections.abc import Iterator
+from contextlib import ExitStack
+from unittest.mock import patch
+
 import pytest
 
 from access.config import entry_render
@@ -39,18 +43,27 @@ LIST_LINE = (KEY, WS, literal("="), WS, value(), literal(","), WS, value(), lite
 
 
 @pytest.fixture
-def offer(monkeypatch):
+def offer() -> Iterator[object]:
     """Return a function declaring the templates generation should be taken to have found.
 
     Patches the module under test, not the module the names come from: every import in this
-    package is a ``from X import name``, so each consumer holds its own reference.
+    package is a ``from X import name``, so each consumer holds its own reference. The
+    patches are entered on the stack rather than in a ``with`` here, because the values
+    they return are only known once the returned function is called; the stack unwinds them
+    when the fixture tears down.
     """
+    with ExitStack() as stack:
 
-    def _offer(*templates, admitted: frozenset[str] = NUMERIC):
-        monkeypatch.setattr(entry_render, "grammar_templates", lambda info, c, cat: tuple(templates))
-        monkeypatch.setattr(entry_render, "admitted_value_rules", lambda info, c, cat: admitted)
+        def _offer(*templates, admitted: frozenset[str] = NUMERIC):
+            stack.enter_context(
+                patch.multiple(
+                    entry_render,
+                    grammar_templates=lambda info, c, cat: tuple(templates),
+                    admitted_value_rules=lambda info, c, cat: admitted,
+                )
+            )
 
-    return _offer
+        yield _offer
 
 
 def snippets(*args, **kwargs) -> list[str]:
@@ -215,9 +228,9 @@ class TestParserTemplateOverride:
         assert snippets("key_value", "K", 1, EntryStyle(), self.OVERRIDE) == [" K: 1\n", "K = 1\n"]
 
 
-def test_snippet_cap_is_enforced(offer, monkeypatch) -> None:
+def test_snippet_cap_is_enforced(offer) -> None:
     """Test that the number of candidates offered for one insertion is bounded."""
-    monkeypatch.setattr(entry_render, "_MAX_SNIPPETS", 2)
-    offer(LINE, LINE, LINE, LINE)
+    with patch.object(entry_render, "_MAX_SNIPPETS", 2):
+        offer(LINE, LINE, LINE, LINE)
 
-    assert len(snippets("key_value", "K", 1, EntryStyle())) == 2
+        assert len(snippets("key_value", "K", 1, EntryStyle())) == 2

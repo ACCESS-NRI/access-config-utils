@@ -13,7 +13,9 @@ delegation is worth pinning: which style an addition is given, and which node a 
 unlinks.
 """
 
+from collections.abc import Iterator
 from dataclasses import replace
+from unittest.mock import patch
 
 import pytest
 from conftest import entry_node, value_node
@@ -134,7 +136,7 @@ class TestAdd:
     """Handing an insertion the style it should follow, and recording what came back."""
 
     @pytest.fixture
-    def spy(self, monkeypatch):
+    def spy(self) -> Iterator[tuple[list[dict], EntryRef]]:
         """Patch insertion, recording its arguments and returning a chosen reference."""
         calls: list[dict] = []
         node = entry_node("key_value", "z", value_node())
@@ -144,8 +146,8 @@ class TestAdd:
             calls.append({"container": container, "key": key, "raw_key": raw_key, "value": value, "style": style})
             return ref
 
-        monkeypatch.setattr(config_store, "insert_entry", fake_insert)
-        return calls, ref
+        with patch.object(config_store, "insert_entry", fake_insert):
+            yield calls, ref
 
     def test_records_the_reference_it_is_given(self, store, spy) -> None:
         """Test that the new entry joins the store's own references."""
@@ -257,17 +259,17 @@ class TestRemove:
 
         assert store.render() == "b = 3"
 
-    def test_delegates_to_the_tree_edit(self, store, monkeypatch) -> None:
+    def test_delegates_to_the_tree_edit(self, store) -> None:
         """Test that removal goes through the repair path, not a bare list removal.
 
         A grammar can require entries and the text around them to alternate, so what is left
         behind may need rejoining; the store must not do the unlink itself.
         """
         seen: list[Tree] = []
-        monkeypatch.setattr(config_store, "remove_entry_node", lambda node, info: seen.append(node))
         entries = list(store.refs["a"].entry_nodes)
 
-        store.remove("a")
+        with patch.object(config_store, "remove_entry_node", lambda node, info: seen.append(node)):
+            store.remove("a")
 
         assert seen == entries
 
@@ -287,7 +289,7 @@ class TestRender:
         """
         assert store.render() == store.render()
 
-    def test_a_container_with_entries_left_reports_a_failure(self, ctx, monkeypatch) -> None:
+    def test_a_container_with_entries_left_reports_a_failure(self, ctx) -> None:
         """Test that a tree that cannot be written out raises rather than coming back empty.
 
         Silently returning nothing would lose a file's contents; the empty-string fallback
@@ -296,9 +298,8 @@ class TestRender:
         tree = ctx.lark.parse("a = 1\n", start="start")
         AddParent().visit(tree)
         store = ConfigStore(tree, ctx)
-        monkeypatch.setattr(store.ctx.reconstructor, "reconstruct", _refuse)
 
-        with pytest.raises(UnexpectedInput):
+        with patch.object(store.ctx.reconstructor, "reconstruct", _refuse), pytest.raises(UnexpectedInput):
             store.render()
 
     def test_an_emptied_container_still_writes_its_comments(self, ctx) -> None:
@@ -316,7 +317,7 @@ class TestRender:
         assert store.render() == ""
         assert store.refs == {}
 
-    def test_an_emptied_container_a_grammar_cannot_derive_writes_nothing(self, ctx, monkeypatch) -> None:
+    def test_an_emptied_container_a_grammar_cannot_derive_writes_nothing(self, ctx) -> None:
         """Test the fallback for a format whose start rule requires at least one entry.
 
         There is no text left to write for such a grammar, so the empty string is the honest
@@ -326,9 +327,9 @@ class TestRender:
         AddParent().visit(tree)
         store = ConfigStore(tree, ctx)
         store.remove("a")
-        monkeypatch.setattr(store.ctx.reconstructor, "reconstruct", _refuse)
 
-        assert store.render() == ""
+        with patch.object(store.ctx.reconstructor, "reconstruct", _refuse):
+            assert store.render() == ""
 
 
 def _refuse(tree: Tree) -> str:

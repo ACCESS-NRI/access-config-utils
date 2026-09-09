@@ -13,7 +13,10 @@ That the accepted text is one a real grammar actually produces is proved elsewhe
 ``test_parser.py`` and the four format modules.
 """
 
+from collections.abc import Iterator
+from contextlib import ExitStack
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from conftest import FakeContext, entry_node, value_node
@@ -34,43 +37,53 @@ def container() -> Tree:
 
 
 @pytest.fixture
-def offer(monkeypatch):
+def offer() -> Iterator[object]:
     """Return a function scripting one insertion attempt end to end.
 
     Each candidate is declared as ``(text, outcome)``: a node list to splice, an exception
     the parse should raise, or the refs a read-back should report. The fakes patch the
     module under test, since every import here binds its own reference.
+
+    The patches go onto a stack rather than into a ``with`` here, because the fakes close
+    over arguments only known once the returned function is called. The stack unwinds them
+    when the fixture tears down, which is what keeps them in force for the whole test.
     """
+    with ExitStack() as stack:
 
-    def _offer(*candidates: tuple[str, Any], admitted: set[str] | None = None):
-        scripted = dict(candidates)
-        # Which candidate the reader is being asked about. Tracked rather than deduced from
-        # the tree, because two candidates can parse into structurally equal nodes.
-        current: list[str] = []
+        def _offer(*candidates: tuple[str, Any], admitted: set[str] | None = None):
+            scripted = dict(candidates)
+            # Which candidate the reader is being asked about. Tracked rather than deduced
+            # from the tree, because two candidates can parse into structurally equal nodes.
+            current: list[str] = []
 
-        def fake_snippets(*args, **kwargs):
-            return iter([text for text, _ in candidates])
+            def fake_snippets(*args, **kwargs):
+                return iter([text for text, _ in candidates])
 
-        def fake_parse(lark, container_rule, snippet):
-            outcome = scripted[snippet]
-            if isinstance(outcome, Exception):
-                raise outcome
-            current.append(snippet)
-            return [Tree("line", [outcome[1]])]
+            def fake_parse(lark, container_rule, snippet):
+                outcome = scripted[snippet]
+                if isinstance(outcome, Exception):
+                    raise outcome
+                current.append(snippet)
+                return [Tree("line", [outcome[1]])]
 
-        def fake_read(tree, ctx):
-            refs, _ = scripted[current[-1]]
-            if isinstance(refs, Exception):
-                raise refs
-            return refs
+            def fake_read(tree, ctx):
+                refs, _ = scripted[current[-1]]
+                if isinstance(refs, Exception):
+                    raise refs
+                return refs
 
-        monkeypatch.setattr(config_insert, "iter_entry_snippets", fake_snippets)
-        monkeypatch.setattr(config_insert, "parse_entry_nodes", fake_parse)
-        monkeypatch.setattr(config_insert, "read_entries", fake_read)
-        monkeypatch.setattr(config_insert, "entry_insertion_index", lambda c: 1)
-        monkeypatch.setattr(config_insert, "admitted_value_rules", lambda i, c, cat: frozenset(admitted or ()))
+            stack.enter_context(
+                patch.multiple(
+                    config_insert,
+                    iter_entry_snippets=fake_snippets,
+                    parse_entry_nodes=fake_parse,
+                    read_entries=fake_read,
+                    entry_insertion_index=lambda c: 1,
+                    admitted_value_rules=lambda i, c, cat: frozenset(admitted or ()),
+                )
+            )
 
-    return _offer
+        yield _offer
 
 
 def scalar_ref(key: str = "z") -> tuple[dict[str, EntryRef], Tree]:
@@ -275,7 +288,7 @@ class TestInsertEntryExhausted:
         assert "value types allowed here" not in str(raised.value)
 
 
-def test_insert_entry_passes_the_style_and_container_through(container, monkeypatch) -> None:
+def test_insert_entry_passes_the_style_and_container_through(container) -> None:
     """Test that what the caller decided about layout reaches synthesis unchanged.
 
     ``config_store`` works out which style applies -- the container's own entries, or what
@@ -298,11 +311,14 @@ def test_insert_entry_passes_the_style_and_container_through(container, monkeypa
         )
         return iter(())
 
-    monkeypatch.setattr(config_insert, "iter_entry_snippets", record)
-    monkeypatch.setattr(config_insert, "entry_insertion_index", lambda c: 0)
-    monkeypatch.setattr(config_insert, "admitted_value_rules", lambda i, c, cat: frozenset())
+    patches = patch.multiple(
+        config_insert,
+        iter_entry_snippets=record,
+        entry_insertion_index=lambda c: 0,
+        admitted_value_rules=lambda i, c, cat: frozenset(),
+    )
 
-    with pytest.raises(UnsupportedEntryError):
+    with patches, pytest.raises(UnsupportedEntryError):
         insert_entry(container, ctx, "Z", "Z", 1, style)
 
     assert seen == {
@@ -315,7 +331,7 @@ def test_insert_entry_passes_the_style_and_container_through(container, monkeypa
     }
 
 
-def test_insert_entry_reads_the_candidate_in_a_throwaway_container(container, monkeypatch) -> None:
+def test_insert_entry_reads_the_candidate_in_a_throwaway_container(container) -> None:
     """Test that a candidate is interpreted apart from the tree it may never join.
 
     The read-back happens on a fresh node of the container's own rule, so a candidate that
@@ -324,18 +340,20 @@ def test_insert_entry_reads_the_candidate_in_a_throwaway_container(container, mo
     read_from: list[Tree] = []
     node = Tree("line", [Token("T", "z=1")])
 
-    monkeypatch.setattr(config_insert, "iter_entry_snippets", lambda *a: iter(["z=1"]))
-    monkeypatch.setattr(config_insert, "parse_entry_nodes", lambda *a: [node])
-    monkeypatch.setattr(config_insert, "entry_insertion_index", lambda c: 0)
-    monkeypatch.setattr(config_insert, "admitted_value_rules", lambda i, c, cat: frozenset())
-
     def fake_read(tree, ctx):
         read_from.append(tree)
         return {}
 
-    monkeypatch.setattr(config_insert, "read_entries", fake_read)
+    patches = patch.multiple(
+        config_insert,
+        iter_entry_snippets=lambda *a: iter(["z=1"]),
+        parse_entry_nodes=lambda *a: [node],
+        entry_insertion_index=lambda c: 0,
+        admitted_value_rules=lambda i, c, cat: frozenset(),
+        read_entries=fake_read,
+    )
 
-    with pytest.raises(UnsupportedEntryError):
+    with patches, pytest.raises(UnsupportedEntryError):
         insert_entry(container, FakeContext(), "z", "z", 1, EntryStyle())
 
     [throwaway] = read_from
