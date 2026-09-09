@@ -73,7 +73,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import ClassVar, Self
+from typing import Any, ClassVar, Self, cast
 
 from access.config.parallel_component import GroupConstraint, LocalConstraint, ParallelComponent
 
@@ -263,7 +263,7 @@ class AllocationStrategy(ABC):
 
     @classmethod
     @abstractmethod
-    def _iter_core_shares(cls, allocs: Sequence[AllocationStrategy], budget: int) -> Iterator[tuple[int, ...]]:
+    def _iter_core_shares(cls, allocs: Sequence[Any], budget: int) -> Iterator[tuple[int, ...]]:
         """Yield each way *allocs* — all of this mode — can share up to *budget* cores.
 
         Called once per sibling group of this mode, and only for modes that actually have
@@ -273,8 +273,9 @@ class AllocationStrategy(ABC):
         *budget*, so a mode never needs to know that the other modes exist.
 
         Args:
-            allocs (Sequence[AllocationStrategy]): The siblings of this mode, in position
-                order.
+            allocs (Sequence[Any]): The siblings of this mode, in position order. Every
+                override narrows this to its own class, which is what the ``Any`` is for -
+                see the note on ``_group_by_mode`` for why the group is always homogeneous.
             budget (int): The most this group may take, in cores.
 
         Yields:
@@ -282,7 +283,7 @@ class AllocationStrategy(ABC):
         """
 
     @classmethod
-    def _reserved_cores(cls, allocs: Sequence[AllocationStrategy]) -> int:
+    def _reserved_cores(cls, allocs: Sequence[Any]) -> int:
         """Return cores earlier phases should hold back for *allocs*.
 
         A **pruning hint only**: returning 0 is always correct and only costs the scheduler
@@ -291,7 +292,8 @@ class AllocationStrategy(ABC):
         prunes usefully.
 
         Args:
-            allocs (Sequence[AllocationStrategy]): The siblings of this mode.
+            allocs (Sequence[Any]): The siblings of this mode, narrowed to its own class by
+                the override.
 
         Returns:
             int: A lower bound on the cores this group needs. Defaults to 0.
@@ -299,9 +301,7 @@ class AllocationStrategy(ABC):
         return 0
 
     @classmethod
-    def _describe_infeasible(
-        cls, allocs: Sequence[AllocationStrategy], names: Sequence[str], budget: int
-    ) -> str | None:
+    def _describe_infeasible(cls, allocs: Sequence[Any], names: Sequence[str], budget: int) -> str | None:
         """Return a DEBUG explanation of why *allocs* could take no share, or ``None``.
 
         Called only when this mode's group yielded nothing at all, so it is off every hot
@@ -309,7 +309,8 @@ class AllocationStrategy(ABC):
         self-evident from the budget.
 
         Args:
-            allocs (Sequence[AllocationStrategy]): The siblings of this mode.
+            allocs (Sequence[Any]): The siblings of this mode, narrowed to its own class by
+                the override.
             names (Sequence[str]): Their component names, in the same order.
             budget (int): The budget the group was offered.
 
@@ -580,6 +581,23 @@ class FixedAllocation(AllocationStrategy):
         # budget resolve to counts that fit it too - see the note in the class docstring.
         return {"n_cores": _cores_from_fraction(self.core_fraction, total_cores, math.floor), "core_fraction": None}
 
+    @staticmethod
+    def _resolved_counts(allocs: Sequence[FixedAllocation]) -> tuple[int, ...]:
+        """Return the core count each of *allocs* asks for, in the same order.
+
+        ``n_cores`` is only optional until the search starts: ``__post_init__`` demands one
+        of ``n_cores`` and ``core_fraction``, and ``_resolve_fractions`` has turned any
+        fraction into a count before either caller here runs. The cast states that
+        invariant, rather than testing for a ``None`` that cannot arrive.
+
+        Args:
+            allocs (Sequence[FixedAllocation]): The fixed-allocated siblings.
+
+        Returns:
+            tuple[int, ...]: Their resolved ``n_cores``, in position order.
+        """
+        return tuple(cast(int, alloc.n_cores) for alloc in allocs)
+
     @classmethod
     def _iter_core_shares(cls, allocs: Sequence[FixedAllocation], budget: int) -> Iterator[tuple[int, ...]]:
         """Yield the group's one share, if it fits *budget*.
@@ -601,15 +619,17 @@ class FixedAllocation(AllocationStrategy):
             >>> list(FixedAllocation._iter_core_shares([FixedAllocation(6)], 4))
             []
         """
-        if sum(alloc.n_cores for alloc in allocs) <= budget:
-            yield tuple(alloc.n_cores for alloc in allocs)
+        counts = cls._resolved_counts(allocs)
+        if sum(counts) <= budget:
+            yield counts
 
     @classmethod
     def _describe_infeasible(cls, allocs: Sequence[FixedAllocation], names: Sequence[str], budget: int) -> str | None:
         """Name the fixed allocations and what they need, since the budget cannot say it."""
+        counts = cls._resolved_counts(allocs)
         return (
-            f"the fixed allocations {dict(zip(names, (a.n_cores for a in allocs), strict=True))} "
-            f"need {sum(a.n_cores for a in allocs)} core(s), but only {budget} are available"
+            f"the fixed allocations {dict(zip(names, counts, strict=True))} "
+            f"need {sum(counts)} core(s), but only {budget} are available"
         )
 
 

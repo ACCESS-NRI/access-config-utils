@@ -33,7 +33,7 @@ from ``grammar_contract``, which states in full what a grammar has to provide.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, TypeGuard
 
 from lark import Token, Tree, Visitor
 
@@ -170,14 +170,18 @@ def entry_insertion_index(container: Tree) -> int:
 # when one of those elements is written is a change, and lives in ``tree_edits``.
 
 
-def is_value_node(node: Tree | Token) -> bool:
+def is_value_node(node: Tree | Token) -> TypeGuard[Tree]:
     """Report whether a node holds one or more values of an entry.
+
+    A ``TypeGuard`` rather than a plain ``bool``, because only a ``Tree`` can answer yes:
+    callers filtering an entry's children on this are left holding value nodes, and the
+    annotation says so instead of leaving them to assert it again.
 
     Args:
         node (Tree | Token): A child of an entry rule node.
 
     Returns:
-        bool: True for a value-type rule node or a repeat of one.
+        TypeGuard[Tree]: True for a value-type rule node or a repeat of one.
     """
     return isinstance(node, Tree) and (node.data in VALUE_TYPE_HANDLER_REGISTRY or node.data == REPEAT_RULE)
 
