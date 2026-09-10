@@ -242,10 +242,17 @@ class RankRatioGroupConstraint(GroupConstraint):
 
 
 @dataclass(frozen=True)
-class UniformSubdomainConstraint(LocalConstraint):
-    """Every local sub-domain must have exactly the same size (exact integer division).
+class DomainDivisibleByRanksConstraint(LocalConstraint):
+    """Every ``domain.shape[i]`` must be divisible by the ranks along dimension ``i``.
 
-    Equivalent to requiring ``domain.shape[i] % grid[i] == 0`` for every dimension.
+    The ranks along a dimension are ``grid[i]`` of the process grid, so this requires
+    ``domain.shape[i] % grid[i] == 0`` throughout, and every local sub-domain then has
+    exactly the same size.
+
+    Note the direction: the rank count must divide the extent, not the other way round, so
+    on a 360-point dimension this admits 12 ranks and rejects 7.
+    ``ProcessGridDimDivisibleConstraint`` states the opposite relation, fixing a divisor
+    *of* the rank count, and no choice of its ``divisor`` reproduces this rule.
 
     Frozen (``frozen=True``): an immutable, hashable value object, so one instance can be
     attached to several components without risk of it changing between checks.
