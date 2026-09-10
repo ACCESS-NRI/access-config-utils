@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from access.config.parallel_constraints import (
+    DomainDivisibleByRanksConstraint,
     FixedThreadsPerRankConstraint,
     MaxThreadsPerRankConstraint,
     MaxWastedCoreFractionConstraint,
@@ -15,7 +16,6 @@ from access.config.parallel_constraints import (
     ProcessGridDimEvenConstraint,
     RankRatioGroupConstraint,
     SubdomainAspectRatioConstraint,
-    UniformSubdomainConstraint,
 )
 
 # ---------------------------------------------------------------------------
@@ -205,21 +205,30 @@ class TestRankRatioGroupConstraint:
 # ---------------------------------------------------------------------------
 
 
-class TestUniformSubdomainConstraint:
+class TestDomainDivisibleByRanksConstraint:
     def test_uniform(self) -> None:
         # 12 / 3 == 4, 8 / 2 == 4 — both exact
-        c = UniformSubdomainConstraint()
+        c = DomainDivisibleByRanksConstraint()
         layout = leaf("x", 6, 1, decomp(grid_shape=(3, 2)))
         assert c.is_satisfied(layout)
 
     def test_non_uniform(self) -> None:
         # 12 / 5 is not integer
-        c = UniformSubdomainConstraint()
+        c = DomainDivisibleByRanksConstraint()
         layout = leaf("x", 5, 1, decomp(grid_shape=(5, 1)))
         assert not c.is_satisfied(layout)
 
+    @pytest.mark.parametrize(("n_ranks", "satisfied"), [(12, True), (7, False)])
+    def test_extent_is_the_dividend(self, n_ranks: int, satisfied: bool) -> None:
+        # The rank count must divide the extent, not the other way round: on a 360-point
+        # dimension 12 ranks tile it exactly and 7 do not. ProcessGridDimDivisibleConstraint
+        # states the reverse relation and cannot express this for any divisor it is given.
+        c = DomainDivisibleByRanksConstraint()
+        layout = leaf("x", n_ranks, 1, decomp(grid_shape=(n_ranks,), domain_shape=(360,)))
+        assert c.is_satisfied(layout) is satisfied
+
     def test_no_decomposition_raises(self) -> None:
-        c = UniformSubdomainConstraint()
+        c = DomainDivisibleByRanksConstraint()
         layout = leaf("x", 4, 1)
         with pytest.raises(ValueError, match="requires layout.decomposition"):
             c.is_satisfied(layout)
