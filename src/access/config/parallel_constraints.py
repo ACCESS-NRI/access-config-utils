@@ -163,13 +163,19 @@ class ProcessGridDimDivisibleConstraint(LocalConstraint):
 class MaxWastedCoreFractionConstraint(LocalConstraint):
     """The fraction of idle cores must not exceed ``max_fraction``.
 
-    Idle cores are those allocated to this component but not handed to any
+    Idle cores are those allocated to this component but not spent by any
     sub-component: ``ComponentLayout.idle_cores``.
 
     This constraint must be placed on a *parent* component, to limit how many of the
     available cores are left unused. A leaf spends its cores exactly, by construction,
     so idle cores are not a meaningful quantity for it: applying this constraint to a
     leaf raises ``ValueError`` rather than silently reporting it as satisfied.
+
+    Under ``CoreSharing.SHARED`` the idle cores are those past the furthest-reaching
+    sub-component, since the others are meant to be on the same cores as it. A shared
+    parent is therefore no more wasteful for having many small sub-components, and this
+    constraint prunes none of the combinations they generate - see ``CoreSharing`` for
+    what that costs and how to keep it in hand.
 
     Frozen (``frozen=True``): an immutable, hashable value object, so one instance can be
     attached to several components without risk of it changing between checks.
