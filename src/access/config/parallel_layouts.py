@@ -81,7 +81,7 @@ from access.config.parallel_allocation_strategies import (
     iter_shared_core_shares,
     resolve_root_strategy,
 )
-from access.config.parallel_component import ComponentLayout, CoreSharing, ParallelComponent
+from access.config.parallel_component import ComponentLayout, CoreSharing, ParallelComponent, _occupied
 
 __all__ = [
     "iter_layouts",
@@ -272,7 +272,7 @@ class _LayoutSearch:
                     name=component.name,
                     n_cores=n_cores,
                     n_ranks=(
-                        max(sub.core_offset + sub.n_ranks for sub in combo)
+                        _occupied((sub.core_offset, sub.n_ranks) for sub in combo)
                         if shared
                         else sum(sub.n_ranks for sub in combo)
                     ),

@@ -32,6 +32,7 @@ from access.config.parallel_component import (
     LocalConstraint,
     ParallelComponent,
 )
+from access.config.parallel_constraints import MaxWastedCoreFractionConstraint
 from access.config.parallel_domain import Domain
 from access.config.parallel_layouts import iter_layouts
 from access.config.parallel_mpi_grid import MPICartesianGrid
@@ -957,6 +958,39 @@ class TestIterLayoutsSharedCores:
             pool = layouts[0].sub_layouts[0]
             assert pool.used_cores == 28
             assert [child.core_offset for child in pool.sub_layouts] == [0, 16]
+
+    def test_the_waste_constraint_sees_cores_no_child_sits_on(self) -> None:
+        """A gap at the front of a shared range counts against a waste budget.
+
+        The pool reaches 24 cores in either case, so a rule measuring the reach would let
+        both through. Only counting what the children sit on tells them apart.
+        """
+
+        def layouts_with(offset: int, max_fraction: float) -> list:
+            model = ParallelComponent(
+                name="coupled",
+                subcomponents=(
+                    ParallelComponent(
+                        "pool",
+                        core_sharing=CoreSharing.SHARED,
+                        local_constraints=(MaxWastedCoreFractionConstraint(max_fraction),),
+                        subcomponents=(ParallelComponent("ice", core_offset=offset),),
+                    ),
+                ),
+            )
+            return list(
+                iter_layouts(
+                    model,
+                    24,
+                    allocations=RootAllocation(
+                        subcomponents={"pool": FixedAllocation(24, subcomponents={"ice": FixedAllocation(24 - offset)})}
+                    ),
+                )
+            )
+
+        assert layouts_with(offset=0, max_fraction=0.0), "the whole range is spent"
+        assert layouts_with(offset=8, max_fraction=0.0) == [], "cores 0 to 7 are spent by nobody"
+        assert layouts_with(offset=8, max_fraction=1 / 3), "a third wasted is within budget"
 
     def test_an_offset_leaves_a_child_less_of_the_range_to_spend(self) -> None:
         """A free child starting partway in is offered only what fits after its offset."""

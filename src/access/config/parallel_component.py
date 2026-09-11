@@ -49,13 +49,18 @@ class CoreSharing(Enum):
     ``PARTITIONED``, the default, gives each sub-component a disjoint subset of the parent's
     cores, so the parent holds at least their total. This describes most coupled models.
     ``SHARED`` has them all draw on the same range of cores and run on it in turn, so the
-    parent holds at least as many cores, and as many ranks, as its furthest-reaching
-    sub-component rather than their total.
+    parent holds at least as many cores as its furthest-reaching sub-component rather than
+    their total, and as many ranks as they sit on between them.
 
     Where in the range each sub-component sits is its own ``core_offset``, so what a shared
     parent must be large enough for is the one that *reaches* furthest rather than the one
     that is biggest: ``max(core_offset + n_cores)``. Two sub-components may start at the
     same core and overlap, or divide the range between them; both are ordinary cases here.
+
+    How large it must be and how much of it is spent are different questions once offsets
+    are in play. A range whose sub-components all start partway into it is idle at the
+    front, one with a gap between two of them is idle in the middle, and ``used_cores``
+    counts neither - it counts the part at least one sub-component sits on.
     An offset means nothing under a partitioned parent, where each sub-component already
     starts where the last one ended, and is refused there.
 
@@ -69,9 +74,10 @@ class CoreSharing(Enum):
     Note that the interior of a ``SHARED`` parent is enumerated as a product rather than a
     partition: each child is offered every count that fits, independently of its siblings.
     Four unconstrained children on 275 cores is 275**4 combinations, and
-    ``MaxWastedCoreFractionConstraint`` will not prune them, since idle cores are measured
-    against the furthest-reaching child alone. Give the children of a shared parent a
-    ``FixedAllocation`` or a narrow ``FreeAllocation`` unless the range is small. A
+    ``MaxWastedCoreFractionConstraint`` prunes few of them: a child sitting inside the
+    range another already covers changes nothing about how much of it is spent. Give the
+    children of a shared parent a ``FixedAllocation`` or a narrow ``FreeAllocation``
+    unless the range is small. A
     ``WeightedAllocation`` cannot allocate one at all: a weight states a share of a divided
     budget, and nothing is divided here.
 
@@ -91,6 +97,35 @@ class CoreSharing(Enum):
     PARTITIONED = auto()
     # The sub-components draw on one range of cores and run on it in turn.
     SHARED = auto()
+
+
+def _occupied(spans: Iterable[tuple[int, int]]) -> int:
+    """Return how many positions at least one of *spans* covers.
+
+    Each span is a ``(start, size)`` pair standing for ``[start, start + size)``. Spans
+    that overlap are counted once, and positions no span covers are not counted at all -
+    so this is what a component *spends*, as opposed to how far its sub-components reach.
+
+    Args:
+        spans (Iterable[tuple[int, int]]): The spans to measure, in any order.
+
+    Returns:
+        int: The number of positions covered, or 0 when there are no spans.
+
+    Examples:
+        >>> _occupied([(0, 4), (2, 4)])   # overlapping, counted once
+        6
+        >>> _occupied([(4, 4), (12, 4)])  # a gap between them, and nothing before the first
+        8
+    """
+    covered = 0
+    reach = 0
+    for start, size in sorted(spans):
+        end = start + size
+        if end > reach:
+            covered += end - max(start, reach)
+            reach = end
+    return covered
 
 
 @dataclass(frozen=True)
@@ -123,8 +158,8 @@ class ComponentLayout:
         n_cores (int): CPU cores allocated to this component. Must be >= 1.
         n_ranks (int): MPI ranks in this component's subtree: the ranks it runs itself
             for a leaf, the total over ``sub_layouts`` for a parent that partitions its
-            cores, and how far the furthest of them reaches for one whose sub-layouts
-            share them. Must be >= 1.
+            cores, and the ranks they sit on between them for one whose sub-layouts share
+            them. Must be >= 1.
         threads_per_rank (int | None): OpenMP threads per MPI rank, for a leaf. Must be
             >= 1 when set. ``None`` for a parent, whose sub-components may each use a
             different thread count.
@@ -235,6 +270,35 @@ class ComponentLayout:
                 "belong to the parent that did not hand them out."
             )
 
+    def _validate_sub_layout_offset(self, sub: ComponentLayout, shared: bool) -> None:
+        """Check that *sub* may start where it says it does within this component.
+
+        Args:
+            sub (ComponentLayout): One of this component's sub-layouts.
+            shared (bool): Whether the sub-layouts share this component's cores.
+
+        Raises:
+            ValueError: If *sub* states an offset under a component that partitions its
+                cores, where each sub-layout already starts where the last one ended; or
+                if it states one while running more than one core per rank, where a core
+                index and a PE index are not the same thing.
+        """
+        if not sub.core_offset:
+            return
+        if not shared:
+            raise ValueError(
+                f"ComponentLayout {self.name!r}: sub-layout {sub.name!r} states a core offset of "
+                f"{sub.core_offset}, but this component's sub-layouts divide its cores between "
+                "them, so each one starts where the last ended and cannot be placed."
+            )
+        if sub.n_cores != sub.n_ranks:
+            raise ValueError(
+                f"ComponentLayout {self.name!r}: sub-layout {sub.name!r} starts at core "
+                f"{sub.core_offset} but runs {sub.n_ranks} rank(s) over {sub.n_cores} core(s). "
+                "An offset is a core index, as ESMF means rootpe, and only means the same thing "
+                "as a PE index when a rank holds one core."
+            )
+
     def _validate_as_parent(self) -> None:
         """Check the rules for a component that distributes its cores.
 
@@ -263,54 +327,75 @@ class ComponentLayout:
                     f"ComponentLayout {self.name!r}: sub_layouts must have unique names; duplicates: {dupes}."
                 )
             seen.add(sub.name)
+            self._validate_sub_layout_offset(sub, shared)
             if shared:
                 # Shared sub-components take turns on the same cores, so the parent has to
-                # reach as far as the furthest of them gets, not hold their total.
-                if sub.core_offset and sub.n_cores != sub.n_ranks:
-                    raise ValueError(
-                        f"ComponentLayout {self.name!r}: sub-layout {sub.name!r} starts at core "
-                        f"{sub.core_offset} but runs {sub.n_ranks} rank(s) over {sub.n_cores} core(s). "
-                        "An offset is a core index, as ESMF means rootpe, and only means the same thing "
-                        "as a PE index when a rank holds one core."
-                    )
+                # reach as far as the furthest of them gets, not hold their total. How
+                # much of the range they sit on is a separate question, answered below.
                 sub_cores = max(sub_cores, sub.core_offset + sub.n_cores)
-                sub_ranks = max(sub_ranks, sub.core_offset + sub.n_ranks)
             else:
-                if sub.core_offset:
-                    raise ValueError(
-                        f"ComponentLayout {self.name!r}: sub-layout {sub.name!r} states a core offset of "
-                        f"{sub.core_offset}, but this component's sub-layouts divide its cores between "
-                        "them, so each one starts where the last ended and cannot be placed."
-                    )
                 sub_cores += sub.n_cores
                 sub_ranks += sub.n_ranks
+        if shared:
+            # The ranks a shared parent holds are the ones its sub-components sit on, so a
+            # rank two of them share counts once and a stretch nobody is on not at all.
+            sub_ranks = _occupied((sub.core_offset, sub.n_ranks) for sub in self.sub_layouts)
         if sub_cores > self.n_cores:
-            detail = (
-                f"its sub-layouts reach {sub_cores} core(s) into the range"
-                if shared
-                else f"sub-layouts use {sub_cores} core(s) in total"
-            )
-            raise ValueError(
-                f"ComponentLayout {self.name!r}: {detail}, which exceeds the {self.n_cores} core(s) "
-                "assigned to this component."
-            )
+            raise ValueError(self._overspent_message(shared, sub_cores))
         if sub_ranks != self.n_ranks:
-            rule = (
-                "A parent whose sub-components share its cores has as many ranks as the furthest of them reaches."
-                if shared
-                else "A parent's n_ranks is the total over its subtree."
-            )
-            raise ValueError(
-                f"ComponentLayout {self.name!r}: n_ranks is {self.n_ranks}, but its sub-layouts hold "
-                f"{sub_ranks} rank(s). {rule}"
-            )
+            raise ValueError(self._rank_total_message(shared, sub_ranks))
+
+    def _overspent_message(self, shared: bool, sub_cores: int) -> str:
+        """Return the complaint that this component's sub-layouts do not fit in its cores.
+
+        Args:
+            shared (bool): Whether the sub-layouts share this component's cores.
+            sub_cores (int): What they came to, under whichever rule applies.
+
+        Returns:
+            str: The message, naming the rule that was applied.
+        """
+        detail = (
+            f"its sub-layouts reach {sub_cores} core(s) into the range"
+            if shared
+            else f"sub-layouts use {sub_cores} core(s) in total"
+        )
+        return (
+            f"ComponentLayout {self.name!r}: {detail}, which exceeds the {self.n_cores} core(s) "
+            "assigned to this component."
+        )
+
+    def _rank_total_message(self, shared: bool, sub_ranks: int) -> str:
+        """Return the complaint that ``n_ranks`` disagrees with the sub-layouts.
+
+        Args:
+            shared (bool): Whether the sub-layouts share this component's cores.
+            sub_ranks (int): What they came to, under whichever rule applies.
+
+        Returns:
+            str: The message, naming the rule that was applied.
+        """
+        rule = (
+            "A parent whose sub-components share its cores has as many ranks as they sit on between them."
+            if shared
+            else "A parent's n_ranks is the total over its subtree."
+        )
+        return (
+            f"ComponentLayout {self.name!r}: n_ranks is {self.n_ranks}, but its sub-layouts hold "
+            f"{sub_ranks} rank(s). {rule}"
+        )
 
     def _combine(self, counts: Iterable[int]) -> int:
         """Total *counts* over the sub-layouts the way this component's sharing rule says.
 
         Partitioned sub-components hold disjoint things, so their counts add. Shared ones
-        hold the same things in turn, so what the parent must provide is however far the
-        furthest-reaching of them gets: its own count plus the offset it starts at.
+        take turns on the same range, so what the parent spends is the part of that range
+        at least one of them sits on: overlaps count once, and a stretch nobody is on does
+        not count, wherever in the range it falls.
+
+        Note that this is not the same as how far they *reach*, which is what the parent
+        has to be large enough for. A range whose sub-components all start partway into it
+        is idle at the front, and this counts that.
 
         Args:
             counts (Iterable[int]): One count per sub-layout, in order.
@@ -319,10 +404,7 @@ class ComponentLayout:
             int: The combined count, or 0 when there are no sub-layouts.
         """
         if self.core_sharing is CoreSharing.SHARED:
-            return max(
-                (sub.core_offset + count for sub, count in zip(self.sub_layouts, counts, strict=True)),
-                default=0,
-            )
+            return _occupied((sub.core_offset, count) for sub, count in zip(self.sub_layouts, counts, strict=True))
         return sum(counts)
 
     @property
@@ -335,8 +417,8 @@ class ComponentLayout:
         """Cores this component actually spends, as opposed to the ``n_cores`` it holds.
 
         A leaf spends ``n_ranks × threads_per_rank``. A parent spends what its sub-layouts
-        occupy between them: their total when it partitions its cores, and however far the
-        furthest of them reaches when they share one range. Either may be less than
+        occupy between them: their total when it partitions its cores, and the part of the
+        range at least one of them sits on when they share it. Either may be less than
         ``n_cores``; the difference is ``idle_cores``.
         """
         if self.threads_per_rank is not None:
@@ -347,9 +429,10 @@ class ComponentLayout:
     def idle_cores(self) -> int:
         """Cores allocated to this component but not spent by any sub-component.
 
-        Under ``CoreSharing.SHARED`` these are the cores past the furthest-reaching
-        sub-layout, not the ones a sub-layout's siblings left unused: the siblings are
-        meant to be on the same cores as it.
+        Under ``CoreSharing.SHARED`` these are the cores no sub-layout sits on, wherever
+        in the range they fall - before the first, between two, or after the last. They
+        are not the cores a sub-layout's siblings left unused: the siblings are meant to
+        be on the same cores as it, and a core they share is spent once.
         """
         return self.n_cores - self.used_cores
 

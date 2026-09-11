@@ -14,6 +14,7 @@ from access.config.parallel_component import (
     GroupConstraint,
     LocalConstraint,
     ParallelComponent,
+    _occupied,
 )
 from access.config.parallel_domain import Domain, DomainDecompositionSpec
 from access.config.parallel_mpi_grid import MPICartesianGrid
@@ -265,7 +266,7 @@ class TestSharedCores:
         return ComponentLayout(
             name="pool",
             n_cores=n_cores,
-            n_ranks=max(child.core_offset + child.n_ranks for child in children),
+            n_ranks=_occupied((child.core_offset, child.n_ranks) for child in children),
             threads_per_rank=None,
             decomposition=None,
             sub_layouts=children,
@@ -315,6 +316,34 @@ class TestSharedCores:
         assert pool.used_cores == 28, "rof starts at 16 and runs 12, so the range has to reach 28"
         assert pool.idle_cores == 0
         assert pool.n_ranks == 28
+
+    def test_counts_only_the_cores_its_children_sit_on(self) -> None:
+        """Cores before the first child are idle, not spent.
+
+        Every child starting partway into the range leaves a gap at the front that belongs
+        to nobody. Measuring how far the children reach would count it as spent.
+        """
+
+        pool = self._pool(
+            24,
+            (
+                dataclasses.replace(_leaf("a", 12), core_offset=4),
+                dataclasses.replace(_leaf("b", 10), core_offset=8),
+            ),
+        )
+        assert pool.used_cores == 14, "the children cover cores 4 to 17"
+        assert pool.idle_cores == 10, "cores 0 to 3 and 18 to 23 belong to nobody"
+        assert pool.n_ranks == 14
+
+    def test_counts_a_gap_between_two_children_as_idle(self) -> None:
+        pool = self._pool(12, (_leaf("a", 4), dataclasses.replace(_leaf("b", 4), core_offset=8)))
+        assert pool.used_cores == 8, "cores 4 to 7 lie between them and are spent by neither"
+        assert pool.idle_cores == 4
+
+    def test_counts_a_core_two_children_share_once(self) -> None:
+        pool = self._pool(24, (_leaf("a", 24), dataclasses.replace(_leaf("b", 12), core_offset=8)))
+        assert pool.used_cores == 24, "b sits inside a's range, so it adds nothing"
+        assert pool.idle_cores == 0
 
     def test_rejects_a_child_reaching_past_the_parent(self) -> None:
         with pytest.raises(ValueError, match="reach 28 core"):
