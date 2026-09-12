@@ -52,8 +52,6 @@ text = '''&data_nml
 
 config = FortranNMLParser().parse(text)
 print(config)
-```
-```python
 &data_nml
 parameterA = 1
 parameterB = 'abc'
@@ -65,8 +63,6 @@ blank lines, spacing — is reproduced exactly:
 ```python
 config["data_nml"]["parameterA"] = 2
 print(config)
-```
-```python
 &data_nml
 parameterA = 2
 parameterB = 'abc'
