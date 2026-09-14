@@ -42,6 +42,13 @@ computed quotient, as in ``RankRatioGroupConstraint`` and
 ``SubdomainAspectRatioConstraint``. Only the weights of a sibling group express a ratio in
 the sense above.
 
+The phases order the siblings of a parent that *divides* its cores. A parent whose
+sub-components share one range of them instead (``CoreSharing.SHARED``) divides nothing, so
+its siblings are not scheduled against each other at all: each is offered every count that
+fits, by ``iter_shared_core_shares`` rather than by ``iter_core_splits``. A mode reaches
+that path through ``_shared_core_range`` rather than ``_iter_core_shares``, and
+``WeightedAllocation``, which has no meaning where nothing is divided, declines it.
+
 The two trees stand side by side, one strategy node per component, and it is the mode of
 each node that differs::
 
@@ -67,6 +74,7 @@ that are enumerated.
 
 from __future__ import annotations
 
+import itertools
 import logging
 import math
 from abc import ABC, abstractmethod
@@ -338,6 +346,25 @@ class AllocationStrategy(ABC):
 
     # --- Shared behaviour --------------------------------------------------
 
+    def _shared_core_range(self, parent_cores: int) -> range | None:
+        """Return the counts this sibling may take when it shares its parent's cores.
+
+        Siblings of a ``CoreSharing.SHARED`` parent do not divide a budget between them:
+        each takes what it needs from the same range, so each is offered every count that
+        fits, independently of the others. That makes this a per-strategy question, unlike
+        ``_iter_core_shares``, which serves a whole group.
+
+        Args:
+            parent_cores (int): Cores the parent holds, and so the most this sibling can
+                take.
+
+        Returns:
+            range | None: The counts to try, or ``None`` if this mode has no meaning when
+                cores are shared. The caller turns ``None`` into an error naming the
+                sub-component, which it knows and this method does not.
+        """
+        return None
+
     def resolve_thread_range(self, inherited: tuple[int, int]) -> tuple[int, int]:
         """Return this strategy's own thread range, or *inherited* when it sets none.
 
@@ -598,6 +625,24 @@ class FixedAllocation(AllocationStrategy):
         """
         return tuple(cast(int, alloc.n_cores) for alloc in allocs)
 
+    def _shared_core_range(self, parent_cores: int) -> range | None:
+        """Return this allocation's one count, if the parent is large enough to hold it.
+
+        Args:
+            parent_cores (int): Cores the parent holds.
+
+        Returns:
+            range | None: A range of exactly one count, empty if it does not fit.
+
+        Examples:
+            >>> FixedAllocation(6)._shared_core_range(8)
+            range(6, 7)
+            >>> FixedAllocation(6)._shared_core_range(4)
+            range(6, 6)
+        """
+        (count,) = self._resolved_counts([self])
+        return range(count, count + 1 if count <= parent_cores else count)
+
     @classmethod
     def _iter_core_shares(cls, allocs: Sequence[FixedAllocation], budget: int) -> Iterator[tuple[int, ...]]:
         """Yield the group's one share, if it fits *budget*.
@@ -651,6 +696,12 @@ class WeightedAllocation(AllocationStrategy):
     A single weighted sibling is the exception, and keeps its weight as written: with no
     sibling to be in proportion to there is nothing to reduce against, and reducing it
     alone would leave the weight meaning nothing.
+
+    A weight cannot size a sub-component of a parent that *shares* its cores
+    (``CoreSharing.SHARED``): a weight states a share of a divided budget, and there
+    nothing is divided. ``iter_shared_core_shares`` raises ``ValueError`` naming the
+    sub-component rather than guessing at what the weight might have meant, so use
+    ``FixedAllocation`` or ``FreeAllocation`` under such a parent.
 
     See ``AllocationStrategy`` for the fields shared by every mode.
 
@@ -881,6 +932,21 @@ class FreeAllocation(AllocationStrategy):
         hi = max_available if self.max_cores is None else min(max_available, self.max_cores)
         return range(self.min_cores, hi + 1)
 
+    def _shared_core_range(self, parent_cores: int) -> range | None:
+        """Return this allocation's own bounds, capped by what the parent holds.
+
+        Args:
+            parent_cores (int): Cores the parent holds.
+
+        Returns:
+            range | None: The counts to try, in increasing order.
+
+        Examples:
+            >>> FreeAllocation(min_cores=2, max_cores=4)._shared_core_range(10)
+            range(2, 5)
+        """
+        return self._core_range(parent_cores)
+
     @classmethod
     def _iter_core_shares(cls, allocs: Sequence[FreeAllocation], budget: int) -> Iterator[tuple[int, ...]]:
         """Yield each way *allocs* can share up to *budget* cores.
@@ -1078,6 +1144,63 @@ def iter_core_splits(
         reserved_after[index] = reserved_after[index + 1] + mode._reserved_cores([s for _, s in entries])
 
     yield from _iter_phase_splits(groups, reserved_after, names, 0, parent_cores, [0] * len(strategies))
+
+
+def iter_shared_core_shares(
+    strategies: Sequence[AllocationStrategy],
+    parent_cores: int,
+    names: Sequence[str],
+    offsets: Sequence[int],
+) -> Iterator[tuple[int, ...]]:
+    """Yield every core assignment to *strategies* when they share *parent_cores*.
+
+    The counterpart of ``iter_core_splits`` for a ``CoreSharing.SHARED`` parent. There is
+    no budget to divide: the siblings run on the same cores in turn, so each is offered
+    every count that fits and the result is their product rather than a partition. The
+    parent must reach as far as the furthest sibling gets, ``max(core_offset + count)``,
+    which the layout the counts go into checks - and which is not always the largest count,
+    since a smaller sibling may start further into the range.
+
+    That product grows fast — four unconstrained siblings on 275 cores is 275**4 — and no
+    constraint prunes it, since a shared parent's idle cores are measured against its
+    furthest-reaching child alone. Pin the siblings, or bound them narrowly, unless the
+    range is small.
+
+    A sibling that starts partway into the range has that much less of it to spend, so each
+    is offered what fits after its own offset.
+
+    Args:
+        strategies (Sequence[AllocationStrategy]): One strategy per sub-component, in
+            declaration order.
+        parent_cores (int): Cores the parent holds, available to each sibling from the core
+            it starts at onwards.
+        names (Sequence[str]): The matching sub-component names, for diagnostics.
+        offsets (Sequence[int]): The core each sibling starts at, relative to the parent.
+
+    Yields:
+        tuple[int, ...]: One core count per strategy, in the same order.
+
+    Raises:
+        ValueError: If a strategy uses a mode that has no meaning when cores are shared.
+
+    Examples:
+        >>> allocs = [FixedAllocation(4), FreeAllocation(max_cores=2)]
+        >>> list(iter_shared_core_shares(allocs, 4, ["a", "b"], [0, 0]))
+        [(4, 1), (4, 2)]
+        >>> list(iter_shared_core_shares(allocs, 4, ["a", "b"], [0, 3]))
+        [(4, 1)]
+    """
+    ranges = []
+    for strategy, name, offset in zip(strategies, names, offsets, strict=True):
+        core_range = strategy._shared_core_range(parent_cores - offset)
+        if core_range is None:
+            raise ValueError(
+                f"{type(strategy).__name__} cannot allocate {name!r}, whose parent shares its cores "
+                "among its sub-components. A weight states a share of a divided budget, and nothing "
+                "is divided here. Use FixedAllocation or FreeAllocation instead."
+            )
+        ranges.append(core_range)
+    yield from itertools.product(*ranges)
 
 
 def resolve_root_strategy(
