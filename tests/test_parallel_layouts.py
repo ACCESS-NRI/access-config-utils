@@ -24,6 +24,7 @@ from access.config.parallel_allocation_strategies import (
     FreeAllocation,
     RootAllocation,
     WeightedAllocation,
+    WholeRangeAllocation,
 )
 from access.config.parallel_component import (
     ComponentLayout,
@@ -1081,6 +1082,31 @@ class TestIterLayoutsSharedCores:
 
         assert {layout.sub_layouts[0].n_cores for layout in layouts} == {1, 2, 3}, "every size is reachable"
         assert len(interiors) == len(set(interiors)), "and no interior is offered under two of them"
+
+    def test_a_child_can_take_the_whole_range_without_naming_its_size(self) -> None:
+        """A pool left free still pins its child, because the child asks for all of it.
+
+        The point is that no core count is written down anywhere: the pool may be any size
+        its bound allows, and whichever it takes, the child covers it. A FixedAllocation on
+        the child would have to name one of those sizes and be wrong about the rest.
+        """
+
+        layouts = list(
+            iter_layouts(
+                self._model(("cpl",)),
+                8,
+                allocations=RootAllocation(
+                    subcomponents={
+                        "pool": FreeAllocation(max_cores=4, subcomponents={"cpl": WholeRangeAllocation()}),
+                        "ocn": FixedAllocation(4),
+                    }
+                ),
+            )
+        )
+        pools = [layout.sub_layouts[0] for layout in layouts]
+        assert {pool.n_cores for pool in pools} == {1, 2, 3, 4}, "the pool is still free to be any size"
+        for pool in pools:
+            assert pool.sub_layouts[0].n_cores == pool.n_cores, "and the child takes all of whichever it is"
 
     def test_children_are_enumerated_independently_but_must_cover_the_range(self) -> None:
         """Each shared child is offered every count that fits, so the interior is a product.

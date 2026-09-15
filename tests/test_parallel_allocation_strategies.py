@@ -15,6 +15,7 @@ from access.config.parallel_allocation_strategies import (
     FreeAllocation,
     RootAllocation,
     WeightedAllocation,
+    WholeRangeAllocation,
     iter_core_splits,
     iter_shared_core_shares,
     resolve_root_strategy,
@@ -133,6 +134,46 @@ class TestIterSharedCoreShares:
     def test_weighted_siblings_cannot_be_allocated(self) -> None:
         with pytest.raises(ValueError, match="cannot allocate 'c1'"):
             self._shares([FixedAllocation(4), WeightedAllocation(weight=1)], 4, [0, 0])
+
+
+class TestWholeRangeAllocation:
+    """The mode for a sub-component spanning all of the range its parent shares."""
+
+    def test_offers_the_whole_range_as_one_count(self) -> None:
+        assert WholeRangeAllocation()._shared_core_range(275) == range(275, 276)
+
+    def test_an_offset_leaves_it_the_rest_of_the_range(self) -> None:
+        """The caller subtracts the offset first, so this is the rest of the range."""
+
+        assert WholeRangeAllocation()._shared_core_range(275 - 100) == range(175, 176)
+
+    @pytest.mark.parametrize("parent_cores", [0, -1])
+    def test_nothing_left_offers_no_count_rather_than_zero(self, parent_cores: int) -> None:
+        """A sub-component starting at or past the end of the range has no count to take."""
+
+        assert list(WholeRangeAllocation()._shared_core_range(parent_cores)) == []
+
+    def test_it_states_no_size_of_its_own(self) -> None:
+        """The size it describes is the parent's, so there is no field to write one in."""
+
+        names = {f.name for f in dataclasses.fields(WholeRangeAllocation)}
+        assert names == {f.name for f in dataclasses.fields(AllocationStrategy)}
+        assert not names & {"n_cores", "core_fraction", "weight", "min_cores", "max_cores"}
+
+    def test_shares_the_whole_range_with_a_sibling(self) -> None:
+        strategies = [WholeRangeAllocation(), FixedAllocation(4)]
+        assert list(iter_shared_core_shares(strategies, 12, ["a", "b"], [0, 8])) == [(12, 4)]
+
+    def test_it_refuses_a_divided_budget(self) -> None:
+        strategy = FreeAllocation(subcomponents={"a": WholeRangeAllocation(), "b": FreeAllocation()})
+        with pytest.raises(ValueError, match="means nothing under a parent that divides its cores"):
+            _splits(strategy, ("a", "b"), 8)
+
+    def test_the_refusal_surfaces_on_the_call(self) -> None:
+        """Not a generator, so a caller that never iterates still sees the error."""
+
+        with pytest.raises(ValueError, match="WholeRangeAllocation"):
+            WholeRangeAllocation._iter_core_shares([WholeRangeAllocation()], 8)
 
 
 # ---------------------------------------------------------------------------
