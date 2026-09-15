@@ -57,10 +57,15 @@ class CoreSharing(Enum):
     that is biggest: ``max(core_offset + n_cores)``. Two sub-components may start at the
     same core and overlap, or divide the range between them; both are ordinary cases here.
 
-    How large it must be and how much of it is spent are different questions once offsets
-    are in play. A range whose sub-components all start partway into it is idle at the
-    front, one with a gap between two of them is idle in the middle, and ``used_cores``
-    counts neither - it counts the part at least one sub-component sits on.
+    Reaching far enough is not the same as covering the range, and a shared parent has to
+    do both: its sub-components must sit on every core of it, leaving none idle. A range
+    whose sub-components all start partway into it, one with a gap between two of them,
+    and one larger than the furthest of them reaches are all refused. None of them
+    describes anything a model does - a shared range can be made smaller or started later,
+    so a core in one that nothing runs on is a core being paid for and left out of the
+    run. A partitioned parent is under no such rule: it may leave cores idle, and
+    ``MaxWastedCoreFractionConstraint`` is what bounds them there.
+
     An offset means nothing under a partitioned parent, where each sub-component already
     starts where the last one ended, and is refused there.
 
@@ -73,13 +78,13 @@ class CoreSharing(Enum):
 
     Note that the interior of a ``SHARED`` parent is enumerated as a product rather than a
     partition: each child is offered every count that fits, independently of its siblings.
-    Four unconstrained children on 275 cores is 275**4 combinations, and
-    ``MaxWastedCoreFractionConstraint`` prunes few of them: a child sitting inside the
-    range another already covers changes nothing about how much of it is spent. Give the
-    children of a shared parent a ``FixedAllocation`` or a narrow ``FreeAllocation``
-    unless the range is small. A
-    ``WeightedAllocation`` cannot allocate one at all: a weight states a share of a divided
-    budget, and nothing is divided here.
+    Covering the range is what keeps that product in hand - a combination leaving a core
+    idle is dropped, and one that covers the range belongs to that range alone rather than
+    to every larger one as well - but it is still a product, and four unconstrained
+    children on 275 cores still generate most of 275**4. Give the children of a shared
+    parent a ``FixedAllocation`` or a narrow ``FreeAllocation`` unless the range is small.
+    A ``WeightedAllocation`` cannot allocate one at all: a weight states a share of a
+    divided budget, and nothing is divided here.
 
     Examples:
         An offset only means something under a parent whose cores are shared, so it is the
@@ -144,8 +149,9 @@ class ComponentLayout:
       count of its own - each sub-component may use a different one, so
       ``threads_per_rank`` is ``None``. Its ``core_sharing`` says how they receive them: a
       disjoint subset each, whose total cannot exceed ``n_cores``, or one range they share,
-      which the furthest-reaching of them cannot reach past. Either way a parent may spend
-      fewer cores than it holds, leaving the remainder idle (see ``idle_cores``).
+      which they must cover exactly. A parent that partitions its cores may therefore spend
+      fewer than it holds, leaving the remainder idle (see ``idle_cores``); one that shares
+      them may not, and a combination that would is refused.
 
     This class is frozen (``frozen=True``) so that a layout is an immutable, hashable value
     object, and assigning to a field raises ``dataclasses.FrozenInstanceError``. The layout
@@ -168,10 +174,10 @@ class ComponentLayout:
             ``None`` when the component has no domain. Only a leaf may have one.
         sub_layouts (tuple[ComponentLayout, ...]): Layouts for each direct sub-component,
             in the same order as ``ParallelComponent.subcomponents``. Names must be
-            unique, and the cores they receive must fit within ``n_cores`` - under
-            ``CoreSharing.PARTITIONED`` their total cannot exceed it, and under
-            ``CoreSharing.SHARED`` none of them may reach past it - though either way
-            they may come to less.
+            unique, and the cores they receive must fit within ``n_cores``: under
+            ``CoreSharing.PARTITIONED`` their total cannot exceed it, and may come to
+            less, while under ``CoreSharing.SHARED`` none of them may reach past it and
+            between them they must sit on every core of it.
         core_sharing (CoreSharing): Whether ``sub_layouts`` divide this component's cores
             between them or share one range of them. Defaults to
             ``CoreSharing.PARTITIONED``, and says nothing about a leaf, which has no
@@ -189,9 +195,10 @@ class ComponentLayout:
             rules above are broken - a leaf without a thread count, a parent with one, a
             leaf whose ranks and threads do not multiply to ``n_cores``, a parent whose
             sub-layouts overspend its cores or disagree with its rank total, a parent
-            holding a decomposition, a sub-layout placed at an offset under a parent that
-            partitions its cores, or one placed at an offset while running more than one
-            core per rank.
+            sharing its cores whose sub-layouts leave any of them idle, a parent holding a
+            decomposition, a sub-layout placed at an offset under a parent that partitions
+            its cores, or one placed at an offset while running more than one core per
+            rank.
 
     Examples:
         >>> from access.config.parallel_mpi_grid import MPICartesianGrid
@@ -342,8 +349,25 @@ class ComponentLayout:
             sub_ranks = _occupied((sub.core_offset, sub.n_ranks) for sub in self.sub_layouts)
         if sub_cores > self.n_cores:
             raise ValueError(self._overspent_message(shared, sub_cores))
+        if shared:
+            self._validate_shared_coverage()
         if sub_ranks != self.n_ranks:
             raise ValueError(self._rank_total_message(shared, sub_ranks))
+
+    def _validate_shared_coverage(self) -> None:
+        """Check that the sub-layouts sharing this component's cores sit on all of them.
+
+        Reaching far enough is not the same as covering the range, and a shared parent has
+        to do both. A core no sub-layout sits on is one the range is paying for and nothing
+        runs on, and a shared range can be made smaller or started later, so there is never
+        a reason to hold one.
+
+        Raises:
+            ValueError: If any core of the range is left idle, wherever it falls.
+        """
+        occupied = _occupied((sub.core_offset, sub.n_cores) for sub in self.sub_layouts)
+        if occupied != self.n_cores:
+            raise ValueError(self._idle_cores_message(occupied))
 
     def _overspent_message(self, shared: bool, sub_cores: int) -> str:
         """Return the complaint that this component's sub-layouts do not fit in its cores.
@@ -363,6 +387,36 @@ class ComponentLayout:
         return (
             f"ComponentLayout {self.name!r}: {detail}, which exceeds the {self.n_cores} core(s) "
             "assigned to this component."
+        )
+
+    def _idle_cores_message(self, occupied: int) -> str:
+        """Return the complaint that this component's sub-layouts leave cores idle.
+
+        Only a shared parent can fail this way, so the message is about a range: how much
+        of it the sub-layouts sit on, and which stretches of it belong to nobody. Those
+        stretches are worked out here rather than by the caller, because this runs only
+        once a layout has already been refused.
+
+        Args:
+            occupied (int): Cores at least one sub-layout sits on, as ``_occupied``
+                measures them.
+
+        Returns:
+            str: The message, naming every stretch of the range no sub-layout covers.
+        """
+        gaps = []
+        reach = 0
+        for start, size in sorted((sub.core_offset, sub.n_cores) for sub in self.sub_layouts):
+            if start > reach:
+                gaps.append(f"{reach}-{start - 1}")
+            reach = max(reach, start + size)
+        if reach < self.n_cores:
+            gaps.append(f"{reach}-{self.n_cores - 1}")
+        return (
+            f"ComponentLayout {self.name!r}: its sub-layouts share a range of {self.n_cores} core(s) "
+            f"but sit on only {occupied} of them, leaving core(s) {', '.join(gaps)} idle. A shared "
+            "range can be made smaller or started later, so every core in one has to be a core some "
+            "sub-component runs on."
         )
 
     def _rank_total_message(self, shared: bool, sub_ranks: int) -> str:
@@ -395,7 +449,8 @@ class ComponentLayout:
 
         Note that this is not the same as how far they *reach*, which is what the parent
         has to be large enough for. A range whose sub-components all start partway into it
-        is idle at the front, and this counts that.
+        is idle at the front, and this counts that - which is how ``_validate_as_parent``
+        tells such a range from one its sub-components cover.
 
         Args:
             counts (Iterable[int]): One count per sub-layout, in order.
@@ -429,10 +484,11 @@ class ComponentLayout:
     def idle_cores(self) -> int:
         """Cores allocated to this component but not spent by any sub-component.
 
-        Under ``CoreSharing.SHARED`` these are the cores no sub-layout sits on, wherever
-        in the range they fall - before the first, between two, or after the last. They
-        are not the cores a sub-layout's siblings left unused: the siblings are meant to
-        be on the same cores as it, and a core they share is spent once.
+        Always 0 under ``CoreSharing.SHARED``, where a range its sub-layouts do not cover
+        is refused on construction: a core no sub-layout sits on - before the first,
+        between two, or after the last - is one the range need not have held. It is a
+        parent that *partitions* its cores that can leave some idle, and
+        ``MaxWastedCoreFractionConstraint`` is what bounds them.
         """
         return self.n_cores - self.used_cores
 

@@ -279,10 +279,11 @@ class TestSharedCores:
         assert pool.idle_cores == 0
         assert pool.n_ranks == 24
 
-    def test_counts_cores_left_over_as_idle(self) -> None:
-        pool = self._pool(32, (_leaf("ice", 24), _leaf("atm", 12)))
-        assert pool.used_cores == 24
-        assert pool.idle_cores == 8
+    def test_rejects_a_range_larger_than_its_children_cover(self) -> None:
+        """A range reaching past its furthest child should have been a smaller range."""
+
+        with pytest.raises(ValueError, match="sit on only 24 of them, leaving core\\(s\\) 24-31 idle"):
+            self._pool(32, (_leaf("ice", 24), _leaf("atm", 12)))
 
     def test_rejects_a_child_larger_than_the_parent(self) -> None:
         with pytest.raises(ValueError, match="reach 40 core"):
@@ -317,28 +318,40 @@ class TestSharedCores:
         assert pool.idle_cores == 0
         assert pool.n_ranks == 28
 
-    def test_counts_only_the_cores_its_children_sit_on(self) -> None:
-        """Cores before the first child are idle, not spent.
+    def test_rejects_a_gap_at_the_front_of_the_range(self) -> None:
+        """Every child starting partway in leaves cores at the front that belong to nobody.
 
-        Every child starting partway into the range leaves a gap at the front that belongs
-        to nobody. Measuring how far the children reach would count it as spent.
+        Measuring how far the children reach would miss this: they reach 18 of the 24
+        cores, so only counting what they sit on tells the front gap from a shorter range.
         """
 
-        pool = self._pool(
-            24,
-            (
-                dataclasses.replace(_leaf("a", 12), core_offset=4),
-                dataclasses.replace(_leaf("b", 10), core_offset=8),
-            ),
-        )
-        assert pool.used_cores == 14, "the children cover cores 4 to 17"
-        assert pool.idle_cores == 10, "cores 0 to 3 and 18 to 23 belong to nobody"
-        assert pool.n_ranks == 14
+        with pytest.raises(ValueError, match="leaving core\\(s\\) 0-3, 18-23 idle"):
+            self._pool(
+                24,
+                (
+                    dataclasses.replace(_leaf("a", 12), core_offset=4),
+                    dataclasses.replace(_leaf("b", 10), core_offset=8),
+                ),
+            )
 
-    def test_counts_a_gap_between_two_children_as_idle(self) -> None:
-        pool = self._pool(12, (_leaf("a", 4), dataclasses.replace(_leaf("b", 4), core_offset=8)))
-        assert pool.used_cores == 8, "cores 4 to 7 lie between them and are spent by neither"
-        assert pool.idle_cores == 4
+    def test_rejects_a_gap_between_two_children(self) -> None:
+        with pytest.raises(ValueError, match="leaving core\\(s\\) 4-7 idle"):
+            self._pool(12, (_leaf("a", 4), dataclasses.replace(_leaf("b", 4), core_offset=8)))
+
+    def test_accepts_children_that_cover_the_range_between_them(self) -> None:
+        """Neither child covers the range alone, but together they leave nothing idle."""
+
+        pool = self._pool(12, (_leaf("a", 8), dataclasses.replace(_leaf("b", 4), core_offset=8)))
+        assert pool.used_cores == 12
+        assert pool.idle_cores == 0
+        assert pool.n_ranks == 12
+
+    def test_a_child_may_extend_the_range_a_sibling_already_covers(self) -> None:
+        """Overlapping is ordinary: what matters is that nothing is left over."""
+
+        pool = self._pool(16, (_leaf("a", 12), dataclasses.replace(_leaf("b", 8), core_offset=8)))
+        assert pool.used_cores == 16, "b covers 8 to 15, four of which a already covered"
+        assert pool.idle_cores == 0
 
     def test_counts_a_core_two_children_share_once(self) -> None:
         pool = self._pool(24, (_leaf("a", 24), dataclasses.replace(_leaf("b", 12), core_offset=8)))

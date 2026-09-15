@@ -74,7 +74,6 @@ that are enumerated.
 
 from __future__ import annotations
 
-import itertools
 import logging
 import math
 from abc import ABC, abstractmethod
@@ -1156,29 +1155,34 @@ def iter_shared_core_shares(
 
     The counterpart of ``iter_core_splits`` for a ``CoreSharing.SHARED`` parent. There is
     no budget to divide: the siblings run on the same cores in turn, so each is offered
-    every count that fits and the result is their product rather than a partition. The
-    parent must reach as far as the furthest sibling gets, ``max(core_offset + count)``,
-    which the layout the counts go into checks - and which is not always the largest count,
-    since a smaller sibling may start further into the range.
+    every count that fits and the result is a product rather than a partition. A sibling
+    that starts partway into the range has that much less of it to spend, so each is
+    offered what fits after its own offset.
 
-    That product grows fast — four unconstrained siblings on 275 cores is 275**4 — and no
-    constraint prunes it, since a shared parent's idle cores are measured against its
-    furthest-reaching child alone. Pin the siblings, or bound them narrowly, unless the
-    range is small.
+    Only the combinations that cover ``[0, parent_cores)`` are yielded, because a shared
+    parent may leave no core idle - see ``CoreSharing``. That is also what keeps the
+    product in hand, in two ways: a combination leaving a gap is dropped before the
+    enumerator recurses into it, and a combination that covers this range covers no other,
+    so it is generated once rather than again for every larger range it would fit in.
+    What survives is still a product, though, so pin the siblings or bound them narrowly
+    unless the range is small.
 
-    A sibling that starts partway into the range has that much less of it to spend, so each
-    is offered what fits after its own offset.
+    The siblings are walked in order of their offset, carrying the end of the covered
+    prefix. A sibling starting past that end leaves a gap no later one can fill, since
+    none of them starts earlier, so the whole branch is abandoned there rather than one
+    count at a time.
 
     Args:
         strategies (Sequence[AllocationStrategy]): One strategy per sub-component, in
             declaration order.
         parent_cores (int): Cores the parent holds, available to each sibling from the core
-            it starts at onwards.
+            it starts at onwards, and which the siblings must cover between them.
         names (Sequence[str]): The matching sub-component names, for diagnostics.
         offsets (Sequence[int]): The core each sibling starts at, relative to the parent.
 
     Yields:
-        tuple[int, ...]: One core count per strategy, in the same order.
+        tuple[int, ...]: One core count per strategy, in the same order, for each
+            combination covering the parent's whole range.
 
     Raises:
         ValueError: If a strategy uses a mode that has no meaning when cores are shared.
@@ -1189,6 +1193,11 @@ def iter_shared_core_shares(
         [(4, 1), (4, 2)]
         >>> list(iter_shared_core_shares(allocs, 4, ["a", "b"], [0, 3]))
         [(4, 1)]
+
+        A range the siblings cannot fill between them has no assignment at all:
+
+        >>> list(iter_shared_core_shares(allocs, 6, ["a", "b"], [0, 0]))
+        []
     """
     ranges = []
     for strategy, name, offset in zip(strategies, names, offsets, strict=True):
@@ -1200,7 +1209,57 @@ def iter_shared_core_shares(
                 "is divided here. Use FixedAllocation or FreeAllocation instead."
             )
         ranges.append(core_range)
-    yield from itertools.product(*ranges)
+    yield from _iter_covering_shares(tuple(ranges), tuple(offsets), parent_cores)
+
+
+def _iter_covering_shares(
+    ranges: tuple[range, ...], offsets: tuple[int, ...], parent_cores: int
+) -> Iterator[tuple[int, ...]]:
+    """Yield the assignments in the product of *ranges* that cover the parent's range.
+
+    The search runs over the siblings in order of their offset, so that the covered prefix
+    only ever grows and a sibling starting past it can be recognised as a gap nothing later
+    will fill. The counts are put back into the caller's order before being yielded, since
+    that is the order the sub-components are declared in.
+
+    Args:
+        ranges (tuple[range, ...]): The counts each sibling may take, in declaration order.
+        offsets (tuple[int, ...]): The core each sibling starts at, in the same order.
+        parent_cores (int): Cores the parent holds, which the siblings must cover.
+
+    Yields:
+        tuple[int, ...]: One core count per sibling, in declaration order.
+    """
+    # Sorting by offset is what makes the prefix argument hold; the positions come along so
+    # the counts can be unsorted again at the end.
+    order = sorted(range(len(ranges)), key=lambda i: offsets[i])
+    # How far the siblings from here on could reach if each took its largest count. A
+    # branch that cannot get to the end of the range is abandoned as soon as that is known.
+    furthest = [0] * (len(order) + 1)
+    for position, index in reversed(list(enumerate(order))):
+        counts = ranges[index]
+        reachable = offsets[index] + counts[-1] if counts else 0
+        furthest[position] = max(furthest[position + 1], reachable)
+
+    chosen = [0] * len(order)
+
+    def walk(position: int, reach: int) -> Iterator[tuple[int, ...]]:
+        if position == len(order):
+            if reach == parent_cores:
+                yield tuple(chosen)
+            return
+        index = order[position]
+        if offsets[index] > reach:
+            # Every sibling left starts here or later, so the cores between the prefix and
+            # this offset belong to nobody whatever the rest of them take.
+            return
+        if max(reach, furthest[position]) < parent_cores:
+            return
+        for count in ranges[index]:
+            chosen[index] = count
+            yield from walk(position + 1, max(reach, offsets[index] + count))
+
+    yield from walk(0, 0)
 
 
 def resolve_root_strategy(

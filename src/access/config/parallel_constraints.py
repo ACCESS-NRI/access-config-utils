@@ -171,11 +171,11 @@ class MaxWastedCoreFractionConstraint(LocalConstraint):
     so idle cores are not a meaningful quantity for it: applying this constraint to a
     leaf raises ``ValueError`` rather than silently reporting it as satisfied.
 
-    Under ``CoreSharing.SHARED`` the idle cores are those past the furthest-reaching
-    sub-component, since the others are meant to be on the same cores as it. A shared
-    parent is therefore no more wasteful for having many small sub-components, and this
-    constraint prunes none of the combinations they generate - see ``CoreSharing`` for
-    what that costs and how to keep it in hand.
+    A parent under ``CoreSharing.SHARED`` has no idle cores to bound: its sub-components
+    are required to cover its whole range, and one that would leave a core of it idle is
+    refused when the layout is built. This constraint is therefore always satisfied there,
+    and belongs on a parent that *partitions* its cores, which is the one free to hand out
+    fewer than it holds.
 
     Frozen (``frozen=True``): an immutable, hashable value object, so one instance can be
     attached to several components without risk of it changing between checks.
