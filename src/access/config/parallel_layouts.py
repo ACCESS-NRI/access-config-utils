@@ -36,9 +36,12 @@ A parent may instead declare that its sub-components *share* its cores rather th
 them (``CoreSharing.SHARED``), and then there is no division to enumerate: each
 sub-component is offered every count that fits, independently of its siblings, so what is
 handed down is their product. Such a parent's cores and ranks are those of the
-sub-component that reaches furthest into its range rather than the totals over them all.
-Everything else - the recursion, the constraint filtering, the memoisation - is the same,
-and the product is the reason a shared parent's children are worth pinning down.
+sub-component that reaches furthest into its range rather than the totals over them all,
+and its sub-components have to cover that range between them - a combination leaving a
+core idle is dropped before the recursion reaches it, and a combination that covers one
+range covers no other, so it is generated for that range alone. Everything else - the
+recursion, the constraint filtering, the memoisation - is the same, and what is left of
+the product is still the reason a shared parent's children are worth pinning down.
 
 That combining step is where the numbers come from: two sub-components with 30 layouts each
 already give the parent 900 for a single division, before the next division is even tried.

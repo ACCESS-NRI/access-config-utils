@@ -24,6 +24,7 @@ from access.config.parallel_allocation_strategies import (
     FreeAllocation,
     RootAllocation,
     WeightedAllocation,
+    WholeRangeAllocation,
 )
 from access.config.parallel_component import (
     ComponentLayout,
@@ -959,11 +960,12 @@ class TestIterLayoutsSharedCores:
             assert pool.used_cores == 28
             assert [child.core_offset for child in pool.sub_layouts] == [0, 16]
 
-    def test_the_waste_constraint_sees_cores_no_child_sits_on(self) -> None:
-        """A gap at the front of a shared range counts against a waste budget.
+    def test_a_range_its_children_leave_idle_has_no_layout_at_any_waste_budget(self) -> None:
+        """A gap at the front of a shared range is refused, not charged to a waste budget.
 
         The pool reaches 24 cores in either case, so a rule measuring the reach would let
-        both through. Only counting what the children sit on tells them apart.
+        both through. Counting what the children sit on is what tells them apart - and a
+        shared parent has to sit on all of it, so the waste budget never gets a say.
         """
 
         def layouts_with(offset: int, max_fraction: float) -> list:
@@ -990,7 +992,7 @@ class TestIterLayoutsSharedCores:
 
         assert layouts_with(offset=0, max_fraction=0.0), "the whole range is spent"
         assert layouts_with(offset=8, max_fraction=0.0) == [], "cores 0 to 7 are spent by nobody"
-        assert layouts_with(offset=8, max_fraction=1 / 3), "a third wasted is within budget"
+        assert layouts_with(offset=8, max_fraction=1 / 3) == [], "and a budget for them changes nothing"
 
     def test_an_offset_leaves_a_child_less_of_the_range_to_spend(self) -> None:
         """A free child starting partway in is offered only what fits after its offset."""
@@ -1049,8 +1051,69 @@ class TestIterLayoutsSharedCores:
         assert pool.used_cores == 4
         assert {child.name: child.n_cores for child in pool.sub_layouts} == {"cpl": 4, "ice": 2}
 
-    def test_children_are_enumerated_independently(self) -> None:
-        """Each shared child is offered every count that fits: the interior is a product."""
+    def test_a_free_pool_is_sized_by_what_its_children_cover(self) -> None:
+        """A shared range is pinned by its interior, so a combination belongs to one size.
+
+        Left free, the pool may take any count its bound allows, and before covering was
+        required the same interior was re-enumerated under every one of them. Now a
+        combination reaches the end of exactly one range, so it is generated once: a pool
+        of 3 is the one whose largest child is on 3 cores, and no other size repeats it.
+        """
+
+        free = FreeAllocation(max_cores=3)
+        layouts = list(
+            iter_layouts(
+                self._model(),
+                8,
+                allocations=RootAllocation(
+                    subcomponents={
+                        "pool": FreeAllocation(max_cores=3, subcomponents={"cpl": free, "ice": free}),
+                        "ocn": FixedAllocation(4),
+                    }
+                ),
+            )
+        )
+        interiors = []
+        for layout in layouts:
+            pool = layout.sub_layouts[0]
+            assert pool.idle_cores == 0
+            assert max(child.n_cores for child in pool.sub_layouts) == pool.n_cores
+            interiors.append(tuple(child.n_cores for child in pool.sub_layouts))
+
+        assert {layout.sub_layouts[0].n_cores for layout in layouts} == {1, 2, 3}, "every size is reachable"
+        assert len(interiors) == len(set(interiors)), "and no interior is offered under two of them"
+
+    def test_a_child_can_take_the_whole_range_without_naming_its_size(self) -> None:
+        """A pool left free still pins its child, because the child asks for all of it.
+
+        The point is that no core count is written down anywhere: the pool may be any size
+        its bound allows, and whichever it takes, the child covers it. A FixedAllocation on
+        the child would have to name one of those sizes and be wrong about the rest.
+        """
+
+        layouts = list(
+            iter_layouts(
+                self._model(("cpl",)),
+                8,
+                allocations=RootAllocation(
+                    subcomponents={
+                        "pool": FreeAllocation(max_cores=4, subcomponents={"cpl": WholeRangeAllocation()}),
+                        "ocn": FixedAllocation(4),
+                    }
+                ),
+            )
+        )
+        pools = [layout.sub_layouts[0] for layout in layouts]
+        assert {pool.n_cores for pool in pools} == {1, 2, 3, 4}, "the pool is still free to be any size"
+        for pool in pools:
+            assert pool.sub_layouts[0].n_cores == pool.n_cores, "and the child takes all of whichever it is"
+
+    def test_children_are_enumerated_independently_but_must_cover_the_range(self) -> None:
+        """Each shared child is offered every count that fits, so the interior is a product.
+
+        Of the four combinations two cores admit, only the three reaching the end of the
+        range survive: with both children on one core, core 1 is one nothing runs on.
+        """
 
         layouts = list(
             iter_layouts(
@@ -1071,7 +1134,7 @@ class TestIterLayoutsSharedCores:
             )
         )
         interiors = {tuple(child.n_cores for child in layout.sub_layouts[0].sub_layouts) for layout in layouts}
-        assert interiors == {(1, 1), (1, 2), (2, 1), (2, 2)}
+        assert interiors == {(1, 2), (2, 1), (2, 2)}
 
     def test_weighted_allocation_is_rejected_under_a_shared_parent(self) -> None:
         with pytest.raises(ValueError, match="WeightedAllocation cannot allocate 'ice'"):

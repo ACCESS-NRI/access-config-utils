@@ -8,6 +8,7 @@ import pytest
 
 from access.config.parallel_constraints import (
     DomainDivisibleByRanksConstraint,
+    EqualCoresGroupConstraint,
     FixedThreadsPerRankConstraint,
     MaxThreadsPerRankConstraint,
     MaxWastedCoreFractionConstraint,
@@ -198,6 +199,61 @@ class TestRankRatioGroupConstraint:
     def test_invalid_ratio_raises(self) -> None:
         with pytest.raises(ValueError, match="min_ratio"):
             RankRatioGroupConstraint(name_a="a", name_b="b", min_ratio=0.0)
+
+
+class TestEqualCoresGroupConstraint:
+    def test_every_sibling_by_default(self) -> None:
+        c = EqualCoresGroupConstraint()
+        assert c.is_satisfied((leaf("a", 4, 1), leaf("b", 4, 1), leaf("c", 4, 1)))
+
+    def test_one_sibling_out_of_step_is_rejected(self) -> None:
+        c = EqualCoresGroupConstraint()
+        assert not c.is_satisfied((leaf("a", 4, 1), leaf("b", 4, 1), leaf("c", 3, 1)))
+
+    def test_named_siblings_are_judged_and_the_rest_ignored(self) -> None:
+        """The subset is what the names say: a sibling left out may take anything."""
+
+        c = EqualCoresGroupConstraint(names=("a", "b"))
+        siblings = (leaf("a", 4, 1), leaf("b", 4, 1), leaf("c", 9, 1))
+        assert c.is_satisfied(siblings), "c is not named, so its 9 cores are none of this rule's business"
+        assert not c.is_satisfied((leaf("a", 4, 1), leaf("b", 5, 1), leaf("c", 9, 1)))
+
+    def test_names_are_looked_up_rather_than_indexed(self) -> None:
+        """Declaration order is not the rule's business either."""
+
+        c = EqualCoresGroupConstraint(names=("c", "a"))
+        assert c.is_satisfied((leaf("a", 4, 1), leaf("b", 9, 1), leaf("c", 4, 1)))
+
+    def test_cores_are_compared_not_ranks(self) -> None:
+        """Two siblings on the same cores match however they divide them into ranks."""
+
+        c = EqualCoresGroupConstraint()
+        assert c.is_satisfied((leaf("a", 8, 1), leaf("b", 4, 2)))
+
+    def test_nothing_to_compare_is_satisfied(self) -> None:
+        """A rule with no pair to judge is a no-op, not a rejection."""
+
+        c = EqualCoresGroupConstraint()
+        assert c.is_satisfied((leaf("a", 4, 1),))
+        assert c.is_satisfied(())
+
+    def test_unknown_name_raises(self) -> None:
+        c = EqualCoresGroupConstraint(names=("a", "TYPO"))
+        with pytest.raises(ValueError, match="not found"):
+            c.is_satisfied((leaf("a", 4, 1), leaf("b", 4, 1)))
+
+    def test_names_must_be_a_tuple(self) -> None:
+        # A list leaves the constraint unhashable, and it lives in the search's memo key.
+        with pytest.raises(ValueError, match="names must be a tuple"):
+            EqualCoresGroupConstraint(names=["a", "b"])  # type: ignore[arg-type]
+
+    def test_a_single_name_raises(self) -> None:
+        with pytest.raises(ValueError, match="names must hold at least two"):
+            EqualCoresGroupConstraint(names=("a",))
+
+    def test_a_repeated_name_raises(self) -> None:
+        with pytest.raises(ValueError, match="names must not repeat"):
+            EqualCoresGroupConstraint(names=("a", "b", "a"))
 
 
 # ---------------------------------------------------------------------------

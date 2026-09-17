@@ -15,7 +15,9 @@ from access.config.parallel_allocation_strategies import (
     FreeAllocation,
     RootAllocation,
     WeightedAllocation,
+    WholeRangeAllocation,
     iter_core_splits,
+    iter_shared_core_shares,
     resolve_root_strategy,
 )
 from access.config.parallel_component import GroupConstraint, LocalConstraint
@@ -73,6 +75,105 @@ class TestIterCoreSplits:
     def test_no_split_when_fixed_allocations_overspend(self) -> None:
         strategy = FreeAllocation(subcomponents={"a": FixedAllocation(n_cores=8), "b": FixedAllocation(n_cores=8)})
         assert _splits(strategy, ("a", "b"), 4) == []
+
+
+class TestIterSharedCoreShares:
+    """Assigning cores to siblings that take turns on one range instead of dividing it.
+
+    The rule that shapes the result is that they must cover the range: a shared parent may
+    leave no core idle, so a combination the siblings do not fill is never offered.
+    """
+
+    @staticmethod
+    def _shares(strategies: list[AllocationStrategy], parent_cores: int, offsets: list[int]) -> list[tuple[int, ...]]:
+        names = [f"c{i}" for i in range(len(strategies))]
+        return list(iter_shared_core_shares(strategies, parent_cores, names, offsets))
+
+    def test_each_sibling_is_offered_every_count_that_covers_the_range(self) -> None:
+        """The interior is a product, less the combinations that leave a core idle."""
+
+        shares = self._shares([FreeAllocation(max_cores=2), FreeAllocation(max_cores=2)], 2, [0, 0])
+        assert shares == [(1, 2), (2, 1), (2, 2)], "(1, 1) would leave core 1 to nobody"
+
+    def test_siblings_may_cover_the_range_between_them(self) -> None:
+        shares = self._shares([FixedAllocation(4), FixedAllocation(4)], 8, [0, 4])
+        assert shares == [(4, 4)]
+
+    def test_rejects_a_gap_between_two_siblings(self) -> None:
+        """Nothing sits on cores 4 to 7, so there is no assignment at all."""
+
+        assert self._shares([FixedAllocation(4), FixedAllocation(4)], 12, [0, 8]) == []
+
+    def test_rejects_a_range_no_sibling_starts_at(self) -> None:
+        """Core 0 is uncoverable once every sibling starts past it."""
+
+        assert self._shares([FreeAllocation(), FreeAllocation()], 8, [2, 4]) == []
+
+    def test_rejects_a_range_the_siblings_cannot_fill(self) -> None:
+        assert self._shares([FixedAllocation(4), FreeAllocation(max_cores=2)], 6, [0, 0]) == []
+
+    def test_counts_come_back_in_declaration_order(self) -> None:
+        """The walk sorts the siblings by offset, and has to undo that before yielding.
+
+        Here the sibling declared second is the one that starts first, so a result left in
+        offset order would pair each count with the wrong sibling.
+        """
+
+        shares = self._shares([FixedAllocation(6), FixedAllocation(4)], 10, [4, 0])
+        assert shares == [(6, 4)], "the first entry is the sibling declared first, at offset 4"
+
+    def test_an_offset_leaves_a_sibling_less_of_the_range(self) -> None:
+        shares = self._shares([FixedAllocation(8), FreeAllocation()], 8, [0, 6])
+        assert shares == [(8, 1), (8, 2)]
+
+    def test_a_sibling_that_cannot_fit_leaves_no_assignment(self) -> None:
+        """An empty range from a fixed count that does not fit needs no special case."""
+
+        assert self._shares([FixedAllocation(4), FixedAllocation(12)], 8, [0, 0]) == []
+
+    def test_weighted_siblings_cannot_be_allocated(self) -> None:
+        with pytest.raises(ValueError, match="cannot allocate 'c1'"):
+            self._shares([FixedAllocation(4), WeightedAllocation(weight=1)], 4, [0, 0])
+
+
+class TestWholeRangeAllocation:
+    """The mode for a sub-component spanning all of the range its parent shares."""
+
+    def test_offers_the_whole_range_as_one_count(self) -> None:
+        assert WholeRangeAllocation()._shared_core_range(275) == range(275, 276)
+
+    def test_an_offset_leaves_it_the_rest_of_the_range(self) -> None:
+        """The caller subtracts the offset first, so this is the rest of the range."""
+
+        assert WholeRangeAllocation()._shared_core_range(275 - 100) == range(175, 176)
+
+    @pytest.mark.parametrize("parent_cores", [0, -1])
+    def test_nothing_left_offers_no_count_rather_than_zero(self, parent_cores: int) -> None:
+        """A sub-component starting at or past the end of the range has no count to take."""
+
+        assert list(WholeRangeAllocation()._shared_core_range(parent_cores)) == []
+
+    def test_it_states_no_size_of_its_own(self) -> None:
+        """The size it describes is the parent's, so there is no field to write one in."""
+
+        names = {f.name for f in dataclasses.fields(WholeRangeAllocation)}
+        assert names == {f.name for f in dataclasses.fields(AllocationStrategy)}
+        assert not names & {"n_cores", "core_fraction", "weight", "min_cores", "max_cores"}
+
+    def test_shares_the_whole_range_with_a_sibling(self) -> None:
+        strategies = [WholeRangeAllocation(), FixedAllocation(4)]
+        assert list(iter_shared_core_shares(strategies, 12, ["a", "b"], [0, 8])) == [(12, 4)]
+
+    def test_it_refuses_a_divided_budget(self) -> None:
+        strategy = FreeAllocation(subcomponents={"a": WholeRangeAllocation(), "b": FreeAllocation()})
+        with pytest.raises(ValueError, match="means nothing under a parent that divides its cores"):
+            _splits(strategy, ("a", "b"), 8)
+
+    def test_the_refusal_surfaces_on_the_call(self) -> None:
+        """Not a generator, so a caller that never iterates still sees the error."""
+
+        with pytest.raises(ValueError, match="WholeRangeAllocation"):
+            WholeRangeAllocation._iter_core_shares([WholeRangeAllocation()], 8)
 
 
 # ---------------------------------------------------------------------------

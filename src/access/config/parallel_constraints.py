@@ -32,7 +32,8 @@ The rules fall into four families, in the order they appear below:
 1. **Cartesian grid** - the shape of the grid of ranks a domain is split over: whether a
    chosen dimension is even, or divisible by a given divisor.
 2. **Core distribution** - how the budget is shared out: how much a parent may leave
-   idle, and rank ratios between siblings.
+   idle, rank ratios between siblings, and whether siblings must receive equal core
+   counts.
 3. **Domain layout** - the block of the domain a rank ends up holding: whether every rank
    holds exactly the same block, how small a block may get, and its aspect ratio.
 4. **Threading** - the thread count a leaf runs on each of its ranks: a ceiling, or an
@@ -41,6 +42,7 @@ The rules fall into four families, in the order they appear below:
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
 from access.config import parallel_domain
@@ -171,11 +173,11 @@ class MaxWastedCoreFractionConstraint(LocalConstraint):
     so idle cores are not a meaningful quantity for it: applying this constraint to a
     leaf raises ``ValueError`` rather than silently reporting it as satisfied.
 
-    Under ``CoreSharing.SHARED`` the idle cores are those past the furthest-reaching
-    sub-component, since the others are meant to be on the same cores as it. A shared
-    parent is therefore no more wasteful for having many small sub-components, and this
-    constraint prunes none of the combinations they generate - see ``CoreSharing`` for
-    what that costs and how to keep it in hand.
+    A parent under ``CoreSharing.SHARED`` has no idle cores to bound: its sub-components
+    are required to cover its whole range, and one that would leave a core of it idle is
+    refused when the layout is built. This constraint is therefore always satisfied there,
+    and belongs on a parent that *partitions* its cores, which is the one free to hand out
+    fewer than it holds.
 
     Frozen (``frozen=True``): an immutable, hashable value object, so one instance can be
     attached to several components without risk of it changing between checks.
@@ -240,6 +242,79 @@ class RankRatioGroupConstraint(GroupConstraint):
                 f"(available: {[lay.name for lay in sub_layouts]})."
             )
         return a.n_ranks >= self.min_ratio * b.n_ranks
+
+
+@dataclass(frozen=True)
+class EqualCoresGroupConstraint(GroupConstraint):
+    """The sub-components judged must all receive the same number of cores.
+
+    Place this on the *parent* component's ``ParallelComponent.group_constraints``, or on
+    the ``group_constraints`` of the allocation strategy laid over it when the rule belongs
+    to one scenario rather than to the model.
+
+    It is written for a parent whose sub-components *share* its cores. Their counts are
+    enumerated as a product there - each one is offered every count that fits, independently
+    of its siblings - and requiring them to match is what states in one rule what would
+    otherwise be a ``FixedAllocation`` per sub-component, rewritten for every core count a
+    scaling study visits. Since the sub-components of a shared parent must also cover its
+    range, matching counts at a common offset pin every one of them to the parent's own core
+    count. Nothing here is specific to sharing, though: a group constraint is handed its
+    siblings and never their parent, so it cannot tell how they were given their cores, and
+    the same rule asks a parent that *partitions* its cores for an even split.
+
+    Cores, not ranks: a sub-component running more than one thread per rank holds more cores
+    than it has ranks, and it is the cores that are being shared out.
+
+    Frozen (``frozen=True``): an immutable, hashable value object, so one instance can be
+    attached to several components without risk of it changing between checks.
+
+    Args:
+        names (tuple[str, ...] | None): Names of the sub-components that must match, or
+            ``None`` (the default) for every sub-component of the parent. Must be a
+            ``tuple`` rather than any other sequence, since a constraint has to stay
+            hashable; must hold at least two names, a single one having nothing to match;
+            and must not repeat a name.
+    """
+
+    names: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if self.names is None:
+            return
+        if type(self.names) is not tuple:
+            # A constraint travels inside a frozen tuple on a component or a strategy, and
+            # both are part of the enumerator's memo key. A list would hash nowhere near
+            # here, so it is refused where the mistake was made.
+            raise ValueError(
+                f"EqualCoresGroupConstraint.names must be a tuple or None, got "
+                f"{type(self.names).__name__}. A constraint has to be hashable."
+            )
+        if len(self.names) < 2:
+            raise ValueError(
+                f"EqualCoresGroupConstraint.names must hold at least two names, got {self.names}. "
+                "One sub-component has nothing to be equal to; leave names as None to judge "
+                "every sub-component of the parent."
+            )
+        duplicates = [name for name, count in Counter(self.names).items() if count > 1]
+        if duplicates:
+            raise ValueError(f"EqualCoresGroupConstraint.names must not repeat a name; duplicates: {duplicates}.")
+
+    def is_satisfied(self, sub_layouts: tuple[ComponentLayout, ...]) -> bool:
+        if self.names is None:
+            judged: tuple[ComponentLayout, ...] | list[ComponentLayout] = sub_layouts
+        else:
+            by_name = {lay.name: lay for lay in sub_layouts}
+            missing = [name for name in self.names if name not in by_name]
+            if missing:
+                raise ValueError(
+                    f"EqualCoresGroupConstraint: sub-component name(s) {missing} not found in "
+                    f"sub_layouts (available: {[lay.name for lay in sub_layouts]})."
+                )
+            judged = [by_name[name] for name in self.names]
+        # Counting the distinct values rather than comparing against the first leaves a
+        # group with nothing to compare - a parent of one sub-component - satisfied rather
+        # than an IndexError. A rule with no pair to judge is a no-op, not a rejection.
+        return len({lay.n_cores for lay in judged}) <= 1
 
 
 # ---------------------------------------------------------------------------
