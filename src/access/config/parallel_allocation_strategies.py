@@ -816,11 +816,19 @@ class FreeAllocation(AllocationStrategy):
             ``(0.0, 1.0]``. Rounded up to a core count, then combined with *max_cores* by
             taking whichever is smaller. ``None`` (the default) leaves *max_cores* to stand
             on its own.
+        core_step (int): Granularity of the counts offered within the bounds. Must be >= 1,
+            and defaults to 1, which offers every count. The counts offered are the
+            *multiples* of it that the bounds admit, so a step says what a core count may
+            be rather than where counting starts: ``core_step=48`` lands on whole nodes
+            without a floor to anchor it, and a bound that is not itself a multiple is
+            rounded inwards. This is how a band is thinned when only its shape matters -
+            a study asking how a model scales has no use for 201 cores told apart from
+            202, and the counts it drops multiply across the components.
 
     Raises:
-        ValueError: If ``min_cores`` < 1, if ``max_cores`` < ``min_cores``, if either
-            fraction falls outside ``(0.0, 1.0]``, or if ``max_core_fraction`` <
-            ``min_core_fraction``.
+        ValueError: If ``min_cores`` < 1, if ``max_cores`` < ``min_cores``, if ``core_step``
+            < 1, if the bounds admit no multiple of ``core_step``, if either fraction falls
+            outside ``(0.0, 1.0]``, or if ``max_core_fraction`` < ``min_core_fraction``.
 
     Examples:
         >>> alloc = FreeAllocation(min_cores=4, max_cores=6)
@@ -842,6 +850,7 @@ class FreeAllocation(AllocationStrategy):
     max_cores: int | None = None
     min_core_fraction: float | None = None
     max_core_fraction: float | None = None
+    core_step: int = 1
 
     @classmethod
     def _reserved_cores(cls, allocs: Sequence[FreeAllocation]) -> int:
@@ -857,7 +866,33 @@ class FreeAllocation(AllocationStrategy):
             )
         if self.max_cores is not None and self.max_cores < self.min_cores:
             raise ValueError(f"FreeAllocation.max_cores ({self.max_cores}) must be >= min_cores ({self.min_cores}).")
+        if self.core_step < 1:
+            raise ValueError(f"FreeAllocation.core_step must be >= 1, got {self.core_step}.")
+        if self.max_cores is not None:
+            self._validate_step_admits_a_count(self.min_cores, self.max_cores)
         self._validate_fractions()
+
+    def _validate_step_admits_a_count(self, min_cores: int, max_cores: int) -> None:
+        """Check that some multiple of the step falls within the bounds.
+
+        Refused rather than left to yield nothing, for the reason the crossing bounds are:
+        a search that finds nothing is the hardest failure to explain after the fact, and
+        by then nothing still knows a step was what emptied it. A band too small for the
+        budget is a different matter and stays silent - that is the search doing its job.
+
+        Args:
+            min_cores (int): Lower bound, as an absolute count.
+            max_cores (int): Upper bound, as an absolute count.
+
+        Raises:
+            ValueError: If no multiple of ``core_step`` lies between the two.
+        """
+        if math.ceil(min_cores / self.core_step) * self.core_step > max_cores:
+            raise ValueError(
+                f"FreeAllocation.core_step ({self.core_step}) admits no core count between "
+                f"min_cores ({min_cores}) and max_cores ({max_cores}): the bounds hold no multiple "
+                "of it. Widen them, or use a smaller step."
+            )
 
     def _validate_fractions(self) -> None:
         """Check the fractional bounds on their own and against each other.
@@ -897,6 +932,10 @@ class FreeAllocation(AllocationStrategy):
             from_fraction = _cores_from_fraction(self.max_core_fraction, total_cores, math.ceil)
             max_cores = from_fraction if max_cores is None else min(max_cores, from_fraction)
 
+        if max_cores is not None and max_cores >= min_cores:
+            # The fractions have become counts, so the step can be checked against them too.
+            self._validate_step_admits_a_count(min_cores, max_cores)
+
         if max_cores is not None and max_cores < min_cores:
             # Rejected here rather than left to yield nothing, because an empty search
             # is the hardest failure to explain after the fact: the bounds contradict each
@@ -921,6 +960,11 @@ class FreeAllocation(AllocationStrategy):
         The range runs from ``min_cores`` up to the smaller of *max_available* and
         ``max_cores``, and is empty when not even ``min_cores`` fits.
 
+        Under a ``core_step`` above 1 it holds the multiples of the step rather than every
+        count, so the low end is rounded *up* to the first of them - the step says what a
+        count may be, not where counting starts. A step of 1 divides every integer, so the
+        general form is also the unstepped one.
+
         Args:
             max_available (int): The largest count the caller can spare, before this
                 allocation's own ``max_cores`` is applied.
@@ -933,9 +977,20 @@ class FreeAllocation(AllocationStrategy):
             range(2, 5)
             >>> FreeAllocation(min_cores=2)._core_range(3)
             range(2, 4)
+
+            A step offers the multiples the bounds admit, wherever the bounds themselves
+            fall:
+
+            >>> FreeAllocation(min_cores=100, max_cores=200, core_step=10)._core_range(500)
+            range(100, 201, 10)
+            >>> FreeAllocation(min_cores=105, core_step=10)._core_range(140)
+            range(110, 141, 10)
         """
         hi = max_available if self.max_cores is None else min(max_available, self.max_cores)
-        return range(self.min_cores, hi + 1)
+        # Round the floor up onto the grid; down would offer a count below min_cores, and
+        # 0 at the default floor of 1. Exact for a step of 1, which divides every integer.
+        lo = math.ceil(self.min_cores / self.core_step) * self.core_step
+        return range(lo, hi + 1, self.core_step)
 
     def _shared_core_range(self, parent_cores: int) -> range | None:
         """Return this allocation's own bounds, capped by what the parent holds.
