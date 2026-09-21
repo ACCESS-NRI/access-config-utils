@@ -887,7 +887,7 @@ class FreeAllocation(AllocationStrategy):
         Raises:
             ValueError: If no multiple of ``core_step`` lies between the two.
         """
-        if -(-min_cores // self.core_step) * self.core_step > max_cores:
+        if math.ceil(min_cores / self.core_step) * self.core_step > max_cores:
             raise ValueError(
                 f"FreeAllocation.core_step ({self.core_step}) admits no core count between "
                 f"min_cores ({min_cores}) and max_cores ({max_cores}): the bounds hold no multiple "
@@ -987,8 +987,9 @@ class FreeAllocation(AllocationStrategy):
             range(110, 141, 10)
         """
         hi = max_available if self.max_cores is None else min(max_available, self.max_cores)
-        # Round the floor up onto the grid. Exact for a step of 1, which divides everything.
-        lo = -(-self.min_cores // self.core_step) * self.core_step
+        # Round the floor up onto the grid; down would offer a count below min_cores, and
+        # 0 at the default floor of 1. Exact for a step of 1, which divides every integer.
+        lo = math.ceil(self.min_cores / self.core_step) * self.core_step
         return range(lo, hi + 1, self.core_step)
 
     def _shared_core_range(self, parent_cores: int) -> range | None:
