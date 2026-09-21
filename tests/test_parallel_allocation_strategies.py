@@ -315,6 +315,56 @@ class TestAllocationStrategy:
     def test_free_core_range_is_empty_when_min_cores_does_not_fit(self) -> None:
         assert list(FreeAllocation(min_cores=4)._core_range(2)) == []
 
+    def test_free_core_range_steps_through_the_band(self) -> None:
+        assert FreeAllocation(min_cores=100, max_cores=200, core_step=10)._core_range(500) == range(100, 201, 10)
+
+    def test_free_core_range_steps_in_multiples_not_offsets_from_the_floor(self) -> None:
+        """The step says what a count may be, not where counting starts.
+
+        min_cores defaults to 1, so counting from the floor would give 1, 11, 21 - which is
+        not what anyone writing a granularity of 10 means.
+        """
+
+        assert FreeAllocation(max_cores=200, core_step=10)._core_range(500) == range(10, 201, 10)
+
+    def test_free_core_range_rounds_a_floor_off_the_grid_up(self) -> None:
+        assert FreeAllocation(min_cores=105, core_step=10)._core_range(140) == range(110, 141, 10)
+
+    def test_free_core_range_steps_onto_whole_nodes_without_a_floor(self) -> None:
+        """The point of counting in multiples: a node size needs no matching floor."""
+
+        assert FreeAllocation(max_cores=200, core_step=48)._core_range(500) == range(48, 201, 48)
+
+    def test_free_core_range_is_unchanged_by_the_default_step(self) -> None:
+        """Every integer divides 1, so the stepped form is also the unstepped one."""
+
+        assert FreeAllocation(min_cores=2, max_cores=4, core_step=1)._core_range(10) == range(2, 5)
+
+    def test_free_core_range_steps_from_a_fraction_derived_floor(self) -> None:
+        """The step applies to the resolved counts, so it still lands on round numbers."""
+
+        resolved = FreeAllocation(min_core_fraction=0.45, core_step=10)._resolve_fractions(416)
+        assert resolved.min_cores == 187
+        assert resolved._core_range(416) == range(190, 417, 10)
+
+    def test_free_step_below_one_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="core_step must be >= 1"):
+            FreeAllocation(core_step=0)
+
+    def test_free_bounds_holding_no_multiple_of_the_step_are_rejected(self) -> None:
+        """Refused outright: a search a step emptied is the hardest kind to explain."""
+
+        with pytest.raises(ValueError, match="admits no core count"):
+            FreeAllocation(min_cores=101, max_cores=109, core_step=10)
+
+    def test_free_fraction_bounds_holding_no_multiple_are_rejected_on_resolution(self) -> None:
+        """The bounds only fail on a particular budget, so this cannot be caught earlier."""
+
+        # On 1000 cores these resolve to min_cores=101 and max_cores=109: no multiple of 10.
+        band = FreeAllocation(min_core_fraction=0.1015, max_core_fraction=0.1085, core_step=10)
+        with pytest.raises(ValueError, match="admits no core count"):
+            band._resolve_fractions(1000)
+
     def test_free_tree_for_mirrors_the_component_tree(self) -> None:
         root = component("r", component("a"), component("b"))
         tree = FreeAllocation._tree_for(root)
