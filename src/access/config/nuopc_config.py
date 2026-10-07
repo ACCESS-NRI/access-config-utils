@@ -132,7 +132,9 @@ start: lines*
       | empty_line
 
 rfile_key_value: ws* key ":" ws* value line_end -> key_value
-rfile_key_list: ws* key ":" ws* value (ws* value)+ line_end -> key_list
+// Whitespace is required between two values, not merely allowed: with "ws*" two values may
+// touch, and "1.5" is read as the list "1" ".5".
+rfile_key_list: ws* key ":" ws* value (ws value)+ line_end -> key_list
 rfile_key_block: ws* key "::" line_end block "::" line_end -> key_block
 // A key with no value at all. Trailing whitespace is left to line_end, rather than to a "ws*"
 // of its own, so that there is one way to read it.
