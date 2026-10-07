@@ -10,6 +10,7 @@ with suppress(PackageNotFoundError):
 from access.config.config_dict import Config, ConfigList
 from access.config.fortran_nml import FortranNMLParser
 from access.config.grammar_values import UnsupportedEntryError
+from access.config.json_config import JSONParser
 from access.config.mom6_input import MOM6InputParser
 from access.config.nuopc_config import NUOPCParser
 from access.config.parser import ConfigParser
@@ -20,6 +21,7 @@ __all__ = [
     "ConfigList",
     "ConfigParser",
     "FortranNMLParser",
+    "JSONParser",
     "MOM6InputParser",
     "UnsupportedEntryError",
     "YAMLParser",
