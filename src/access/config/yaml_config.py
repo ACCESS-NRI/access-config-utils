@@ -22,6 +22,7 @@ from io import StringIO
 from typing import Any
 
 from ruamel.yaml import YAML, CommentedMap
+from ruamel.yaml.representer import RoundTripRepresenter
 
 # Indentation used where the text does not show it, e.g. a file with no nested mapping or
 # no block sequence. A sequence's dash is indented by two, as in the ACCESS configurations.
@@ -122,89 +123,38 @@ def guess_indent(text: str) -> dict[str, int]:
     return {**DEFAULT_INDENT, **found}
 
 
-class YAMLConfig(dict):
-    """Class to store a YAML configuration as a dict.
+class YAMLConfig(CommentedMap):
+    """Class to store a YAML configuration.
 
-    The YAML parsers generates an instance of CommentedMap, which in turn also behaves
-    like a dictionary. Unfortunately we cannot simply subclass CommentedMap. This is
-    because the dump method of YAML calls the __str__ method of CommentedMap, which leads
-    to a infinite recursion when calling the __str__ method of this class. This means
-    that, instead, we need to keep a copy of the CommentedMap and sync it with the dict.
+    The configuration is the round-trip loaded CommentedMap itself, so every change made to
+    it, through any of the mapping methods, is in what ``__str__`` writes out.
 
-    The mapping methods ``dict`` implements in C are all overridden, because they do not go
-    through ``__setitem__`` / ``__delitem__`` and would therefore leave the CommentedMap,
-    and so the text written out, out of step with the dict.
+    ``YAMLParser`` turns the CommentedMap it loads into a YAMLConfig by reassigning its
+    class, which keeps everything ruamel.yaml recorded about it. That only works while the
+    two classes have the same layout, so this class must not define ``__slots__``.
 
-    Args:
-        map (CommentedMap): The round-trip loaded configuration.
-        yaml (YAML | None): The instance to dump with. One with ruamel.yaml's default
-            indentation when ``None``.
+    Attributes:
+        yaml (YAML | None): The instance the configuration is written back out with. One
+            with ruamel.yaml's default indentation when ``None``.
     """
 
-    map: CommentedMap  # The round-trip loaded configuration, kept in step with the dict.
-    yaml: YAML  # The instance the configuration is written back out with.
-
-    def __init__(self, map: CommentedMap, yaml: YAML | None = None) -> None:
-        self.map = map
-        self.yaml = yaml if yaml is not None else _round_trip_yaml()
-        super().__init__(map)
+    yaml: YAML | None = None
 
     def __str__(self) -> str:
         output = StringIO("")
-        self.yaml.dump(self.map, output)
+        (self.yaml if self.yaml is not None else _round_trip_yaml()).dump(self, output)
         return output.getvalue()
 
-    def __setitem__(self, key: str, value: Any) -> None:
-        super().__setitem__(key, value)
-        self.map[key] = value
+    def copy_attributes(self, t: Any, memo: Any = None) -> Any:
+        """Override method so that a copy is written back out with the same instance."""
+        t.yaml = self.yaml
+        return super().copy_attributes(t, memo)
 
-    def __getitem__(self, key: str) -> Any:
-        return self.map[key]
 
-    def __delitem__(self, key: str) -> None:
-        super().__delitem__(key)
-        del self.map[key]
-
-    def update(self, other: Any = (), /, **kwargs: Any) -> None:
-        """Override method to assign several items, keeping the CommentedMap in sync."""
-        items = other.items() if hasattr(other, "keys") else other
-        for key, value in items:
-            self[key] = value
-        for key, value in kwargs.items():
-            self[key] = value
-
-    def setdefault(self, key: str, default: Any = None) -> Any:
-        """Override method to add an item if absent, keeping the CommentedMap in sync."""
-        if key not in self:
-            self[key] = default
-        return self[key]
-
-    def pop(self, key: str, /, *default: Any) -> Any:
-        """Override method to remove an item, keeping the CommentedMap in sync."""
-        if key in self:
-            value = self[key]
-            del self[key]
-            return value
-        if default:
-            return default[0]
-        raise KeyError(key)
-
-    def popitem(self) -> tuple[str, Any]:
-        """Override method to remove the last item, keeping the CommentedMap in sync."""
-        if not self:
-            raise KeyError("popitem(): dictionary is empty")
-        key = next(reversed(list(self)))
-        return key, self.pop(key)
-
-    def clear(self) -> None:
-        """Override method to remove every item, keeping the CommentedMap in sync."""
-        for key in list(self):
-            del self[key]
-
-    def __ior__(self, other: Any) -> YAMLConfig:  # type: ignore[override, misc]
-        """Override in-place merge, keeping the CommentedMap in sync."""
-        self.update(other)
-        return self
+# ruamel.yaml finds the representer of an object by its exact type, so a subclass of
+# CommentedMap needs registering too. Otherwise dumping it falls through to the representer
+# for unknown objects, whose error message calls __str__, which dumps it again, and so on.
+RoundTripRepresenter.add_representer(YAMLConfig, RoundTripRepresenter.represent_dict)
 
 
 class YAMLParser:
@@ -221,5 +171,13 @@ class YAMLParser:
 
         Returns:
             YAMLConfig: The configuration, written back out with the text's own indentation.
+
+        Raises:
+            TypeError: If the top level of the text is not a mapping.
         """
-        return YAMLConfig(self.parser.load(stream), _round_trip_yaml(guess_indent(stream)))
+        config = self.parser.load(stream)
+        if not isinstance(config, CommentedMap):
+            raise TypeError(f"The top level of a YAML configuration must be a mapping, not {type(config).__name__}")
+        config.__class__ = YAMLConfig
+        config.yaml = _round_trip_yaml(guess_indent(stream))
+        return config
