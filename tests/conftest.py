@@ -238,6 +238,18 @@ def ws_node(text: str = " ") -> Tree:
 # received rather than a call count.
 
 
+class RepetitionInfo:
+    """Stands in for ``GrammarInfo``, reporting every rule a plain repetition.
+
+    That is what a namelist group's block is, so a deletion inside a fake nested
+    configuration stays there, as it does inside a real group.
+    """
+
+    def is_repetition_rule(self, name: str) -> bool:
+        """Report that *name* is a plain repetition."""
+        return True
+
+
 class FakeContext:
     """Stands in for a ``ParseContext`` where only its settings are needed."""
 
@@ -251,7 +263,7 @@ class FakeContext:
         repeated_blocks: str = "merge",
     ) -> None:
         self.case_sensitive_keys = case_sensitive
-        self.info = info
+        self.info = info if info is not None else RepetitionInfo()
         self.lark = lark
         self.entry_templates: dict[tuple[str, str], str] = {}
         self.value_rule_priority: tuple[str, ...] = ()
@@ -271,6 +283,8 @@ class FakeStore:
         ctx: The context to expose; a case-sensitive ``FakeContext`` by default.
         added: References ``add`` should return, keyed by key, for a test adding one.
         text: What ``render`` returns.
+        reread: References ``reread`` should report, as though the tree had changed;
+            the ones already held when not given.
     """
 
     def __init__(
@@ -280,13 +294,17 @@ class FakeStore:
         ctx: Any = None,
         added: dict[str, EntryRef] | None = None,
         text: str = "<rendered>",
+        reread: dict[str, EntryRef] | None = None,
     ) -> None:
         self.refs = refs if refs is not None else {}
         self.ctx = ctx if ctx is not None else FakeContext()
         self.fallback_style = EntryStyle()
+        self.tree = Tree("block", [])
+        self.addable = True
         self.calls: list[tuple[str, Any]] = []
         self._added = added or {}
         self._text = text
+        self._reread = reread
 
     def child(self, ref: EntryRef, index: int = 0) -> "FakeStore":
         """Return a store over the occurrence of the block *ref* names."""
@@ -313,6 +331,17 @@ class FakeStore:
         """Record the removal and forget the reference."""
         self.calls.append(("remove", key))
         del self.refs[key]
+
+    def reread(self) -> dict[str, EntryRef]:
+        """Record the request and report the references declared for it."""
+        self.calls.append(("reread", None))
+        if self._reread is not None:
+            self.refs = self._reread
+        return self.refs
+
+    def retarget(self, ref: EntryRef) -> None:
+        """Record which reference the store was pointed at."""
+        self.calls.append(("retarget", ref))
 
     def render(self) -> str:
         """Return the canned text."""

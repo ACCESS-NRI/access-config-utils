@@ -200,8 +200,8 @@ class Config(dict):
 
     _store: ConfigStore  # The parse tree behind this dict.
     # The configuration this one is a block of, and the key it is stored under. None for the
-    # configuration of a whole file. Used to drop a block that has been emptied and cannot
-    # be written empty -- a derived type is one, since "a%" on its own means nothing.
+    # configuration of a whole file. Used to bring the configurations above this one back in
+    # step after a deletion here removed more of the tree than the entry itself.
     _parent: tuple[Config, str] | None
 
     def __init__(self, store: ConfigStore) -> None:
@@ -323,25 +323,59 @@ class Config(dict):
         key = self._store.ctx.normalise_key(key)
         super().__delitem__(key)
         self._store.remove(key)
-        self._drop_if_unwritable()
+        self._resync()
 
-    def _drop_if_unwritable(self) -> None:
-        """Remove this configuration from its parent if it is empty and unwritable.
+    def _is_anchor(self) -> bool:
+        """Report whether a deletion below this configuration leaves its container alone.
 
-        A block whose rule is a plain repetition may hold nothing -- an empty block is
-        still a block. One written a component per line may not: once the last component
-        goes there is nothing left to write, and the lines
-        have already been removed from the tree. Leaving the empty block in the parent's
-        dict would make it disagree with the file.
+        Deleting an entry also removes the wrappers the grammar cannot derive empty, and
+        that pruning stops only at a node with no parent or at a plain repetition: an empty
+        block is still a block. A configuration over such a node, held in the parse tree
+        rather than merged from several, is therefore still where it was.
+
+        Returns:
+            bool: True for the configuration of a whole file, or of a block whose container
+                no deletion can remove.
         """
-        if self or self._parent is None:
-            return
-        if self._store.ctx.info.is_repetition_rule(str(self._store.tree.data)):
-            return
-        parent, key = self._parent
-        dict.__delitem__(parent, key)
-        parent._store.refs.pop(key, None)
-        self._parent = None
+        store = self._store
+        return self._parent is None or (store.addable and store.ctx.info.is_repetition_rule(str(store.tree.data)))
+
+    def _resync(self) -> None:
+        """Bring the configurations this one is nested in back in step with the tree.
+
+        A block written a component per line, as a derived type is, holds nothing once its
+        last component goes, and the lines writing it are already out of the tree -- and so
+        may be the lines of the blocks it was nested in. The configurations above it are
+        read again from the nearest one whose container survived, down the path to this
+        one, so that a block the file no longer has leaves the dict too, and the references
+        left to it no longer name nodes that are gone.
+        """
+        path: list[str] = []
+        anchor = self
+        while not anchor._is_anchor():
+            assert anchor._parent is not None
+            anchor, key = anchor._parent
+            path.append(key)
+        if path:
+            anchor._reread(path[::-1])
+
+    def _reread(self, path: Sequence[str]) -> None:
+        """Read this configuration again, then the one at *path* below it.
+
+        Args:
+            path (Sequence[str]): Keys leading down to the configuration a deletion was made
+                in, starting with a key of this one.
+        """
+        refs = self._store.reread()
+        for vanished in [key for key in self if key not in refs]:
+            child = dict.__getitem__(self, vanished)
+            if isinstance(child, Config):
+                child._parent = None
+            dict.__delitem__(self, vanished)
+        child = dict.get(self, path[0]) if path else None
+        if isinstance(child, Config):
+            child._store.retarget(refs[path[0]])
+            child._reread(path[1:])
 
     # --- Remaining mapping protocol ---
     #
