@@ -1,7 +1,11 @@
 # Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
 # SPDX-License-Identifier: Apache-2.0
 
+import copy
+from io import StringIO
+
 import pytest
+from ruamel.yaml import YAML, CommentedMap
 
 from access.config.yaml_config import DEFAULT_INDENT, YAMLConfig, YAMLParser, guess_indent
 
@@ -229,7 +233,41 @@ def test_setdefault(config) -> None:
     assert str(config) == "a: 1\nb: 2\nc: 3\nd: 4\n"
 
 
-def test_yaml_config_default_dumper(parser) -> None:
+def test_yaml_config_default_dumper() -> None:
     """A YAMLConfig made without a YAML instance dumps with ruamel.yaml's defaults."""
-    config = YAMLConfig(parser.parse("a:\n    - x\n").map)
+    config = YAMLConfig({"a": ["x"]})
     assert str(config) == "a:\n- x\n"
+
+
+def test_yaml_config_is_commented_map(parser) -> None:
+    """The configuration is the loaded CommentedMap, which any YAML instance can dump."""
+    config = parser.parse("a: 1  # comment\n")
+    assert isinstance(config, CommentedMap)
+
+    output = StringIO()
+    YAML().dump(config, output)
+    assert output.getvalue() == "a: 1  # comment\n"
+
+
+@pytest.mark.parametrize("copier", [lambda config: config.copy(), copy.deepcopy], ids=["copy", "deepcopy"])
+def test_copy_keeps_indentation(parser, copier) -> None:
+    """A copy is still a YAMLConfig, and is written back out with the text's indentation."""
+    text = "a:\n    - x\n"
+    config = copier(parser.parse(text))
+    assert isinstance(config, YAMLConfig)
+    assert str(config) == text
+
+
+def test_round_trip_root_merge(parser) -> None:
+    """Keys merged into the top level are not written out as keys of their own."""
+    text = "defaults: &d\n  a: 1\n  b: 2\n<<: *d\nb: 3\n"
+    config = parser.parse(text)
+    assert config["a"] == 1
+    assert str(config) == text
+
+
+@pytest.mark.parametrize("text", ["", "- a\n- b\n", "a\n"], ids=["empty", "sequence", "scalar"])
+def test_parse_not_a_mapping(parser, text) -> None:
+    """A text whose top level is not a mapping is not a configuration."""
+    with pytest.raises(TypeError, match="must be a mapping"):
+        parser.parse(text)
