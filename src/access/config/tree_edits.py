@@ -21,7 +21,7 @@ from lark import Token, Tree
 from lark.exceptions import UnexpectedInput
 
 from access.config.grammar_contract import KEY_LIST, KEY_VALUE, REPEAT_RULE
-from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
+from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY, identical_values
 from access.config.tree_navigation import (
     AddParent,
     contains_entry,
@@ -47,6 +47,11 @@ def update_node_value(rule_node: Tree, value: Any) -> None:
         rule_node (Tree): Value-type rule node to update.
         value (Any): New value.
 
+    A node that already holds *value* is left as it is, so writing a list leaves the
+    elements that did not change written exactly as they were -- ``1.0d0`` stays
+    ``1.0d0`` -- and a value that cannot be written anew, such as a NaN, can still be
+    written over itself.
+
     Raises:
         TypeError: Raises an exception if the new and old value types do not match.
     """
@@ -56,6 +61,8 @@ def update_node_value(rule_node: Tree, value: Any) -> None:
     # The Token storing the value is always the first child of a value-type rule node.
     token = rule_node.children[0]
     assert isinstance(token, Token)
+    if identical_values(handler.from_token(str(token)), value):
+        return
     transformed_value = handler.to_token(value, str(token))
     rule_node.children[0] = token.update(value=transformed_value)
 
