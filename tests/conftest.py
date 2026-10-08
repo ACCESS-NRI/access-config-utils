@@ -270,6 +270,10 @@ class FakeContext:
         self.block_rules = block_rules
         self.repeated_blocks = repeated_blocks
 
+    def accepts_key(self, text: str) -> bool:
+        """Accept the names a grammar using ``config.key`` would: identifiers."""
+        return text.isidentifier()
+
     def normalise_key(self, key: str) -> str:
         """Normalise as a real ``ParseContext`` would."""
         return key if self.case_sensitive_keys else key.upper()

@@ -19,19 +19,21 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from lark import Lark
+from lark import Lark, Token
+from lark.exceptions import ConfigurationError, UnexpectedInput
 from lark.reconstruct import Reconstructor
 
-from access.config.grammar_contract import BLOCK_RULE, KEY_LIST, KEY_VALUE, START_RULE
+from access.config.grammar_contract import BLOCK_RULE, KEY_LIST, KEY_RULE, KEY_VALUE, START_RULE
 from access.config.grammar_info import GrammarInfo
 
-OPTIONAL_START_RULES: tuple[str, ...] = (BLOCK_RULE, KEY_VALUE, KEY_LIST)
+OPTIONAL_START_RULES: tuple[str, ...] = (BLOCK_RULE, KEY_VALUE, KEY_LIST, KEY_RULE)
 """Rules made start symbols as well, when the grammar defines them under those names.
 
 Text is handed back to Lark rather than turned into nodes by hand wherever nodes are needed,
 and the start symbol says what the text has to be valid as: a block for a new entry, an
-entry for the values written into one. A rule reached only through an alias is not included,
-since Lark resolves start symbols against rule names.
+entry for the values written into one, a key for the name a new entry is written under. A
+rule reached only through an alias is not included, since Lark resolves start symbols
+against rule names.
 """
 
 GRAMMAR_DIR: Path = Path(__file__).parent
@@ -97,6 +99,27 @@ class ParseContext:
     def info(self) -> GrammarInfo:
         """GrammarInfo: Grammar views used to synthesise new entries."""
         return self.grammar.info
+
+    def accepts_key(self, text: str) -> bool:
+        """Report whether *text* is a name this format can write a key under.
+
+        Asked of the grammar's own ``key`` rule, so a format whose names may hold a hyphen
+        or a slash accepts them, and one restricted to identifiers refuses everything else.
+        The name has to be the whole text, as a single token: a grammar ignoring whitespace
+        would otherwise accept ``" a"`` and write ``a``.
+
+        Args:
+            text (str): The name as the caller wrote it.
+
+        Returns:
+            bool: True if *text* reads back as exactly that key.
+        """
+        try:
+            tree = self.lark.parse(text, start=KEY_RULE)
+        except (UnexpectedInput, ConfigurationError):
+            return False
+        children = tree.children
+        return len(children) == 1 and isinstance(children[0], Token) and str(children[0]) == text
 
     def normalise_key(self, key: str) -> str:
         """Return the form of *key* used as the dict key.
