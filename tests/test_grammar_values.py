@@ -40,6 +40,7 @@ ROUND_TRIPS = [
     ("identifier", "a_word", "a_word", "a_word"),
     ("string", "'quoted'", "quoted", '"quoted"'),
     ("fortran_string", "'quoted'", "quoted", '"quoted"'),
+    ("text_line", "MED -> OCN :remapMethod=redist", "MED -> OCN :remapMethod=redist", "MED -> OCN :remapMethod=redist"),
     ("path", "/dir/file.nc", Path("/dir/file.nc"), "/dir/file.nc"),
 ]
 
@@ -87,6 +88,25 @@ class TestTypeChecking:
         assert not handler.type_check("a string")
         assert not handler.type_check("1")
         assert not handler.type_check(Path("/x"))
+
+    @pytest.mark.parametrize(
+        ("value", "accepted"),
+        [
+            pytest.param("@3600", True, id="loop"),
+            pytest.param("MED med_phases_post_ocn", True, id="phase"),
+            pytest.param("a :: b", True, id="inner-colons"),
+            pytest.param("", False, id="empty"),
+            pytest.param(" padded", False, id="leading-space"),
+            pytest.param("padded\t", False, id="trailing-tab"),
+            pytest.param("a # b", False, id="comment"),
+            pytest.param("two\nlines", False, id="line-break"),
+            pytest.param("::", False, id="table-closer"),
+            pytest.param(3600, False, id="int"),
+        ],
+    )
+    def test_a_text_line_is_one_trimmed_line(self, value, accepted) -> None:
+        """Test that only a string reading back unchanged as a line of text is one."""
+        assert VALUE_TYPE_HANDLER_REGISTRY["text_line"].type_check(value) is accepted
 
     def test_a_path_is_the_only_type_taking_one(self) -> None:
         """Test that a ``Path`` is not mistaken for a string, or the reverse."""
@@ -296,7 +316,7 @@ def test_priority_covers_every_registered_rule() -> None:
 
 
 def test_priority_states_the_ambiguous_pairs() -> None:
-    """Test the order of the four pairs whose members accept the same Python type.
+    """Test the order of the five pairs whose members accept the same Python type.
 
     These are the whole reason the order exists: without it the choice would fall to
     whichever grammar rule happened to match first.
@@ -307,3 +327,4 @@ def test_priority_states_the_ambiguous_pairs() -> None:
     assert order.index("float") < order.index("double")
     assert order.index("complex") < order.index("double_complex")
     assert order.index("string") < order.index("identifier")
+    assert order.index("identifier") < order.index("text_line")
