@@ -21,6 +21,7 @@ from conftest import FakeContext, FakeStore, entry_node, value_node
 from lark import Tree
 
 from access.config.config_dict import Config, ConfigBlockList, ConfigList
+from access.config.grammar_values import UnsupportedEntryError
 from access.config.tree_reader import EntryRef
 
 
@@ -140,7 +141,7 @@ class TestAddingAKey:
         config["z"] = 5
 
         assert config["z"] == 1
-        assert adding.asked("add") == [("z", "z", 5)]
+        assert adding.asked("add_path") == [(("z",), ("z",), 5)]
 
     def test_a_case_insensitive_format_normalises_the_dict_key_only(self) -> None:
         """Test the namelist: the entry is keyed uppercase, the file keeps the spelling."""
@@ -150,7 +151,7 @@ class TestAddingAKey:
         config["z"] = 5
 
         assert "Z" in config
-        assert store.asked("add") == [("Z", "z", 5)]
+        assert store.asked("add_path") == [(("Z",), ("z",), 5)]
 
     def test_a_new_block_is_given_a_style_and_then_filled(self) -> None:
         """Test the two things that only happen for a block.
@@ -166,9 +167,120 @@ class TestAddingAKey:
 
         config["blk"] = {"x": 1}
 
-        assert store.asked("created_block_style") == [None]
+        # Asked about the entry just written, so siblings are searched from above it.
+        assert store.asked("created_block_style") == [store.refs["blk"].entry_nodes[0]]
         assert inner.fallback_style.indent == "  "
-        assert inner.asked("add") == [("x", "x", 1)]
+        assert inner.asked("add_path") == [(("x",), ("x",), 1)]
+
+
+class TestAddingBelowABlockWithNoBody:
+    """A key added to a block the file writes one component per line, or merged.
+
+    Such a block has no body of its own in the file, so the line is written by the nearest
+    configuration holding it, carrying the whole key path, and the configurations on the
+    path are read again in place.
+    """
+
+    @staticmethod
+    def _nested(outer_refs: dict, inner_refs: dict, **outer_kwargs):
+        """Return a parent config over *outer_refs* whose block reads as *inner_refs*.
+
+        The block's store has no body for an entry; it reads every key it is asked about.
+
+        Returns:
+            The parent configuration, its store and the block's store.
+        """
+        inner = FakeStore({key: inner_refs[key] for key in list(inner_refs)[:1]}, reread=inner_refs)
+        inner.addable = False
+        outer = FakeStore(outer_refs, **outer_kwargs)
+        outer.child = lambda reference, index=0: inner  # type: ignore[method-assign]
+        return Config(outer), outer, inner
+
+    def test_the_holding_configuration_writes_the_whole_path(self) -> None:
+        """Test that a held reference to the block sees the key afterwards."""
+        fresh = ref("key_block", "blk")
+        inner_refs = {"x": ref("key_value", "x"), "z": ref("key_value", "z")}
+        config, outer, inner = self._nested(
+            {"blk": ref("key_block", "blk")}, inner_refs, added={("blk", "z"): fresh}, reread={"blk": fresh}
+        )
+        block = config["blk"]
+
+        block["z"] = 5
+
+        assert outer.asked("add_path") == [(("blk", "z"), ("blk", "z"), 5)]
+        assert inner.asked("retarget") == [fresh]
+        assert config["blk"] is block
+        assert block["z"] == 1
+
+    def test_a_dict_the_format_cannot_hold_goes_one_level_down(self) -> None:
+        """Test the Fortran ``t%a = 1`` written for ``t = {"a": 1, "b": 2}``.
+
+        The format has no block of its own for ``t``, so its first item is written as one
+        line carrying both keys, and the rest is added to the block that line created.
+        """
+        inner_refs = {"a": ref("key_value", "a"), "b": ref("key_value", "b")}
+        config, outer, _ = self._nested(
+            {},
+            inner_refs,
+            added={("t", "a"): ref("key_block", "t"), ("t", "b"): ref("key_block", "t")},
+            refused=[("t",)],
+            reread={"t": ref("key_block", "t")},
+        )
+
+        config["t"] = {"a": 1, "b": 2}
+
+        assert outer.asked("add_path") == [
+            (("t",), ("t",), {"a": 1, "b": 2}),
+            (("t", "a"), ("t", "a"), 1),
+            (("t", "b"), ("t", "b"), 2),
+        ]
+        assert dict(config["t"]) == {"a": 1, "b": 1}
+
+    def test_a_dict_one_level_down_is_filled_before_the_level_above(self) -> None:
+        """Test that what is left of each dict is added deepest first, as the file reads."""
+        inner_refs = {"a": ref("key_block", "a"), "b": ref("key_value", "b")}
+        config, outer, inner = self._nested(
+            {},
+            inner_refs,
+            added={("t", "a"): ref("key_block", "t"), ("t", "b"): ref("key_block", "t")},
+            refused=[("t",)],
+            reread={"t": ref("key_block", "t")},
+        )
+        innermost = FakeStore({}, added={"y": ref("key_value", "y")})
+        inner.child = lambda reference, index=0: innermost  # type: ignore[method-assign]
+
+        config["t"] = {"a": {"y": 1}, "b": 2}
+
+        assert outer.asked("add_path")[-1] == (("t", "b"), ("t", "b"), 2)
+        assert innermost.asked("add_path") == [(("y",), ("y",), 1)]
+        # The block one level down is spaced like a sibling of the line just written.
+        assert outer.asked("created_block_style") == [outer.refs["t"].entry_nodes[0]]
+
+    @pytest.mark.parametrize(
+        ("value", "refused"),
+        [
+            pytest.param({}, [("t",)], id="nothing-to-go-down-into"),
+            pytest.param({"a": 1}, [("t",), ("t", "a")], id="refused-one-level-down-too"),
+        ],
+    )
+    def test_the_refusal_of_the_path_asked_for_is_reported(self, value, refused) -> None:
+        """Test that the error names what the caller asked for, not a level below it."""
+        store = FakeStore({}, refused=refused)
+
+        with pytest.raises(UnsupportedEntryError, match=r"Refused \['t'\]"):
+            Config(store)["t"] = value
+
+        assert "t" not in Config(store)
+
+    def test_a_block_left_without_a_parent_refuses_itself(self) -> None:
+        """Test a block whose parent dropped it, which has nowhere to go for a line."""
+        store = FakeStore({}, refused=[("z",)])
+        store.addable = False
+
+        with pytest.raises(UnsupportedEntryError):
+            Config(store)["z"] = 1
+
+        assert store.asked("add_path") == [(("z",), ("z",), 1)]
 
 
 class TestDeleting:
@@ -354,7 +466,7 @@ class TestRemainingMappingProtocol:
 
         cfg.update({"y": 2}, z=3)
 
-        assert store.asked("add") == [("y", "y", 2), ("z", "z", 3)]
+        assert store.asked("add_path") == [(("y",), ("y",), 2), (("z",), ("z",), 3)]
 
     def test_update_from_pairs(self, config) -> None:
         """Test the iterable-of-pairs form, which takes the other branch."""
@@ -362,7 +474,7 @@ class TestRemainingMappingProtocol:
 
         cfg.update([("y", 2)])
 
-        assert store.asked("add") == [("y", "y", 2)]
+        assert store.asked("add_path") == [(("y",), ("y",), 2)]
 
     def test_setdefault(self, config) -> None:
         """Test that an absent key is added and a present one is left as it is."""
@@ -370,7 +482,7 @@ class TestRemainingMappingProtocol:
 
         assert cfg.setdefault("a", 99) == 1
         assert cfg.setdefault("z", 3) == 1
-        assert store.asked("add") == [("z", "z", 3)]
+        assert store.asked("add_path") == [(("z",), ("z",), 3)]
 
     def test_in_place_merge(self, config) -> None:
         """Test that ``|=`` goes through assignment rather than dict's own merge."""
@@ -378,7 +490,7 @@ class TestRemainingMappingProtocol:
 
         cfg |= {"z": 3}
 
-        assert store.asked("add") == [("z", "z", 3)]
+        assert store.asked("add_path") == [(("z",), ("z",), 3)]
 
     def test_clear(self, config) -> None:
         """Test that emptying the dict empties the tree with it."""

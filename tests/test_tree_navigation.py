@@ -11,7 +11,7 @@ all -- without a grammar contrived to produce each one.
 """
 
 import pytest
-from conftest import entry_node, value_node, ws_node
+from conftest import entry_node, key_node, value_node, ws_node
 from lark import Token, Tree
 
 from access.config.tree_navigation import (
@@ -25,6 +25,8 @@ from access.config.tree_navigation import (
     index_positions,
     is_comment_line,
     is_value_node,
+    key_token,
+    line_index,
     locate_entry,
     node_at,
     node_values,
@@ -215,6 +217,38 @@ class TestEntryInsertionIndex:
         """Test that the run ends at an entry, so the index is one past the *last* entry."""
         container = Tree("start", [scalar("a"), comment_line(), scalar("b"), line()])
         assert entry_insertion_index(container) == 3
+
+    def test_after_a_line_given(self) -> None:
+        """Test an entry placed beside another, after that line's comment run."""
+        container = Tree("start", [scalar("a"), comment_line(), scalar("b"), line()])
+        assert entry_insertion_index(container, after=0) == 2
+
+
+class TestLinesAndKeys:
+    """Which line an entry is on, and the token naming its key."""
+
+    def test_line_index_matches_by_identity(self) -> None:
+        """Test two lines written the same way, which compare equal as trees."""
+        first, second = scalar("a"), scalar("a")
+        container = Tree("start", [line(first), Token("NEWLINE", "\n"), line(second)])
+
+        assert line_index(container, second) == 2
+
+    def test_key_token_is_that_of_the_first_key(self) -> None:
+        """Test an entry writing its key twice, as a MOM6 block does to close itself."""
+        entry = Tree("key_block", [key_node("open"), Token("PERCENT", "%"), key_node("close")])
+
+        assert key_token(entry) == "open"
+
+    def test_key_token_of_an_entry_with_no_key(self) -> None:
+        """Test that an entry rule node with nothing naming it is refused."""
+        with pytest.raises(ValueError, match="No 'key' rule nodes"):
+            key_token(Tree("key_value", [value_node()]))
+
+    def test_key_token_of_a_key_holding_no_token(self) -> None:
+        """Test a ``key`` rule node whose first child is a rule, not the name itself."""
+        with pytest.raises(TypeError, match="No key found"):
+            key_token(Tree("key_value", [Tree("key", [Tree("name", [])])]))
 
 
 def repeat(count: int, inner: Tree | None = None) -> Tree:

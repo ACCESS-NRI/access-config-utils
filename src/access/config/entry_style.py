@@ -46,7 +46,7 @@ from access.config.grammar_contract import (
 )
 from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
 from access.config.tree_edits import blank_comments
-from access.config.tree_navigation import entries_of, entry_chain, entry_nodes
+from access.config.tree_navigation import entry_chain, entry_nodes
 
 if TYPE_CHECKING:
     from lark.reconstruct import Reconstructor
@@ -213,7 +213,9 @@ def style_matches(template: EntryTemplate, style: EntryStyle) -> bool:
 # --- Style probing ---
 
 
-def probe_entry_style(container: Tree, reconstructor: Reconstructor | None = None) -> EntryStyle:
+def probe_entry_style(
+    container: Tree, reconstructor: Reconstructor | None = None, upto: int | None = None
+) -> EntryStyle:
     """Read how the entries in *container* are written, to match when adding a new one.
 
     Each kind of whitespace is taken from the last entry that actually demonstrates it: the
@@ -236,6 +238,9 @@ def probe_entry_style(container: Tree, reconstructor: Reconstructor | None = Non
         container (Tree): The container rule node the new entry will be added to.
         reconstructor (Reconstructor | None): Writes a parse tree out as text, to copy
             whole entries with; ``None`` to read the whitespace alone.
+        upto (int | None): Where the new entry is to go, as an index into the children of
+            *container*: only the entries above it are read, so the nearest of them is the
+            one written just before it. ``None`` reads them all.
 
     Returns:
         EntryStyle: The layout to copy, or a style with ``has_donor`` false.
@@ -243,7 +248,8 @@ def probe_entry_style(container: Tree, reconstructor: Reconstructor | None = Non
     An unusually spaced neighbour is matched rather than normalised: a key added beside
     ``A   =   1`` is written ``B   =   2``, since a minimal diff matters more than tidiness.
     """
-    entries = entries_of(container)
+    lines = container.children[:upto]
+    entries = [entry for line in lines if isinstance(line, Tree) for entry in entry_nodes(line)]
     if not entries:
         return EntryStyle()
 
@@ -257,11 +263,13 @@ def probe_entry_style(container: Tree, reconstructor: Reconstructor | None = Non
     with_elements = [shape for shape in shapes if len(shape[3]) > 1]
     element_pads = with_elements[-1][3][1] if with_elements else None
     key_pads, split = (assigning[-1][1], assigning[-1][2]) if assigning else (None, 0)
-    donors = _donors(container, reconstructor) if reconstructor is not None else ()
+    donors = _donors(lines, reconstructor) if reconstructor is not None else ()
     return EntryStyle(shapes[-1][0], key_pads, split, element_pads, has_donor=True, donors=donors)
 
 
-def probe_sibling_block_style(container: Tree, reconstructor: Reconstructor | None = None) -> EntryStyle:
+def probe_sibling_block_style(
+    container: Tree, reconstructor: Reconstructor | None = None, upto: int | None = None
+) -> EntryStyle:
     """Read the whitespace used inside the blocks of *container*, for a block just created.
 
     A block created by an assignment starts empty, so ``probe_entry_style`` finds nothing in
@@ -273,12 +281,16 @@ def probe_sibling_block_style(container: Tree, reconstructor: Reconstructor | No
 
     Only the rule named ``BLOCK_RULE`` is looked at, and only as a direct child of the
     entry, which is the same contract ``ConfigToDict.key_block`` relies on to find the body
-    of a block.
+    of a block. For an entry that chains others, such as an FMS field table's
+    ``"tracer", "ocean_mod", "age"``, that entry is the innermost, ``age``.
 
     Args:
         container (Tree): The container rule node the new block was added to.
         reconstructor (Reconstructor | None): Writes a parse tree out as text, to copy
             whole entries with; ``None`` to read the whitespace alone.
+        upto (int | None): The index of the child of *container* the new block is written
+            in, so that the search starts at the block just above it. ``None`` searches
+            them all, from the last.
 
     Returns:
         EntryStyle: The layout to copy, or a style with ``has_donor`` false when no sibling
@@ -287,10 +299,12 @@ def probe_sibling_block_style(container: Tree, reconstructor: Reconstructor | No
     A new block is laid out like the block next to it, not like a fresh file: if the block
     above indents its entries, so does this one.
     """
-    for entry in reversed(entries_of(container)):
-        if entry.data != KEY_BLOCK:
+    lines = container.children[:upto]
+    for entry in reversed([entry for line in lines if isinstance(line, Tree) for entry in entry_nodes(line)]):
+        innermost = entry_chain(entry)[-1]
+        if innermost.data != KEY_BLOCK:
             continue
-        for child in entry.children:
+        for child in innermost.children:
             if isinstance(child, Tree) and child.data == BLOCK_RULE:
                 style = probe_entry_style(child, reconstructor)
                 if style.has_donor:
@@ -367,14 +381,16 @@ _VALUE_MARKER = "\x00V\x00"
 _MARKERS = re.compile("\x00(K[0-9]+|V)\x00")
 
 
-def _donors(container: Tree, reconstructor: Reconstructor) -> tuple[tuple[DonorSignature, EntryTemplate], ...]:
-    """Return a template copied from the last entry of each kind in *container*.
+def _donors(
+    lines: Sequence[Tree | Token], reconstructor: Reconstructor
+) -> tuple[tuple[DonorSignature, EntryTemplate], ...]:
+    """Return a template copied from the last entry of each kind on *lines*.
 
     The search runs from the last line upwards, so only one entry of each kind is copied
     unless an entry cannot be, when the one above it is tried.
 
     Args:
-        container (Tree): The container rule node.
+        lines (Sequence[Tree | Token]): Children of a container rule node.
         reconstructor (Reconstructor): Writes a parse tree out as text.
 
     Returns:
@@ -382,7 +398,7 @@ def _donors(container: Tree, reconstructor: Reconstructor) -> tuple[tuple[DonorS
             template.
     """
     found: dict[DonorSignature, EntryTemplate] = {}
-    for line in reversed(container.children):
+    for line in reversed(lines):
         entries = entry_nodes(line) if isinstance(line, Tree) else []
         if len(entries) != 1:
             continue

@@ -26,11 +26,17 @@ from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any, NoReturn, SupportsIndex
 
 from access.config.grammar_contract import KEY_BLOCK, KEY_LIST
+from access.config.grammar_values import UnsupportedEntryError
 from access.config.tree_reader import entry_value
 
 if TYPE_CHECKING:
     from access.config.config_store import ConfigStore
     from access.config.tree_reader import EntryRef
+
+
+_Leftovers = list[tuple[int, list[tuple[str, Any]]]]
+"""Items of a dict still to add after a deeper key was written for its first: for each
+block, how many keys deep it is, and its other items, as the caller spelled their keys."""
 
 
 class ConfigList(list):
@@ -290,8 +296,9 @@ class Config(dict):
         A key that is not present yet is added, provided the format can express it: a
         scalar, a list of two or more values, ``None`` where the format allows a valueless
         assignment, or a ``dict`` to create a block and fill it. The new entry is written
-        after the last existing one, indented to match it. A block created this way has no
-        entry of its own to match, so its contents follow the nearest sibling block instead.
+        after the last existing one, written like it; in a block written one component per
+        line, after the last line of that block. A block created this way has no entry of
+        its own to match, so its contents follow the nearest sibling block instead.
 
         Args:
             key (str): The key to assign to. For a new key, the name is written into the
@@ -330,6 +337,17 @@ class Config(dict):
     def _add(self, key: str, raw_key: str, value: Any) -> None:
         """Add an entry for a key that is not in the configuration yet.
 
+        The entry is written by the nearest configuration whose block has a body in the
+        file. That is this one, usually; for a block merged from several in the file, or
+        written one component per line as a Fortran derived type is, it is the one holding
+        it, which writes a line carrying the whole key path -- ``a%d = 1`` for ``d`` in
+        ``a``. The configurations on that path are then read again, in place, so that a
+        caller holding one sees the new key.
+
+        A ``dict`` the format cannot write as a block of its own is written one level
+        deeper: the Fortran ``nml["g"]["t"] = {"a": 1}`` is the line ``t%a = 1``. What else
+        the dict holds is then added to the block that line created.
+
         A block arrives empty, because nothing in it can say how its contents should be
         spaced until it has some. It is handed the style of its nearest sibling and then
         filled through this same path, one key at a time, so nesting to any depth works.
@@ -339,15 +357,99 @@ class Config(dict):
             raw_key (str): The key as the caller wrote it, used for the file text.
             value (Any): The value to store.
         """
-        ref = self._store.add(key, raw_key, value)
-        stored = self._wrap(key, ref)
-        super().__setitem__(key, stored)
+        anchor, path = self._nearest_addable()
+        keys, ref, value, rest = anchor._write_path([*path, key], [*path, raw_key], value)
+        if len(keys) == 1:
+            dict.__setitem__(self, key, self._wrap(key, ref))
+        else:
+            anchor._refresh(keys)
 
-        if ref.category == KEY_BLOCK:
-            assert isinstance(stored, Config)
-            stored._store.fallback_style = self._store.created_block_style()
+        if isinstance(value, dict):
+            block = anchor._at(keys)
+            block._store.fallback_style = anchor._store.created_block_style(ref.entry_nodes[0])
             for block_key, block_value in value.items():
-                stored[block_key] = block_value
+                block[block_key] = block_value
+        for depth, items in reversed(rest):
+            owner = anchor._at(keys[:depth])
+            for item_key, item_value in items:
+                owner[item_key] = item_value
+
+    def _nearest_addable(self) -> tuple[Config, list[str]]:
+        """Return the nearest configuration a new line can go in, and the keys down to this.
+
+        Returns:
+            tuple[Config, list[str]]: This configuration, or the nearest one holding it
+                whose block has a body in the file; and the keys leading from that one down
+                to this, empty if it is this.
+        """
+        anchor, path = self, []
+        while not anchor._store.addable and anchor._parent is not None:
+            anchor, key = anchor._parent
+            path.append(key)
+        return anchor, path[::-1]
+
+    def _write_path(
+        self, keys: list[str], raw_keys: list[str], value: Any
+    ) -> tuple[list[str], EntryRef, Any, _Leftovers]:
+        """Write *value* at the key path *keys* below this configuration, deeper if need be.
+
+        A non-empty ``dict`` the format refuses as a block is written as its first item one
+        level down instead, and so on, until something is written or there is nothing left
+        to go down into.
+
+        Args:
+            keys (list[str]): The normalised key path.
+            raw_keys (list[str]): The same keys as the caller wrote them.
+            value (Any): The value to store.
+
+        Returns:
+            tuple[list[str], EntryRef, Any, _Leftovers]: The key path written, the new
+                entry, the value written at the end of it, and the items of each dict gone
+                down through that are still to add.
+
+        Raises:
+            UnsupportedEntryError: The refusal of the path first asked for, if no level
+                down could be written either.
+        """
+        rest: _Leftovers = []
+        refusal = None
+        while True:
+            try:
+                return keys, self._store.add_path(keys, raw_keys, value), value, rest
+            except UnsupportedEntryError as error:
+                refusal = refusal or error
+                if not isinstance(value, dict) or not value:
+                    raise refusal from None
+            (raw, inner), *others = value.items()
+            rest.append((len(keys), others))
+            keys, raw_keys, value = [*keys, self._store.ctx.normalise_key(raw)], [*raw_keys, raw], inner
+
+    def _refresh(self, path: Sequence[str]) -> None:
+        """Read this configuration again after an entry was added below it, down *path*.
+
+        The configurations already on the path are kept, so that a caller holding one sees
+        the new key, and are pointed at their blocks as read afresh: a block merged from
+        several in the file is a node the reader builds, and reading again builds a new one.
+        Where the path leaves them, the rest is new and is wrapped whole.
+
+        Args:
+            path (Sequence[str]): Keys leading from this configuration to the new entry.
+        """
+        refs = self._store.reread()
+        key = path[0]
+        child = dict.get(self, key)
+        if isinstance(child, Config) and len(path) > 1:
+            child._store.retarget(refs[key])
+            child._refresh(path[1:])
+        else:
+            dict.__setitem__(self, key, self._wrap(key, refs[key]))
+
+    def _at(self, path: Sequence[str]) -> Config:
+        """Return the nested configuration the keys of *path* lead to from this one."""
+        config = self
+        for key in path:
+            config = dict.__getitem__(config, key)
+        return config
 
     def __delitem__(self, key: str) -> None:
         """Override method to del item from dict, keeping the parse tree in sync."""

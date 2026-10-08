@@ -315,6 +315,13 @@ class TestProbeEntryStyle:
 
         assert style.key_pads == (" ", " ")
 
+    def test_reads_only_the_entries_above_where_the_new_one_goes(self) -> None:
+        """Test an entry written among others, copying the one above, not the last."""
+        container = Tree("block", [styled_entry("  ", " "), styled_entry("    ", " ", key="b")])
+
+        assert probe_entry_style(container, upto=1).indent == "  "
+        assert probe_entry_style(container, upto=0) == EntryStyle()
+
     def test_ignores_children_that_are_tokens(self) -> None:
         """Test that punctuation kept as a bare terminal is not a whitespace run."""
         entry = Tree("key_value", [Tree("key", [Token("CNAME", "a")]), Token("EQ", "="), value_node()])
@@ -349,6 +356,22 @@ class TestProbeSiblingBlockStyle:
 
         assert probe_sibling_block_style(entries_only) == EntryStyle()
         assert probe_sibling_block_style(empty_block) == EntryStyle()
+
+    def test_takes_the_block_at_the_end_of_a_chain(self) -> None:
+        """Test an FMS field table entry: a name block in a model in a type."""
+        name = entry_node("key_block", "age", Tree("block", [styled_entry("  ", " ")]))
+        model = entry_node("key_block", "ocean_mod", Tree("name_body", [name]))
+        kind = entry_node("key_block", "tracer", Tree("model_body", [model]))
+
+        assert probe_sibling_block_style(Tree("start", [kind])).indent == "  "
+
+    def test_searches_upwards_from_the_block_created(self) -> None:
+        """Test that the block above a new one wins over a later one."""
+        above = entry_node("key_block", "above", Tree("block", [styled_entry("    ", " ", key="x")]))
+        new = entry_node("key_block", "new", Tree("block", []))
+        below = entry_node("key_block", "below", Tree("block", [styled_entry("  ", " ", key="y")]))
+
+        assert probe_sibling_block_style(Tree("start", [above, new, below]), upto=1).indent == "    "
 
     def test_ignores_a_block_entry_whose_body_is_not_a_block_node(self) -> None:
         """Test the contract: the body must be a rule *named* ``block``, not just nested."""
