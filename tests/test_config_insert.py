@@ -214,6 +214,32 @@ class TestEntryMatchesAChain:
         assert not entry_matches(refs, ("a", "b"), 1, self.CTX)
 
 
+class TestEntryMatchesARecord:
+    """A record, which reads back as the list of the one record its entry writes."""
+
+    RECORD = {"value": "fixed", "a": 1}
+
+    @staticmethod
+    def records(*controls: str) -> dict[str, EntryRef]:
+        """Return the read-back of an entry per control, each one record of ``r``."""
+        nodes = tuple(value_node("named_assignments", f'"fixed", "{control}"') for control in controls)
+        entries = tuple(entry_node("key_value", "r", node) for node in nodes)
+        return {"r": EntryRef("key_list", entries, nodes, collected=True)}
+
+    def test_matches_as_a_list_of_one(self) -> None:
+        """Test the record asked for, written as an entry, coming back as itself."""
+        assert entry_matches(self.records("a=1"), ("r",), self.RECORD, FakeContext(), "key_value")
+
+    def test_refuses_another_record_or_more_than_one(self) -> None:
+        """Test that the one record has to be the one asked for."""
+        assert not entry_matches(self.records("a=2"), ("r",), self.RECORD, FakeContext(), "key_value")
+        assert not entry_matches(self.records("a=1", "a=1"), ("r",), self.RECORD, FakeContext(), "key_value")
+
+    def test_refuses_a_record_where_a_block_was_asked_for(self) -> None:
+        """Test that a dict asks for a block unless a record is asked for by name."""
+        assert not entry_matches(self.records("a=1"), ("r",), self.RECORD, FakeContext())
+
+
 class TestInsertEntryRejections:
     """What is refused before any candidate is even asked for."""
 
@@ -419,3 +445,24 @@ def test_insert_entry_reads_the_candidate_in_a_throwaway_container(container) ->
     assert throwaway is not container
     assert throwaway.data == container.data
     assert throwaway.children == [node]
+
+
+def test_insert_entry_writes_a_dict_as_the_category_asked_for(container) -> None:
+    """Test that a record asks for a scalar entry, where a dict would make a block."""
+    asked: list[str] = []
+
+    def record(info, container_rule, category, *rest):
+        asked.append(category)
+        return iter(())
+
+    patches = patch.multiple(
+        config_insert,
+        iter_entry_snippets=record,
+        entry_insertion_index=lambda c: 0,
+        admitted_value_rules=lambda i, c, cat, depth: frozenset(),
+    )
+
+    with patches, pytest.raises(UnsupportedEntryError, match="key_value"):
+        insert_entry(container, FakeContext(), ("r",), ("r",), {"value": "x", "a": 1}, EntryStyle(), None, "key_value")
+
+    assert asked == ["key_value"]

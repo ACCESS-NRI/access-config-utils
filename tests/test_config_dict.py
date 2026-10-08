@@ -20,7 +20,7 @@ import pytest
 from conftest import FakeContext, FakeStore, entry_node, value_node
 from lark import Tree
 
-from access.config.config_dict import Config, ConfigBlockList, ConfigList
+from access.config.config_dict import Config, ConfigBlockList, ConfigList, ConfigRecord
 from access.config.grammar_values import UnsupportedEntryError
 from access.config.tree_reader import EntryRef
 
@@ -602,6 +602,159 @@ class TestConfigList:
         for duplicate in (copy.copy(listed), copy.deepcopy(listed), pickle.loads(pickle.dumps(listed))):
             assert type(duplicate) is list
             assert duplicate == [0, 1, 2]
+
+
+def records_ref(key: str = "r", *controls: str) -> EntryRef:
+    """Return a list of records under *key*, one entry per control, each named ``a``."""
+    nodes = tuple(value_node("named_assignments", f'"a", "{control}"') for control in controls)
+    return EntryRef("key_list", tuple(entry_node("key_value", key, node) for node in nodes), nodes, collected=True)
+
+
+class TestConfigRecord:
+    """A record of a list written one entry per record, as a dict writing through it."""
+
+    FIRST, SECOND = {"value": "a", "x": 1}, {"value": "b", "x": 2}
+
+    @pytest.fixture
+    def records(self) -> tuple[ConfigList, FakeStore]:
+        """Return a list of two records over a store."""
+        store = FakeStore({"r": records_ref("r", "x=1", "x=2")})
+        return ConfigList([dict(self.FIRST), dict(self.SECOND)], store, "r"), store
+
+    def test_each_dict_of_a_list_is_a_record(self, records) -> None:
+        """Test that the list hands out records, which read as plain dicts."""
+        listed, _ = records
+
+        assert all(isinstance(element, ConfigRecord) for element in listed)
+        assert listed == [self.FIRST, self.SECOND]
+
+    @pytest.mark.parametrize(
+        ("write", "expected"),
+        [
+            pytest.param(lambda r: r.__setitem__("x", 5), {"value": "a", "x": 5}, id="set"),
+            pytest.param(lambda r: r.__delitem__("x"), {"value": "a"}, id="del"),
+            pytest.param(lambda r: r.update({"y": 1}, z=2), {"value": "a", "x": 1, "y": 1, "z": 2}, id="update"),
+            pytest.param(lambda r: r.setdefault("y", 3), {"value": "a", "x": 1, "y": 3}, id="setdefault"),
+            pytest.param(lambda r: r.pop("x"), {"value": "a"}, id="pop"),
+            pytest.param(lambda r: r.popitem(), {"value": "a"}, id="popitem"),
+            pytest.param(lambda r: r.__ior__({"y": 1}), {"value": "a", "x": 1, "y": 1}, id="ior"),
+            pytest.param(lambda r: r.clear(), {}, id="clear"),
+        ],
+    )
+    def test_a_write_is_a_write_of_the_whole_record(self, records, write, expected) -> None:
+        """Test that every way of changing the dict reaches the file, record and all."""
+        listed, store = records
+        record = listed[0]
+
+        write(record)
+
+        assert record == expected
+        assert listed[0] is record
+        assert store.asked("replace") == [("r", [expected, self.SECOND])]
+
+    def test_reading_a_parameter_writes_nothing(self, records) -> None:
+        """Test the calls that leave the record as it is."""
+        listed, store = records
+        record = listed[0]
+
+        assert record.setdefault("x", 9) == 1
+        assert record.pop("nope", "fallback") == "fallback"
+        with pytest.raises(KeyError):
+            record.pop("nope")
+        assert store.asked("replace") == []
+
+    def test_a_write_the_file_refuses_leaves_the_record_as_it_was(self, records) -> None:
+        """Test that the dict changes only once the file has."""
+        listed, store = records
+
+        def refuse(key, values):
+            raise TypeError("refused")
+
+        store.replace = refuse  # type: ignore[method-assign]
+        with pytest.raises(TypeError, match="refused"):
+            listed[0]["x"] = 5
+
+        assert listed[0] == self.FIRST
+
+    def test_a_record_stays_one_through_a_change_of_length(self, records) -> None:
+        """Test that a record held by a caller follows its place in the list."""
+        listed, _ = records
+        second = listed[1]
+
+        listed.insert(0, {"value": "c"})
+
+        assert listed[2] is second
+        assert isinstance(listed[0], ConfigRecord)
+
+    def test_a_record_the_list_no_longer_holds_refuses_a_write(self, records) -> None:
+        """Test that a removed record says so rather than writing somewhere else."""
+        listed, _ = records
+        first = listed[0]
+        listed.pop(0)
+
+        with pytest.raises(ValueError, match="no longer in the list"):
+            first["x"] = 5
+
+    def test_a_copy_is_plain_data(self, records) -> None:
+        """Test that copying a record, or a list of them, gives dicts, not views."""
+        listed, _ = records
+        for duplicate in (copy.copy(listed[0]), copy.deepcopy(listed[0]), pickle.loads(pickle.dumps(listed[0]))):
+            assert type(duplicate) is dict
+            assert duplicate == self.FIRST
+        assert [type(element) for element in copy.copy(listed)] == [dict, dict]
+
+
+class TestAddingRecords:
+    """A list of dicts assigned to a new key: one record per entry."""
+
+    def test_one_record_is_written_as_an_entry(self) -> None:
+        """Test that the dict is asked for as a scalar entry, not as a block."""
+        store = FakeStore({}, added={"r": records_ref("r", "x=1")})
+        config = Config(store)
+
+        config["r"] = [{"value": "a", "x": 1}]
+
+        assert store.asked("add_path") == [(("r",), ("r",), {"value": "a", "x": 1}, "key_value")]
+        assert config["r"] == [{"value": "a", "x": 1}]
+        assert isinstance(config["r"][0], ConfigRecord)
+
+    def test_the_others_are_added_beside_the_first(self) -> None:
+        """Test that the rest arrive as new records after the one written."""
+        store = FakeStore({}, added={"r": records_ref("r", "x=1")})
+        config = Config(store)
+
+        config["r"] = [{"value": "a", "x": 1}, {"value": "b", "x": 2}]
+
+        assert store.asked("resize") == [("r", [{"value": "a", "x": 1}, {"value": "b", "x": 2}], [0, None])]
+        assert config["r"] == [{"value": "a", "x": 1}, {"value": "b", "x": 2}]
+
+    def test_the_key_goes_again_if_a_record_is_refused(self) -> None:
+        """Test that a refused record leaves no part of the list behind."""
+        store = FakeStore({}, added={"r": records_ref("r", "x=1")})
+
+        def refuse(key, values, origins):
+            raise TypeError("refused")
+
+        store.resize = refuse  # type: ignore[method-assign]
+        config = Config(store)
+
+        with pytest.raises(TypeError, match="refused"):
+            config["r"] = [{"value": "a", "x": 1}, {"value": "b", "x": 2}]
+
+        assert "r" not in config
+        assert store.asked("remove") == ["r"]
+
+    def test_a_whole_list_of_records_assigned_over_one(self) -> None:
+        """Test that the records stay records, matched to the ones held by position."""
+        store = FakeStore({"r": records_ref("r", "x=1")})
+        config = Config(store)
+        held = config["r"][0]
+
+        config["r"] = [{"value": "a", "x": 5}]
+
+        assert store.asked("replace") == [("r", [{"value": "a", "x": 5}])]
+        assert config["r"][0] is held
+        assert held == {"value": "a", "x": 5}
 
 
 class TestConfigBlockList:

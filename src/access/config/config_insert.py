@@ -67,7 +67,8 @@ def _same_value(stored: Any, requested: Any) -> bool:
     The type is compared as well as the value, because several value types share a Python
     type and a written value can be read back as the wrong one: ``Path("foo")`` writes as
     ``foo``, which a grammar with a bare-word value type reads back as a plain ``str``. And
-    a NaN read back is the NaN requested, though the two compare unequal.
+    a NaN read back is the NaN requested, though the two compare unequal. A record is
+    compared whole, the type of every value in it included.
 
     Args:
         stored (Any): The value read back from the candidate text.
@@ -79,7 +80,9 @@ def _same_value(stored: Any, requested: Any) -> bool:
     return identical_values(stored, requested)
 
 
-def entry_matches(refs: Mapping[str, EntryRef], keys: Sequence[str], value: Any, ctx: ParseContext) -> bool:
+def entry_matches(
+    refs: Mapping[str, EntryRef], keys: Sequence[str], value: Any, ctx: ParseContext, category: str | None = None
+) -> bool:
     """Report whether a candidate entry, read back from its text, holds what was asked for.
 
     This is what makes candidate ranking a matter of style rather than of correctness: a
@@ -92,6 +95,9 @@ def entry_matches(refs: Mapping[str, EntryRef], keys: Sequence[str], value: Any,
             next and nothing else.
         value (Any): The value requested for the innermost key.
         ctx (ParseContext): Reads the blocks of a chain.
+        category (str | None): The category of entry asked for, where *value* does not
+            say: ``key_value`` for a record, which is a ``dict``. A record reads back as
+            the list of the one record the entry writes.
 
     Returns:
         bool: True if the candidate is an exact match.
@@ -105,7 +111,10 @@ def entry_matches(refs: Mapping[str, EntryRef], keys: Sequence[str], value: Any,
                 return False
             assert ref.block_node is not None
             refs = read_entries(ref.block_node, ctx)
-    if ref.category != entry_category(value):
+    expected = category or entry_category(value)
+    if ref.collected:
+        return expected == KEY_VALUE and _same_value(entry_value(ref), [value])
+    if ref.category != expected:
         return False
     if ref.category == KEY_BLOCK:
         # A new block starts empty; its contents are added afterwards.
@@ -129,6 +138,7 @@ def insert_entry(
     value: Any,
     style: EntryStyle,
     index: int | None = None,
+    category: str | None = None,
 ) -> EntryRef:
     """Write a new entry into *container* and return where it landed.
 
@@ -143,6 +153,9 @@ def insert_entry(
         style (EntryStyle): The layout to copy from the neighbouring entries.
         index (int | None): Where among the children of *container* the entry goes, or
             ``None`` for after the last entry, as ``entry_insertion_index`` finds it.
+        category (str | None): The category of entry to write, where *value* does not
+            say: ``key_value`` for a record, which is a ``dict`` and would otherwise make a
+            block.
 
     Returns:
         EntryRef: Where the new entry lives in the parse tree: for a chain, the reference to
@@ -157,7 +170,7 @@ def insert_entry(
         if not isinstance(raw_key, str) or not ctx.accepts_key(raw_key):
             raise ValueError(f"Not a valid configuration key: {raw_key!r}")
 
-    category = entry_category(value)
+    category = category or entry_category(value)
     if category == KEY_LIST and len(value) < 2:
         # Every supported format needs at least two values to be a list rather than a
         # scalar, and writing a scalar would put the wrong type in the dict.
@@ -185,7 +198,7 @@ def insert_entry(
             refs = read_entries(Tree(container.data, list(nodes)), ctx)
         except (UnexpectedInput, ValueError, TypeError):
             continue
-        if not entry_matches(refs, keys, value, ctx):
+        if not entry_matches(refs, keys, value, ctx, category):
             continue
 
         splice_entry_nodes(container, nodes, index)

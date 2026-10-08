@@ -37,6 +37,7 @@ from access.config.grammar_contract import (
     KEY_NULL,
     KEY_VALUE,
 )
+from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
 from access.config.tree_navigation import (
     flatten_slots,
     index_positions,
@@ -86,6 +87,9 @@ class EntryRef:
             for the run of equal elements that follows it. Once positions come from
             qualifiers that is no longer true: the same repeat can back positions 1 and 3
             with something else at 2, and reading it at each would multiply its values.
+        collected (bool): Whether the entry is a list of records, each written by an entry
+            of its own: a ``key_list`` whose ``entry_nodes`` and ``value_nodes`` correspond
+            one for one, in the order the file has them. See ``ValueTypeHandler.collects``.
     """
 
     category: str
@@ -94,6 +98,7 @@ class EntryRef:
     block_nodes: tuple[Tree, ...] = ()
     addable: bool = True
     values: tuple[Any, ...] | None = None
+    collected: bool = False
 
     @property
     def block_node(self) -> Tree | None:
@@ -242,6 +247,40 @@ class EntryReader(Interpreter):
             ref = replace(ref, entry_nodes=previous.entry_nodes + ref.entry_nodes)
         self._refs[key] = ref
 
+    def _refuse_records(self, key: str) -> None:
+        """Refuse an entry for a key the file has written records for.
+
+        Args:
+            key (str): The normalised key.
+
+        Raises:
+            ValueError: If *key* has records already. Taking the entry as the key's value
+                would drop them, and as one more record would make it something it is not.
+        """
+        previous = self._refs.get(key)
+        if previous is not None and previous.collected:
+            raise ValueError(f"'{key}' is written both as records and otherwise")
+
+    def _collect(self, key: str, tree: Tree, node: Tree) -> None:
+        """Add a record to the list of them a key holds, in the order the file has them.
+
+        Args:
+            key (str): The normalised key.
+            tree (Tree): The entry rule node writing the record.
+            node (Tree): The value node holding it.
+
+        Raises:
+            ValueError: If *key* was written as something other than records before.
+        """
+        previous = self._refs.get(key)
+        if previous is None:
+            self._refs[key] = EntryRef(KEY_LIST, (tree,), (node,), collected=True)
+        elif previous.collected:
+            entries, nodes = (*previous.entry_nodes, tree), (*previous.value_nodes, node)
+            self._refs[key] = replace(previous, entry_nodes=entries, value_nodes=nodes)
+        else:
+            raise ValueError(f"'{key}' is written both as records and otherwise")
+
     @staticmethod
     def _index_node(tree: Tree) -> Tree | None:
         """Return the array qualifier of an entry, if it has one."""
@@ -376,15 +415,26 @@ class EntryReader(Interpreter):
     def key_value(self, tree: Tree) -> None:
         """Interpreter callback for ``"key_value"`` rule nodes.
 
+        A value whose type collects is one record of a list the key holds, which the file
+        writes one entry per record; see ``ValueTypeHandler.collects``.
+
         Args:
             tree (Tree): Rule node produced by the ``"key_value"`` grammar rule.
 
         Raises:
             ValueError: If the node holds more than one value, which means the grammar
-                aliased it to the wrong category.
+                aliased it to the wrong category, or the key is written both as records and
+                otherwise.
         """
         nodes = self._value_nodes(tree)
-        stored = self._place(self._get_key(tree), tree, element_values(nodes), nodes)
+        key = self._get_key(tree)
+        node = nodes[0]
+        handler = None if node is None else VALUE_TYPE_HANDLER_REGISTRY.get(str(node.data))
+        if node is not None and handler is not None and handler.collects:
+            self._collect(key, tree, node)
+            return
+        self._refuse_records(key)
+        stored = self._place(key, tree, element_values(nodes), nodes)
         if stored is None:
             return
         distinct = {id(node) for node in nodes}
@@ -402,7 +452,9 @@ class EntryReader(Interpreter):
             tree (Tree): Rule node produced by the ``"key_list"`` grammar rule.
         """
         nodes = self._value_nodes(tree)
-        stored = self._place(self._get_key(tree), tree, element_values(nodes), nodes)
+        key = self._get_key(tree)
+        self._refuse_records(key)
+        stored = self._place(key, tree, element_values(nodes), nodes)
         if stored is not None:
             self._record(stored, EntryRef(KEY_LIST, (tree,), nodes))
 
@@ -477,6 +529,7 @@ class EntryReader(Interpreter):
             tree (Tree): Rule node produced by the ``"key_null"`` grammar rule.
         """
         key = self._get_key(tree)
+        self._refuse_records(key)
         if self._index_node(tree) is not None or key in self._slots:
             # A valueless assignment can carry a qualifier too, and then it sets one
             # position of an array the other entries fill in: "v(2) = 3" beside "v(1) ="

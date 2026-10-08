@@ -61,6 +61,19 @@ PATH           : ("/" | "./" | "../")? PATH_COMPONENT ("/" PATH_COMPONENT)* ("/"
 text_line: TEXT_LINE
 TEXT_LINE: /(?!::)[^\s#](?:[^\r\n#]*[^\s#])?/
 
+// Values the FMS field manager types by their spelling, holding nothing it splits on: no
+// comma, no equals sign. In double quotes, or bare, where it may not end with the "/"
+// that would end a field table entry.
+inferred_string: INFERRED_STRING
+INFERRED_STRING: /"[^"\r\n,=]+"/
+inferred_text: INFERRED_TEXT
+INFERRED_TEXT: /[^\s"=,][^"\r\n=,]*[^\s"=,\/]|[^\s"=,\/]/
+
+// A name and a control of comma-separated parameters, read as one record:
+// "fixed", "surface_value=1.e30".
+named_assignments: NAMED_ASSIGNMENTS
+NAMED_ASSIGNMENTS: /"[^"\r\n]*"[ \t]*,[ \t]*"[^"\r\n]*=[^"\r\n]*"/
+
 // Space, newlines and comments
 ws: WS_INLINE
 NEWLINE: CR? LF
