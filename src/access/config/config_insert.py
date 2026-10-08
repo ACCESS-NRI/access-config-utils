@@ -148,7 +148,7 @@ def insert_entry(container: Tree, ctx: ParseContext, key: str, raw_key: str, val
         ctx.info,
         container_rule,
         category,
-        raw_key,
+        (raw_key,),
         value,
         style,
         ctx.entry_templates,

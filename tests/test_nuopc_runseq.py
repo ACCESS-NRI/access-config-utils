@@ -365,13 +365,26 @@ class TestAddingAndDeleting:
         ],
     )
     def test_adding_a_table(self, parser, value, added) -> None:
-        """Test that a new table is written after the last."""
+        """Test that a new table is written after the last.
+
+        Neither table above is copied: the only one is a list, whose rows are indented by
+        how deep in the loops each is, which says nothing about the rows of another.
+        """
         source = "runSeq::\n@3600\n  OCN\n@\n::\n"
         config = parser.parse(source)
 
         config["other"] = value
 
         assert str(config) == source + added
+        assert dict(parser.parse(str(config))) == dict(config)
+
+    def test_a_one_line_table_copies_the_one_above(self, parser) -> None:
+        """Test that a table of one row is written like the last such table, indent too."""
+        config = parser.parse("runSeq::\n  @3600\n::\n")
+
+        config["other"] = "ATM"
+
+        assert str(config) == "runSeq::\n  @3600\n::\nother::\n  ATM\n::\n"
         assert dict(parser.parse(str(config))) == dict(config)
 
     def test_deleting_a_table(self, parser) -> None:

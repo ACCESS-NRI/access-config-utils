@@ -31,7 +31,7 @@ from lark.exceptions import UnexpectedInput
 
 from access.config.config_insert import entry_matches
 from access.config.entry_generate import admitted_value_rules
-from access.config.grammar_contract import COMMENT_RULES, KEY_LIST, REPEAT_RULE
+from access.config.grammar_contract import KEY_LIST, REPEAT_RULE
 from access.config.grammar_values import (
     VALUE_TYPE_HANDLER_REGISTRY,
     UnsupportedEntryError,
@@ -39,7 +39,7 @@ from access.config.grammar_values import (
     select_value_rule,
 )
 from access.config.list_layout import VALUE_MARKER, ListText, layout_candidates
-from access.config.tree_edits import parse_entry_nodes, replace_entry_contents
+from access.config.tree_edits import blank_comments, parse_entry_nodes, replace_entry_contents
 from access.config.tree_navigation import is_value_node, locate_entry, node_at
 from access.config.tree_reader import read_entries
 
@@ -76,8 +76,8 @@ def resize_entry(
     entry = _resizable_entry(ref, key)
     container, line, path = locate_entry(entry, ctx.lark.options.start)
     text = ListText.from_marked(
-        _marked_text(ctx, container, line, path, blank_comments=False),
-        _marked_text(ctx, container, line, path, blank_comments=True),
+        _marked_text(ctx, container, line, path, blank=False),
+        _marked_text(ctx, container, line, path, blank=True),
         len(ref.value_nodes),
     )
     value_texts = _value_texts(ref, ctx, str(container.data), key, values, origins)
@@ -116,7 +116,7 @@ def _resizable_entry(ref: EntryRef, key: str) -> Tree:
     return ref.entry_nodes[0]
 
 
-def _marked_text(ctx: ParseContext, container: Tree, line: Tree, path: Sequence[int], *, blank_comments: bool) -> str:
+def _marked_text(ctx: ParseContext, container: Tree, line: Tree, path: Sequence[int], *, blank: bool) -> str:
     """Write out a copy of *line* with a marker in place of each value of its entry.
 
     Args:
@@ -124,8 +124,8 @@ def _marked_text(ctx: ParseContext, container: Tree, line: Tree, path: Sequence[
         container (Tree): The container the line is in.
         line (Tree): The line holding the entry.
         path (Sequence[int]): The way down from the line to the entry.
-        blank_comments (bool): Whether to write every comment as nothing, so that the text
-            between values can be copied without copying someone else's comment.
+        blank (bool): Whether to write every comment as nothing, so that the text between
+            values can be copied without copying someone else's comment.
 
     Returns:
         str: The text of the line.
@@ -136,12 +136,8 @@ def _marked_text(ctx: ParseContext, container: Tree, line: Tree, path: Sequence[
         token = node.children[0]
         assert isinstance(token, Token)
         node.children[0] = token.update(value=VALUE_MARKER.format(index))
-    if blank_comments:
-        for subtree in marked.iter_subtrees():
-            if subtree.data in COMMENT_RULES:
-                subtree.children = [
-                    child.update(value="") if isinstance(child, Token) else child for child in subtree.children
-                ]
+    if blank:
+        blank_comments(marked)
     return ctx.reconstructor.reconstruct(Tree(container.data, [marked]))
 
 

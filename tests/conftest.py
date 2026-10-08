@@ -98,7 +98,7 @@ def assert_canonical_entry(
         expected: The exact text expected.
         values: The value to write per category, for a format that cannot hold the usual.
     """
-    snippets = iter_entry_snippets(compiled.info, container, category, "NEWKEY", values[category], EntryStyle())
+    snippets = iter_entry_snippets(compiled.info, container, category, ("NEWKEY",), values[category], EntryStyle())
     first = next(iter(snippets))
     assert first == expected
 

@@ -145,9 +145,9 @@ class ConfigStore:
     def add(self, key: str, raw_key: str, value: Any) -> EntryRef:
         """Write an entry for a key this container does not have yet.
 
-        The whitespace comes from the entries already in this container, or -- when there
-        are none, as in a block created this session -- from the style handed down when it
-        was created.
+        The layout comes from the entries already in this container, or -- when there are
+        none, as in a block created this session -- from the style handed down when it was
+        created.
 
         Args:
             key (str): The normalised key, used to check what the candidate read back as.
@@ -167,7 +167,7 @@ class ConfigStore:
                 f"Cannot add '{key}': this block has no body in the file for a new entry to go in. "
                 "It is either merged from several blocks, or written one component per line"
             )
-        style = probe_entry_style(self.tree)
+        style = probe_entry_style(self.tree, self.ctx.reconstructor)
         if not style.has_donor:
             style = self.fallback_style
         ref = insert_entry(self.tree, self.ctx, key, raw_key, value, style)
@@ -185,7 +185,7 @@ class ConfigStore:
         Returns:
             EntryStyle: The style to hand to the new block's store.
         """
-        sibling = probe_sibling_block_style(self.tree)
+        sibling = probe_sibling_block_style(self.tree, self.ctx.reconstructor)
         return sibling if sibling.has_donor else self.fallback_style
 
     def remove(self, key: str) -> None:

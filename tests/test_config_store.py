@@ -184,6 +184,13 @@ class TestAdd:
         # One run per whitespace slot the neighbour used: either side of the "=".
         assert calls[0]["style"].key_pads == (" ", " ")
 
+    def test_offers_a_copy_of_the_entries_already_there(self, store, spy) -> None:
+        """Test that the store passes its reconstructor on, so whole entries are copied."""
+        calls, _ = spy
+        store.add("z", "z", 3)
+
+        assert calls[0]["style"].donor(1, "key_value") is not None
+
     def test_falls_back_to_the_inherited_style(self, ctx, spy) -> None:
         """Test the block created this session, which has no entry of its own to copy.
 
@@ -234,6 +241,13 @@ class TestCreatedBlockStyle:
         AddParent().visit(tree)
 
         assert ConfigStore(tree, ctx).created_block_style().indent == "  "
+
+    def test_carries_a_copy_of_the_sibling_entries(self, ctx) -> None:
+        """Test that the first entry of a new block is written like those of the last."""
+        tree = ctx.lark.parse("old<\n  p = 1\n>\n", start="start")
+        AddParent().visit(tree)
+
+        assert ConfigStore(tree, ctx).created_block_style().donor(1, "key_value") is not None
 
     def test_falls_back_to_this_container_own(self, ctx) -> None:
         """Test that a block nested in a new block inherits rather than going canonical."""

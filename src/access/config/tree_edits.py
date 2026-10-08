@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from lark import Token, Tree
 from lark.exceptions import UnexpectedInput
 
-from access.config.grammar_contract import KEY_LIST, KEY_VALUE, REPEAT_RULE
+from access.config.grammar_contract import COMMENT_RULES, KEY_LIST, KEY_VALUE, REPEAT_RULE
 from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY, identical_values
 from access.config.tree_navigation import (
     AddParent,
@@ -140,6 +140,25 @@ def replace_entry_contents(entry: Tree, fresh: Tree) -> None:
             child.parent = entry  # type: ignore[attr-defined]
     entry.children = fresh.children
     entry.data = fresh.data
+
+
+def blank_comments(node: Tree) -> None:
+    """Write every comment at or below *node* as nothing, so its text is not copied.
+
+    Used on a copy of part of a file whose layout a new entry or element is to take on,
+    without taking on someone else's comment. A carriage return the comment ran up to is
+    kept: a comment rule may stop only at the line feed, and the line it ends has to keep
+    its Windows line ending.
+
+    Args:
+        node (Tree): The rule node to blank the comments of, changed in place.
+    """
+    for subtree in node.iter_subtrees():
+        if subtree.data in COMMENT_RULES:
+            subtree.children = [
+                child.update(value="\r" if child.endswith("\r") else "") if isinstance(child, Token) else child
+                for child in subtree.children
+            ]
 
 
 def remove_entry_node(entry_node: Tree, info: GrammarInfo) -> None:

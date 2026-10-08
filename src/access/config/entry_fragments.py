@@ -55,11 +55,18 @@ class Fragment:
         text (str): The text, for a ``"literal"`` fragment.
         options (frozenset[str]): Names of the value-type rules allowed here, for a
             ``"value"`` fragment.
+        level (int): Which key of a chain this is, for a ``"key"`` fragment: 0 for the
+            outermost, as in the ``a`` of ``a%b = 1``, and 1 for the ``b``.
+        notation (tuple[str, str] | None): The value-type rule and the token text an
+            existing entry wrote here, for a ``"value"`` fragment of a template copied from
+            that entry. A new value written with the same rule keeps its notation.
     """
 
     kind: FragmentKind
     text: str = ""
     options: frozenset[str] = frozenset()
+    level: int = 0
+    notation: tuple[str, str] | None = None
 
 
 EntryTemplate = tuple[Fragment, ...]

@@ -526,6 +526,19 @@ class TestAddingAnEntry:
         assert str(config) == "TEST::\n a = 1:2:3\n b = 4:5\n::\n"
         assert dict(parser.parse(str(config))) == dict(config)
 
+    def test_a_new_key_ends_its_line_like_its_neighbour(self, parser) -> None:
+        """Test a Windows line ending, which the comment before it would otherwise take.
+
+        The comment rule runs to the line feed, so the carriage return is part of it, and
+        leaving the comment out of the new line must not leave that out too.
+        """
+        config = parser.parse("a: 1 # one\r\n")
+
+        config["b"] = 2
+
+        assert str(config) == "a: 1 # one\r\nb: 2\r\n"
+        assert dict(parser.parse(str(config))) == dict(config)
+
     def test_a_new_key_lands_between_comments_rather_than_inside_one(self, parser) -> None:
         """Test that a comment run is stepped over, as far as the first blank line.
 
