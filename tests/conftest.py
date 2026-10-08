@@ -27,6 +27,7 @@ from lark import Lark, Token, Tree
 
 from access.config.entry_render import iter_entry_snippets
 from access.config.entry_style import EntryStyle
+from access.config.field_table import FieldTableParser
 from access.config.fortran_nml import FortranNMLParser
 from access.config.grammar_compiled import compile_grammar
 from access.config.grammar_info import GrammarInfo
@@ -42,6 +43,7 @@ PARSERS = {
     "mom6_input": MOM6InputParser,
     "nuopc_config": NUOPCParser,
     "nuopc_runseq": NUOPCRunSeqParser,
+    "field_table": FieldTableParser,
 }
 
 # The entry text each grammar produces for each container and category it supports, with
@@ -67,6 +69,10 @@ CANONICAL = {
     ("nuopc_runseq", "start", "key_value"): "NEWKEY::\nATM\n::\n",
     ("nuopc_runseq", "start", "key_list"): "NEWKEY::\n@3600\nATM\n@\n::\n",
     ("nuopc_runseq", "start", "key_null"): "NEWKEY::\n::\n",
+    # A method line starts with its line break, and the grammar's own preference is the
+    # bare assignment; the parser's template, indented in quotes, is not consulted here.
+    ("field_table", "block", "key_value"): "\nNEWKEY = 7",
+    ("field_table", "block", "key_list"): "\nNEWKEY = 1, 2, 3",
 }
 
 # The same for a chain of keys, keyed by how many keys there are: the Fortran ``a%b = 1``
@@ -77,6 +83,8 @@ CHAIN_CANONICAL = {
     ("fortran_nml", "block", "key_list", 2): "A%B = 1, 2, 3\n",
     ("fortran_nml", "block", "key_null", 2): "A%B =\n",
     ("fortran_nml", "block", "key_value", 3): "A%B%C = 7\n",
+    # A field table header: a field type, a model and a field, opening a block of methods.
+    ("field_table", "start", "key_block", 3): '"A", "B", "C"/\n',
 }
 
 VALUES = {"key_value": 7, "key_list": [1, 2, 3], "key_null": None, "key_block": {}}
