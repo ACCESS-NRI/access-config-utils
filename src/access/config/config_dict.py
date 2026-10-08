@@ -21,123 +21,156 @@ normalisation and the tree update.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import copy
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any, NoReturn, SupportsIndex
 
 from access.config.grammar_contract import KEY_BLOCK, KEY_LIST
-from access.config.tree_edits import write_values
 from access.config.tree_reader import entry_value
 
 if TYPE_CHECKING:
-    from lark import Tree
-
     from access.config.config_store import ConfigStore
-    from access.config.grammar_compiled import ParseContext
     from access.config.tree_reader import EntryRef
 
 
 class ConfigList(list):
-    """A list subclass keeping the parse tree in sync when individual elements change.
+    """A list subclass keeping the parse tree in sync with every change made to it.
 
-    When an element is updated via index assignment (e.g. ``config["key"][i] = new_value``),
-    the corresponding value-type rule node in the Lark parse tree is also updated so that
-    round-trip reconstruction reflects the change.
+    Reading one is reading a builtin list. Every write -- an element, a slice, or any of
+    the methods that add, remove or reorder elements -- goes through the store holding the
+    list's entry first, and changes the list only once the file has taken it, so the two
+    never disagree. A write the file cannot take raises and leaves both as they were.
 
-    Each element is paired with the parse tree node holding it, so only operations that
-    preserve the elements and their order are supported. Those that would add, remove or
-    reorder them (``append``, ``extend``, ``insert``, ``remove``, ``pop``, ``clear``,
-    ``sort``, ``reverse``, ``del`` and ``+=``) raise ``NotImplementedError`` rather than
-    silently leaving the list and the file disagreeing. Assign a whole new list instead
-    (``config["key"] = [...]``), which rewrites every element.
+    Writing an element changes one token, in the notation it was written in. A list that
+    grows or shrinks is laid out afresh around the elements that stay: those keep their
+    text, comments included, and a new element is written like its neighbours, on their
+    line or on a line of its own. A list keeps at least two elements, and one whose values
+    are written with repeat counts, array qualifiers or in more than one assignment can be
+    rewritten but not resized.
 
-    Args:
-    A repeat count is the one case where a node backs more than one element: ``6*9.0`` is
-    six elements written once. Assigning to any of them splits the run, so the notation
-    survives an edit -- the six become ``2*9.0, 8.0, 3*9.0``, not six separate values.
+    A copy is a plain list, which is what a copy of the data is.
 
     Args:
         data (list[Any]): The list data.
-        nodes (Sequence[Tree | None]): The node backing each element, or ``None`` where an
-            array position no entry wrote has none. A repeat node appears once
-            per element it covers, so this is one entry per element, not per node.
-        ctx (ParseContext): The compiled grammar, needed to parse the replacement for a
-            repeat run that an assignment has split.
+        store (ConfigStore): The store holding the list's entry.
+        key (str): The normalised key the list is stored under.
     """
 
-    _nodes: list[Tree | None]  # The node backing each element, None where the file wrote nothing.
-    _ctx: ParseContext  # Compiled grammar and per-parser settings.
+    _store: ConfigStore  # The store holding the list's entry.
+    _key: str  # The key the list is stored under in that store.
 
-    def __init__(self, data: list[Any], nodes: Sequence[Tree | None], ctx: ParseContext) -> None:
+    def __init__(self, data: list[Any], store: ConfigStore, key: str) -> None:
         super().__init__(data)
-        self._nodes = list(nodes)
-        self._ctx = ctx
+        self._store = store
+        self._key = key
+
+    def _write(self, values: list[Any], origins: list[int | None] | None = None) -> None:
+        """Write *values* through the store, then hold them.
+
+        Args:
+            values (list[Any]): The new elements.
+            origins (list[int | None] | None): For a list of a different length, the
+                position of the old element each new one stands in for, ``None`` for a new
+                one. ``None`` for a list of the same length, written position by position.
+        """
+        if origins is None:
+            self._store.replace(self._key, values)
+        else:
+            self._store.resize(self._key, values, origins)
+        list.__setitem__(self, slice(None), values)
 
     def __setitem__(self, index: SupportsIndex | slice, value: Any) -> None:
-        """Override to update both the list element(s) and the parse tree node(s).
+        """Override to write the element or elements through the parse tree.
 
-        Supports both integer indices and slices. When using slices, the number of
-        elements assigned must match the number of elements in the slice (i.e. the
-        list length cannot change).
+        A slice may be given a different number of elements, which changes the length of
+        the list, as it does for a builtin list.
 
         Args:
             index (SupportsIndex | slice): Integer index or slice of the element(s) to
                 update.
-            value (Any): New value (or iterable of values for slices). The type of each
-                value must match the type already stored in the corresponding value-type
-                rule node.
-
-        Raises:
-            ValueError: If a slice assignment would change the list length.
+            value (Any): New value, or an iterable of values for a slice.
         """
-        updated = list(self)
-        # Held for the super() call below rather than reusing *value*: for a slice that may
-        # have been a one-shot iterable, already drained here, and taking it a second time
-        # would leave the list short.
-        assigned: Any = value
         if isinstance(index, slice):
-            assigned = list(value)
-            if len(assigned) != len(self._nodes[index]):
-                raise ValueError(
-                    f"Slice assignment would change list length from {len(self._nodes[index])} to {len(assigned)}"
-                )
-            updated[index] = assigned
+            value = list(value)
+        updated = list(self)
+        updated[index] = value
+        if len(updated) == len(self):
+            self._write(updated)
         else:
-            updated[index] = value
+            origins: list[int | None] = list(range(len(self)))
+            origins[index] = [None] * len(value)
+            self._write(updated, origins)
 
-        # The whole list is written, not just the elements assigned to: a repeat node backs
-        # several of them at once, so the run it covers is rewritten as a unit. Writing a
-        # value back over itself reproduces its own token, so untouched ones do not move.
-        self._nodes[:] = write_values(self._nodes, updated, self._ctx.lark)
-        super().__setitem__(index, assigned)
+    def __delitem__(self, index: SupportsIndex | slice) -> None:
+        """Override to remove the element or elements from the parse tree too."""
+        updated = list(self)
+        del updated[index]
+        origins: list[int | None] = list(range(len(self)))
+        del origins[index]
+        self._write(updated, origins)
 
-    def _unsupported(self, *args: Any, **kwargs: Any) -> NoReturn:
-        """Reject a list operation the parse tree cannot follow.
+    def append(self, value: Any) -> None:
+        """Override to add the element to the parse tree too."""
+        self._write([*self, value], [*range(len(self)), None])
 
-        Args:
-            *args (Any): Ignored.
-            **kwargs (Any): Ignored.
+    def extend(self, values: Iterable[Any]) -> None:
+        """Override to add the elements to the parse tree too."""
+        added = list(values)
+        self._write([*self, *added], [*range(len(self)), *[None] * len(added)])
 
-        Raises:
-            NotImplementedError: Always.
-        """
-        raise NotImplementedError(
-            "Adding, removing or reordering the elements of a configuration list is not "
-            "supported; assign a whole new list to the key instead"
-        )
+    def insert(self, index: SupportsIndex, value: Any) -> None:
+        """Override to add the element to the parse tree too."""
+        updated = list(self)
+        updated.insert(index, value)
+        origins: list[int | None] = list(range(len(self)))
+        origins.insert(index, None)
+        self._write(updated, origins)
 
-    # Every operation that would change the elements or their order, and so break the
-    # pairing with the parse tree nodes holding them.
-    append = _unsupported  # type: ignore[assignment]
-    extend = _unsupported  # type: ignore[assignment]
-    insert = _unsupported  # type: ignore[assignment]
-    remove = _unsupported  # type: ignore[assignment]
-    pop = _unsupported  # type: ignore[assignment]
-    clear = _unsupported  # type: ignore[assignment]
-    sort = _unsupported  # type: ignore[assignment]
-    reverse = _unsupported  # type: ignore[assignment]
-    __delitem__ = _unsupported  # type: ignore[assignment]
-    __iadd__ = _unsupported  # type: ignore[assignment]
-    __imul__ = _unsupported  # type: ignore[assignment]
+    def pop(self, index: SupportsIndex = -1) -> Any:
+        """Override to remove the element from the parse tree too."""
+        value = self[index]
+        del self[index]
+        return value
+
+    def remove(self, value: Any) -> None:
+        """Override to remove the element from the parse tree too."""
+        del self[self.index(value)]
+
+    def clear(self) -> None:
+        """Override to remove every element, which a list cannot do: it keeps two."""
+        del self[:]
+
+    def sort(self, *, key: Any = None, reverse: bool = False) -> None:
+        """Override to write the reordered elements through the parse tree."""
+        self._write(sorted(self, key=key, reverse=reverse))
+
+    def reverse(self) -> None:
+        """Override to write the reversed elements through the parse tree."""
+        self._write(self[::-1])
+
+    def __iadd__(self, values: Iterable[Any]) -> ConfigList:  # type: ignore[override, misc]
+        """Override in-place concatenation, adding the elements to the parse tree too."""
+        self.extend(values)
+        return self
+
+    def __imul__(self, count: SupportsIndex) -> ConfigList:  # type: ignore[override, misc]
+        """Override in-place repetition: the elements after the first run are new ones."""
+        updated = list(self) * count
+        origins = [*range(len(self)), *[None] * (len(updated) - len(self))] if updated else []
+        self._write(updated, origins)
+        return self
+
+    def __copy__(self) -> list[Any]:
+        """Return a plain list holding the same elements."""
+        return list(self)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> list[Any]:
+        """Return a plain list holding copies of the elements."""
+        return copy.deepcopy(list(self), memo)
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[Any, ...]:
+        """Pickle as a plain list: the parse tree is not part of the data."""
+        return list, (list(self),)
 
 
 class ConfigBlockList(list):
@@ -230,7 +263,7 @@ class Config(dict):
             blocks = [self._block(key, ref, index) for index in range(len(ref.block_nodes))]
             return blocks[0] if len(blocks) == 1 else ConfigBlockList(blocks)
         value = entry_value(ref)
-        return ConfigList(value, ref.value_nodes, self._store.ctx) if ref.category == KEY_LIST else value
+        return ConfigList(value, self._store, key) if ref.category == KEY_LIST else value
 
     def _block(self, key: str, ref: EntryRef, index: int) -> Config:
         """Return the nested configuration for one occurrence of a block."""
@@ -268,8 +301,8 @@ class Config(dict):
         Raises:
             TypeError: If the new value's type does not match the existing one, or -- as
                 ``UnsupportedEntryError`` -- if the format cannot express the new value.
-            ValueError: If the length of an existing list would change, or a new list has
-                fewer than two elements, or a new key name is unusable.
+            ValueError: If a list would have fewer than two elements, or could not change
+                length, or a new key name is unusable.
             SyntaxError: If a ``dict`` is assigned to a key that already exists.
         """
         raw_key = key
@@ -283,15 +316,13 @@ class Config(dict):
         elif isinstance(value, dict):
             raise SyntaxError("Trying to assign a new value to an entire block")
         else:
-            nodes = self._store.replace(key, value)
+            self._store.replace(key, value)
             if isinstance(value, list):
-                # Update the list already stored rather than making a new one. Writing a
-                # list can replace the nodes behind it, and a caller holding the old one
-                # would otherwise go on writing through nodes no longer in the tree.
+                # Update the list already stored rather than making a new one, so that a
+                # caller holding it sees what the file now holds.
                 stored = dict.get(self, key)
                 assert isinstance(stored, ConfigList)
                 list.__setitem__(stored, slice(None), value)
-                stored._nodes[:] = nodes
             else:
                 stored = value
             super().__setitem__(key, stored)

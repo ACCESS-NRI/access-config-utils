@@ -316,6 +316,11 @@ class FakeStore:
         self.calls.append(("replace", (key, value)))
         return self.refs[key].value_nodes
 
+    def resize(self, key: str, values: Any, origins: Any) -> tuple[Tree, ...]:
+        """Record the resize, with the mapping from new elements to old ones."""
+        self.calls.append(("resize", (key, list(values), list(origins))))
+        return ()
+
     def add(self, key: str, raw_key: str, value: Any) -> EntryRef:
         """Record the addition and return the reference declared for *key*."""
         self.calls.append(("add", (key, raw_key, value)))

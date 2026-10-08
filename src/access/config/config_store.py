@@ -19,6 +19,7 @@ whitespace is handed down. That is the only reason a store knows about its neigh
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
@@ -26,11 +27,13 @@ from lark import Tree
 from lark.exceptions import UnexpectedInput
 
 from access.config.config_insert import insert_entry
+from access.config.config_resize import resize_entry
 from access.config.entry_style import EntryStyle, probe_entry_style, probe_sibling_block_style
 from access.config.grammar_contract import KEY_LIST, KEY_VALUE
 from access.config.grammar_values import UnsupportedEntryError
+from access.config.list_layout import align_values
 from access.config.tree_edits import remove_entry_node, update_node_value, write_values
-from access.config.tree_reader import EntryRef, read_entries
+from access.config.tree_reader import EntryRef, entry_value, read_entries
 
 if TYPE_CHECKING:
     from access.config.grammar_compiled import ParseContext
@@ -79,9 +82,12 @@ class ConfigStore:
     def replace(self, key: str, value: Any) -> tuple[Tree | None, ...]:
         """Write a new value into the nodes of an entry that already exists.
 
+        A list of a different length is laid out afresh by ``resize``, with each new value
+        matched to the old one it stands in for, so that what stays keeps its place.
+
         Args:
             key (str): The normalised key.
-            value (Any): The new value: a scalar, or a whole list of the same length.
+            value (Any): The new value: a scalar, or a whole list.
 
         Returns:
             tuple[Tree | None, ...]: The value-type rule nodes now holding the value.
@@ -90,14 +96,14 @@ class ConfigStore:
 
         Raises:
             TypeError: If the new value's type does not match what the entry holds.
-            ValueError: If a list of a different length was given.
+            ValueError: If a list of a different length cannot be written; see ``resize``.
         """
         ref = self.refs[key]
         if isinstance(value, list):
             if ref.category != KEY_LIST:
                 raise TypeError(f"Trying to change the type of variable '{key}'")
             if len(ref.value_nodes) != len(value):
-                raise ValueError(f"Trying to change the length of list '{key}'")
+                return self.resize(key, value, align_values(entry_value(ref), value))
             written = tuple(write_values(ref.value_nodes, value, self.ctx.lark))
             self.refs[key] = replace(ref, value_nodes=written)
             return written
@@ -110,6 +116,31 @@ class ConfigStore:
             assert node is not None
             update_node_value(node, value)
         return ref.value_nodes
+
+    def resize(self, key: str, values: Sequence[Any], origins: Sequence[int | None]) -> tuple[Tree | None, ...]:
+        """Write a list of a different length into an entry that already exists.
+
+        Args:
+            key (str): The normalised key.
+            values (Sequence[Any]): The values the list is to hold.
+            origins (Sequence[int | None]): For each value, the position of the old element
+                it stands in for, or ``None`` for a new one.
+
+        Returns:
+            tuple[Tree | None, ...]: The value-type rule nodes now holding the list.
+
+        Raises:
+            TypeError: If the entry is not a list, or a value standing in for an old element
+                is of another type.
+            ValueError: If fewer than two values are asked for, or the entry's values are
+                not written one per node in a single entry.
+            UnsupportedEntryError: If the format cannot write the list asked for.
+        """
+        ref = self.refs[key]
+        if ref.category != KEY_LIST:
+            raise TypeError(f"Trying to change the type of variable '{key}'")
+        self.refs[key] = resize_entry(ref, self.ctx, key, values, origins)
+        return self.refs[key].value_nodes
 
     def add(self, key: str, raw_key: str, value: Any) -> EntryRef:
         """Write an entry for a key this container does not have yet.

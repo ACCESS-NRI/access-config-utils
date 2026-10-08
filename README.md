@@ -97,11 +97,34 @@ A value the format cannot express raises `UnsupportedEntryError` rather than wri
 no longer means what the dict says — for instance `None` in a format with no valueless assignment,
 or a string containing a space in one with no quoted-string syntax.
 
-Two caveats on the dict and list behaviour. Operations that would add, remove or reorder the
-elements of a list value (`append`, `extend`, `insert`, `pop`, `sort`, …) raise
-`NotImplementedError`, because each element is tied to the place it came from in the file; assign
-a whole new list instead. And replacing an existing block wholesale raises `SyntaxError` — a block
-can be created and edited, but not swapped out.
+A list value behaves like a list: elements can be changed, added, removed and reordered, by
+assignment or with `append`, `extend`, `insert`, `pop`, `sort` and the rest. The elements that stay
+keep their text, comments included, and a new element is written like its neighbours, on their
+line or on a line of its own:
+```python
+config = FortranNMLParser().parse('''&data_nml
+parameterD = 1,
+             2  ! two
+/''')
+config["data_nml"]["parameterD"].append(3)
+print(config)
+```
+```python
+&data_nml
+parameterD = 1,
+             2,
+             3  ! two
+/
+```
+
+A few caveats on the dict and list behaviour:
+- A list keeps at least two elements, since a single value is a scalar, and a scalar does not
+  become a list or the other way round.
+- A list written with repeat counts (`3*1.0`), array qualifiers (`x(2) = …`) or skipped
+  positions, or assigned more than once, can have its elements changed but not its length:
+  delete the key and assign it again instead.
+- Replacing an existing block wholesale raises `SyntaxError` — a block can be created and edited,
+  but not swapped out.
 
 ## Development installation
 

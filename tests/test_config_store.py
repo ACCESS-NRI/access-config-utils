@@ -121,15 +121,26 @@ class TestReplace:
         with pytest.raises(TypeError, match="change the type"):
             ConfigStore(tree, ctx).replace("a", 1)
 
-    def test_refuses_a_list_of_a_different_length(self, ctx) -> None:
-        """Test that a list cannot grow or shrink, since each element has its own node."""
+    @pytest.mark.parametrize(
+        ("value", "written"),
+        [([1, 2, 3], "a = 1, 2, 3"), ([2, 9, 1], "a = 2, 9, 1"), ([1, 2, 3, 4], "a = 1, 2, 3, 4")],
+    )
+    def test_a_list_of_a_different_length_is_resized(self, ctx, value, written) -> None:
+        """Test that a list grows or shrinks around the elements that stay."""
         tree = ctx.lark.parse("a = 1, 2\n", start="start")
         AddParent().visit(tree)
         store = ConfigStore(tree, ctx)
 
-        for value in ([1], [1, 2, 3]):
-            with pytest.raises(ValueError, match="change the length"):
-                store.replace("a", value)
+        nodes = store.replace("a", value)
+
+        assert store.render() == written
+        assert nodes == store.refs["a"].value_nodes
+        assert len(nodes) == len(value)
+
+    def test_resizing_an_entry_that_is_not_a_list(self, store) -> None:
+        """Test that only a list has a length to change."""
+        with pytest.raises(TypeError, match="change the type"):
+            store.resize("a", [1, 2], [0, None])
 
 
 class TestAdd:

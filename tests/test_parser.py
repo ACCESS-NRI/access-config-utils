@@ -289,9 +289,10 @@ def test_config_list(parser):
     assert config["a"] == [100, 20, 300]
     assert str(config) == "a=100,20,300 b=4,5,60"
 
-    # Slice assignment with wrong length
-    with pytest.raises(ValueError):
-        config["a"][0:2] = [1]
+    # Slice assignment of another length grows or shrinks the list
+    config["a"][0:2] = [1]
+    assert config["a"] == [1, 300]
+    assert str(config) == "a=1,300 b=4,5,60"
 
     # Slice assignment with wrong type
     with pytest.raises(TypeError):
@@ -306,10 +307,16 @@ def test_config_list(parser):
         config["a"] = ["A", 11, 12]
 
     # Changing list length
-    with pytest.raises(ValueError):
-        config["a"] = [10, 11]
-    with pytest.raises(ValueError):
-        config["a"] = [10, 11, 12, 13]
+    config["a"] = [10, 11]
+    assert str(config) == "a=10,11 b=4,5,60"
+    config["a"] = [10, 11, 12, 13]
+    assert str(config) == "a=10,11,12,13 b=4,5,60"
+    assert dict(parser.parse(str(config))) == dict(config)
+
+    # A list keeps at least two elements
+    with pytest.raises(ValueError, match="at least two elements"):
+        config["a"] = [10]
+    assert str(config) == "a=10,11,12,13 b=4,5,60"
 
     # Assigning list to scalar
     with pytest.raises(TypeError):
@@ -483,8 +490,8 @@ def test_config_add_key_list(parser):
     config["z"] = [4, 5, 6]
     _check_added(parser, config, "a=1 z=4,5,6")
 
-    with pytest.raises(ValueError):
-        config["z"] = [1, 2]
+    config["z"] = [1, 2]
+    _check_added(parser, config, "a=1 z=1,2")
 
 
 def test_config_add_heterogeneous_list(parser):
@@ -706,28 +713,34 @@ def test_config_dict_methods(parser):
     assert str(config) == ""
 
 
-def test_config_list_unsupported_operations(parser):
-    """Test that list operations the parse tree cannot follow are refused"""
+def test_config_list_operations(parser):
+    """Test that every list operation is written through to the file"""
     config = parser.parse("a=1,2,3")
     values = config["a"]
 
-    for operation in (
-        lambda: values.append(4),
-        lambda: values.extend([4]),
-        lambda: values.insert(0, 4),
-        lambda: values.remove(1),
-        lambda: values.pop(),
-        lambda: values.clear(),
-        lambda: values.sort(),
-        lambda: values.reverse(),
-        lambda: values.__delitem__(0),
-        lambda: values.__iadd__([4]),
-        lambda: values.__imul__(2),
+    for operation, written in (
+        (lambda: values.append(4), "a=1,2,3,4"),
+        (lambda: values.extend([5]), "a=1,2,3,4,5"),
+        (lambda: values.insert(0, 0), "a=0,1,2,3,4,5"),
+        (lambda: values.remove(1), "a=0,2,3,4,5"),
+        (lambda: values.pop(), "a=0,2,3,4"),
+        (lambda: values.__delitem__(0), "a=2,3,4"),
+        (lambda: values.__iadd__([5]), "a=2,3,4,5"),
+        (lambda: values.reverse(), "a=5,4,3,2"),
+        (lambda: values.sort(), "a=2,3,4,5"),
+        (lambda: values.__imul__(2), "a=2,3,4,5,2,3,4,5"),
+        (lambda: values.__delitem__(slice(2, None)), "a=2,3"),
     ):
-        with pytest.raises(NotImplementedError):
-            operation()
+        operation()
+        assert str(config) == written
+        assert config["a"] == parser.parse(written)["a"]
 
-    assert str(config) == "a=1,2,3"
+    # A list keeps at least two elements
+    for operation in (values.pop, values.clear):
+        with pytest.raises(ValueError, match="at least two elements"):
+            operation()
+    assert str(config) == "a=2,3"
+    assert values == [2, 3]
 
 
 def test_config_grammar_cache(parser):

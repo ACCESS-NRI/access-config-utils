@@ -13,14 +13,13 @@ would skip both the key normalisation and the tree update; a fake store is the o
 see that a call arrived, rather than inferring it from text that happened to come out right.
 """
 
-from collections.abc import Iterator
-from unittest.mock import patch
+import copy
+import pickle
 
 import pytest
 from conftest import FakeContext, FakeStore, entry_node, value_node
 from lark import Tree
 
-from access.config import config_dict
 from access.config.config_dict import Config, ConfigBlockList, ConfigList
 from access.config.tree_reader import EntryRef
 
@@ -400,99 +399,97 @@ def test_str_asks_the_store_to_render(store) -> None:
 
 
 class TestConfigList:
-    """The list handed out for a key holding several values."""
+    """The list handed out for a key holding several values, writing through its store."""
 
     @pytest.fixture
-    def nodes(self) -> list[Tree]:
-        """Return three value nodes, one per element."""
-        return [value_node(text=str(index)) for index in range(3)]
+    def list_store(self) -> FakeStore:
+        """Return a store holding one three-element list under ``a``."""
+        return FakeStore({"a": ref("key_list", "a", values=3)})
 
     @pytest.fixture
-    def values(self, nodes) -> Iterator[tuple[ConfigList, list]]:
-        """Return a list over those nodes, the tree write recorded rather than made.
-
-        ``write_values`` takes the whole list, because a repeat node backs several elements
-        at once and the run it covers is rewritten as a unit. The patch is on the module
-        under test, not where the name comes from: each consumer holds its own reference.
-        """
-        written: list[list] = []
-
-        def record(refs, new_values, lark):
-            written.append(list(new_values))
-            return list(refs)
-
-        with patch.object(config_dict, "write_values", record):
-            yield ConfigList([0, 1, 2], nodes, FakeContext()), written
-
-    def test_an_element_update_reaches_its_node(self, values, nodes) -> None:
-        """Test the pairing: element *i* writes to the node holding element *i*."""
-        listed, written = values
-
-        listed[1] = 20
-
-        assert listed == [0, 20, 2]
-        assert written == [[0, 20, 2]]
-
-    def test_a_negative_index(self, values, nodes) -> None:
-        """Test that indexing from the end reaches the same node the list does."""
-        listed, written = values
-
-        listed[-1] = 30
-
-        assert written == [[0, 1, 30]]
-
-    def test_a_slice(self, values, nodes) -> None:
-        """Test that a slice writes each of its elements, in order."""
-        listed, written = values
-
-        listed[0:2] = [10, 11]
-
-        assert listed == [10, 11, 2]
-        assert written == [[10, 11, 2]]
-
-    def test_a_slice_with_a_step(self, values, nodes) -> None:
-        """Test that the nodes are selected by the same slice as the elements."""
-        listed, written = values
-
-        listed[::2] = [10, 30]
-
-        assert listed == [10, 1, 30]
-        assert written == [[10, 1, 30]]
-
-    def test_a_slice_of_the_wrong_length(self, values) -> None:
-        """Test that a slice assignment cannot change how many elements there are."""
-        listed, written = values
-
-        with pytest.raises(ValueError, match="change list length"):
-            listed[0:2] = [1]
-        assert written == []
+    def listed(self, list_store) -> ConfigList:
+        """Return the list over that store's entry."""
+        return ConfigList([0, 1, 2], list_store, "a")
 
     @pytest.mark.parametrize(
-        "operation",
+        ("write", "expected"),
         [
-            lambda values: values.append(4),
-            lambda values: values.extend([4]),
-            lambda values: values.insert(0, 4),
-            lambda values: values.remove(1),
-            lambda values: values.pop(),
-            lambda values: values.clear(),
-            lambda values: values.sort(),
-            lambda values: values.reverse(),
-            lambda values: values.__delitem__(0),
-            lambda values: values.__iadd__([4]),
-            lambda values: values.__imul__(2),
+            pytest.param(lambda values: values.__setitem__(1, 20), [0, 20, 2], id="index"),
+            pytest.param(lambda values: values.__setitem__(-1, 30), [0, 1, 30], id="negative-index"),
+            pytest.param(lambda values: values.__setitem__(slice(0, 2), [10, 11]), [10, 11, 2], id="slice"),
+            pytest.param(lambda values: values.__setitem__(slice(None, None, 2), [10, 30]), [10, 1, 30], id="step"),
+            pytest.param(lambda values: values.sort(reverse=True), [2, 1, 0], id="sort"),
+            pytest.param(lambda values: values.reverse(), [2, 1, 0], id="reverse"),
         ],
     )
-    def test_refuses_what_would_break_the_pairing(self, values, operation) -> None:
-        """Test every operation that would add, remove or reorder the elements.
+    def test_a_write_of_the_same_length_replaces_the_list(self, listed, list_store, write, expected) -> None:
+        """Test that the whole list is written, position by position, then held."""
+        write(listed)
 
-        Each element is paired with the node holding it, so any of these would leave the
-        list and the file disagreeing. Assigning a whole new list is the supported way.
-        """
-        listed, _ = values
+        assert listed == expected
+        assert list_store.asked("replace") == [("a", expected)]
+        assert list_store.asked("resize") == []
 
-        with pytest.raises(NotImplementedError, match="assign a whole new list"):
-            operation(listed)
+    @pytest.mark.parametrize(
+        ("change", "expected", "origins"),
+        [
+            pytest.param(lambda values: values.append(3), [0, 1, 2, 3], [0, 1, 2, None], id="append"),
+            pytest.param(
+                lambda values: values.extend(iter([3, 4])), [0, 1, 2, 3, 4], [0, 1, 2, None, None], id="extend"
+            ),
+            pytest.param(lambda values: values.insert(1, 9), [0, 9, 1, 2], [0, None, 1, 2], id="insert"),
+            pytest.param(lambda values: values.remove(1), [0, 2], [0, 2], id="remove"),
+            pytest.param(lambda values: values.pop(), [0, 1], [0, 1], id="pop"),
+            pytest.param(lambda values: values.__delitem__(slice(0, 2)), [2], [2], id="del-slice"),
+            pytest.param(
+                lambda values: values.__setitem__(slice(1, 2), iter([7, 8])),
+                [0, 7, 8, 2],
+                [0, None, None, 2],
+                id="slice",
+            ),
+            pytest.param(lambda values: values.__iadd__([3]), [0, 1, 2, 3], [0, 1, 2, None], id="iadd"),
+            pytest.param(lambda values: values.__imul__(2), [0, 1, 2, 0, 1, 2], [0, 1, 2, None, None, None], id="imul"),
+            pytest.param(lambda values: values.__imul__(0), [], [], id="imul-zero"),
+            pytest.param(lambda values: values.clear(), [], [], id="clear"),
+        ],
+    )
+    def test_a_change_of_length_is_a_resize(self, listed, list_store, change, expected, origins) -> None:
+        """Test that the store is told which old element each new one stands in for."""
+        change(listed)
+
+        assert listed == expected
+        assert list_store.asked("resize") == [("a", expected, origins)]
+
+    def test_pop_hands_back_the_element(self, listed) -> None:
+        """Test that ``pop`` still returns what it removed."""
+        assert listed.pop(1) == 1
+        assert listed == [0, 2]
+
+    def test_an_extended_slice_of_the_wrong_size_is_refused_first(self, listed, list_store) -> None:
+        """Test that the list's own rules apply before anything reaches the store."""
+        with pytest.raises(ValueError):
+            listed[::2] = [1]
+
+        assert listed == [0, 1, 2]
+        assert list_store.calls == []
+
+    def test_the_list_is_unchanged_when_the_store_refuses(self, listed, list_store) -> None:
+        """Test that a write the file cannot take leaves the list as it was too."""
+
+        def refuse(key, values, origins):
+            raise ValueError("refused")
+
+        list_store.resize = refuse  # type: ignore[method-assign]
+        with pytest.raises(ValueError, match="refused"):
+            listed.append(3)
+
+        assert listed == [0, 1, 2]
+
+    def test_a_copy_is_a_plain_list(self, listed) -> None:
+        """Test that copying or pickling gives the data, not a second view of the file."""
+        for duplicate in (copy.copy(listed), copy.deepcopy(listed), pickle.loads(pickle.dumps(listed))):
+            assert type(duplicate) is list
+            assert duplicate == [0, 1, 2]
 
 
 class TestConfigBlockList:
