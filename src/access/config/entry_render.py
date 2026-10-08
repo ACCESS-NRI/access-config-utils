@@ -87,19 +87,22 @@ def _rank_key(template: EntryTemplate, style: EntryStyle, order: int) -> tuple[i
     return (ends_line, block_ok, newlines, parted, literal_length, mismatch, negated_ws, keys, order)
 
 
-def _ranked_templates(info: GrammarInfo, container: str, category: str, style: EntryStyle) -> list[EntryTemplate]:
+def _ranked_templates(
+    info: GrammarInfo, container: str, category: str, depth: int, style: EntryStyle
+) -> list[EntryTemplate]:
     """Return the templates for a new entry, most idiomatic first.
 
     Args:
         info (GrammarInfo): Views over the compiled grammar.
         container (str): Container rule name.
         category (str): Entry category.
+        depth (int): How many keys the entry chains together.
         style (EntryStyle): Whitespace of a neighbouring entry, used as a preference.
 
     Returns:
         list[EntryTemplate]: The ranked templates.
     """
-    templates = grammar_templates(info, container, category)
+    templates = grammar_templates(info, container, category, depth)
     scored = [(_rank_key(template, style, order), template) for order, template in enumerate(templates)]
     scored.sort(key=lambda item: item[0])
     return [template for _, template in scored]
@@ -198,7 +201,8 @@ def iter_entry_snippets(
     *style* has no donor. A template is fixed text, so it cannot reproduce a neighbour's
     whitespace; offered unconditionally it would space a new entry unlike the entry directly
     above it, which is worse than the canonical layout it was meant to replace. What it is
-    for is the case where nothing nearby can say how the entry should look.
+    for is the case where nothing nearby can say how the entry should look. It writes one
+    key, so it is not offered for a chain of them.
 
     Neither is more than a preference: if one does not parse, or reads back as something
     else, the caller simply moves on to the templates the grammar derives.
@@ -219,17 +223,18 @@ def iter_entry_snippets(
     Yields:
         str: Candidate entry text, to be validated by parsing.
     """
-    templates = _ranked_templates(info, container, category, style)
+    depth = len(keys)
+    templates = _ranked_templates(info, container, category, depth, style)
 
     override = (overrides or {}).get((container, category))
-    if override is not None and not style.has_donor:
+    if override is not None and not style.has_donor and depth == 1:
         options = admitted_value_rules(info, container, category)
         templates.insert(0, compile_template(override, category, options))
 
-    donor = style.donor(len(keys), category)
+    donor = style.donor(depth, category)
     if donor is not None:
         # The copy knows how its neighbour wrote a value, not what else may be written here.
-        options = admitted_value_rules(info, container, category)
+        options = admitted_value_rules(info, container, category, depth)
         admitting = [replace(fragment, options=options) if fragment.kind == "value" else fragment for fragment in donor]
         templates.insert(0, tuple(admitting))
 

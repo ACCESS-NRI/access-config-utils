@@ -11,7 +11,7 @@ The three shipped grammars answer most of the questions. Where none of them has 
 under test, a short grammar written for it does.
 """
 
-from conftest import CANONICAL, PARSERS
+from conftest import CANONICAL, CHAIN_CANONICAL, PARSERS
 
 from access.config.entry_generate import admitted_value_rules, grammar_templates
 from access.config.grammar_compiled import compile_grammar
@@ -30,19 +30,41 @@ def test_unsupported_combinations(infos) -> None:
                     assert not templates, (grammar, container, category)
 
 
+def test_unsupported_chains(infos) -> None:
+    """Test that a chain of keys is derived only where the grammar can write one.
+
+    Only a Fortran derived type writes a block one component per line, as ``a%b = 1``. A
+    block of any format holding its contents in a ``block`` rule is no chain, since the
+    contents of a new block are a placeholder.
+    """
+    for grammar in PARSERS:
+        for container in ("start", "block"):
+            for category in ENTRY_CATEGORIES:
+                templates = grammar_templates(infos[grammar], container, category, 2)
+                if (grammar, container, category, 2) in CHAIN_CANONICAL:
+                    assert templates, (grammar, container, category)
+                else:
+                    assert not templates, (grammar, container, category)
+
+
 def test_template_counts_are_bounded(infos) -> None:
     """Test that generation stays small on every real grammar and container."""
     for grammar in PARSERS:
         for container in ("start", "block"):
             for category in ENTRY_CATEGORIES:
-                assert len(grammar_templates(infos[grammar], container, category)) <= 64
+                for depth in (1, 2):
+                    assert len(grammar_templates(infos[grammar], container, category, depth)) <= 64
 
 
 def test_templates_are_cached(infos) -> None:
-    """Test that the templates for a container and category are computed once."""
-    info = infos["mom6_input"]
-    first = grammar_templates(info, "start", "key_value")
-    assert grammar_templates(info, "start", "key_value") is first
+    """Test that the templates for a container, category and depth are computed once."""
+    info = infos["fortran_nml"]
+    first = grammar_templates(info, "block", "key_value")
+    chain = grammar_templates(info, "block", "key_value", 2)
+
+    assert grammar_templates(info, "block", "key_value") is first
+    assert grammar_templates(info, "block", "key_value", 2) is chain
+    assert chain != first
 
 
 def test_value_rules(infos) -> None:
@@ -113,3 +135,32 @@ def test_a_derivation_with_the_wrong_number_of_values_is_discarded() -> None:
     # Only the single-value form survives, and every survivor holds exactly one value.
     assert templates
     assert all(sum(1 for fragment in t if fragment.kind == "value") == 1 for t in templates)
+
+
+def test_a_chain_holds_one_block_per_level_above_its_entry() -> None:
+    """Test which derivations count as a chain of two keys.
+
+    ``nested`` is one: a block holding a scalar. ``twin`` holds two scalars, so it has an
+    entry beside another at the second level, and ``scalar_above`` puts a scalar where only
+    a block can hold the next entry. A key is needed at each level, so a template writing
+    the inner entry's key alone is not one either.
+    """
+    info = compile_grammar("""
+        start: line*
+        ?line: nested | twin | scalar_above | keyless
+        nested: key "." inner NEWLINE -> key_block
+        twin: key "." inner "," inner NEWLINE -> key_block
+        scalar_above: key ":" inner NEWLINE -> key_value
+        keyless: "." inner NEWLINE -> key_block
+        inner: key "=" integer -> key_value
+
+        %import config.key
+        %import config.integer
+        %import config.NEWLINE
+    """).info
+
+    templates = grammar_templates(info, "start", "key_value", 2)
+
+    shapes = ["".join(f.text or f"<{f.kind}{f.level}>" for f in template) for template in templates]
+    assert shapes == ["<key0>.<key1>=<value0>\n"]
+    assert grammar_templates(info, "start", "key_value", 3) == ()

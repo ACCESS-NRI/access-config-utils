@@ -19,7 +19,7 @@ grammar will do. It is deliberately unlike any real format: it exercises every v
 once, every entry category, and three rules aliased to the wrong category.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import pytest
@@ -68,6 +68,16 @@ CANONICAL = {
     ("nuopc_runseq", "start", "key_null"): "NEWKEY::\n::\n",
 }
 
+# The same for a chain of keys, keyed by how many keys there are: the Fortran ``a%b = 1``
+# is a block for ``a`` holding an entry for ``b``. Written with the keys "A", "B" and "C".
+# Absent combinations are again ones the grammar cannot express.
+CHAIN_CANONICAL = {
+    ("fortran_nml", "block", "key_value", 2): "A%B = 7\n",
+    ("fortran_nml", "block", "key_list", 2): "A%B = 1, 2, 3\n",
+    ("fortran_nml", "block", "key_null", 2): "A%B =\n",
+    ("fortran_nml", "block", "key_value", 3): "A%B%C = 7\n",
+}
+
 VALUES = {"key_value": 7, "key_list": [1, 2, 3], "key_null": None, "key_block": {}}
 
 # Values for a format whose only value type is a line of text, which holds no number.
@@ -83,8 +93,22 @@ def canonical_rows(grammar: str) -> list[tuple[str, str, str]]:
     return [(container, category, text) for (name, container, category), text in CANONICAL.items() if name == grammar]
 
 
+def chain_rows(grammar: str) -> list[tuple[str, str, int, str]]:
+    """Return ``(container, category, depth, expected)`` for one grammar's chain rows."""
+    return [
+        (container, category, depth, text)
+        for (name, container, category, depth), text in CHAIN_CANONICAL.items()
+        if name == grammar
+    ]
+
+
 def assert_canonical_entry(
-    compiled: Any, container: str, category: str, expected: str, values: Mapping[str, Any] = VALUES
+    compiled: Any,
+    container: str,
+    category: str,
+    expected: str,
+    values: Mapping[str, Any] = VALUES,
+    keys: Sequence[str] = ("NEWKEY",),
 ) -> None:
     """Assert the entry text a grammar produces with no neighbour to copy a style from.
 
@@ -94,11 +118,12 @@ def assert_canonical_entry(
     Args:
         compiled: The ``CompiledGrammar`` for the format.
         container: Name of the container rule the entry is generated for.
-        category: The entry category.
+        category: The entry category, of the innermost entry for a chain.
         expected: The exact text expected.
         values: The value to write per category, for a format that cannot hold the usual.
+        keys: The key path, one key per entry of the chain.
     """
-    snippets = iter_entry_snippets(compiled.info, container, category, ("NEWKEY",), values[category], EntryStyle())
+    snippets = iter_entry_snippets(compiled.info, container, category, keys, values[category], EntryStyle())
     first = next(iter(snippets))
     assert first == expected
 

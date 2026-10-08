@@ -19,7 +19,7 @@ compose, over a file carrying comments, blank lines, free text and several group
 from pathlib import Path
 
 import pytest
-from conftest import assert_canonical_entry, canonical_rows
+from conftest import assert_canonical_entry, canonical_rows, chain_rows
 from lark.exceptions import UnexpectedInput
 
 from access.config.fortran_nml import FortranNMLParser
@@ -1716,3 +1716,10 @@ def test_canonical_entry_text(parser, container, category, expected) -> None:
     statement of what this grammar can express and how it spells it.
     """
     assert_canonical_entry(compile_grammar(parser.grammar), container, category, expected)
+
+
+@pytest.mark.parametrize(("container", "category", "depth", "expected"), chain_rows("fortran_nml"))
+def test_canonical_chain_entry_text(parser, container, category, depth, expected) -> None:
+    """Test the text of a new derived-type component, with no neighbour to copy from."""
+    keys = ("A", "B", "C")[:depth]
+    assert_canonical_entry(compile_grammar(parser.grammar), container, category, expected, keys=keys)
