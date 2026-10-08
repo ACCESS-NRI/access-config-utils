@@ -218,6 +218,68 @@ class TestTheTwoSyntaxes:
         assert str(parser.parse(source)) == source
 
 
+class TestNullEntries:
+    """``rfile_key_null`` and ``block_key_null``: a label or key with no value at all."""
+
+    @pytest.mark.parametrize("source", ["A:\n", "A: \n", "A:  # a comment\n", " A:\n", "A:"])
+    def test_a_label_with_nothing_after_the_colon_is_null(self, parser, source) -> None:
+        """Test ``rfile_key_null``, leaving trailing whitespace or a comment to line_end."""
+        config = parser.parse(source)
+
+        assert dict(config) == {"A": None}
+        assert str(config) == source
+
+    @pytest.mark.parametrize("source", ["T::\n a =\n::\n", "T::\n a=\n::\n", "T::\n a = \n::\n", "T::\n a = # c\n::\n"])
+    def test_a_key_with_nothing_after_the_equals_is_null(self, parser, source) -> None:
+        """Test ``block_key_null``, the table-level entry with no value."""
+        config = parser.parse(source)
+
+        assert dict(config["T"]) == {"a": None}
+        assert str(config) == source
+
+    def test_a_null_does_not_swallow_the_next_line(self, parser) -> None:
+        """Test that a null stops at the end of its line, at either level."""
+        source = "A:\nB: 1\nT::\n a =\n b = 2\n::\n"
+        config = parser.parse(source)
+
+        assert dict(config) == {"A": None, "B": 1, "T": {"a": None, "b": 2}}
+        assert str(config) == source
+
+    def test_a_null_is_added_in_the_syntax_of_its_own_level(self, parser) -> None:
+        """Test that a new null is written with ``:`` at the top level, ``=`` in a table."""
+        config = parser.parse("A: 1\nT::\n  x = 1\n::\n")
+
+        config["T"]["y"] = None
+        config["N"] = None
+
+        assert str(config) == "A: 1\nT::\n  x = 1\n  y =\n::\nN:\n"
+        assert dict(parser.parse(str(config))) == dict(config)
+
+    def test_a_null_in_an_empty_table_is_indented(self, parser) -> None:
+        """Test the ``key_null`` entry template, used when there is no entry to copy."""
+        config = parser.parse("T::\n::\n")
+
+        config["T"]["y"] = None
+
+        assert str(config) == "T::\n y =\n::\n"
+        assert dict(parser.parse(str(config))) == dict(config)
+
+    def test_a_value_and_a_null_do_not_replace_each_other(self, parser) -> None:
+        """Test that a null cannot be written over a value in place, or a value over a null.
+
+        The two are entries of different categories, so the change is a change of type,
+        refused as in the other formats.
+        """
+        config = parser.parse("A:\nB: 1\n")
+
+        with pytest.raises(TypeError):
+            config["A"] = 1
+        with pytest.raises(TypeError):
+            config["B"] = None
+
+        assert str(config) == "A:\nB: 1\n"
+
+
 class TestValueTypes:
     """The six ``?value`` alternatives: logical, integer, float, double, identifier and
     path."""

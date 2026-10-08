@@ -76,11 +76,17 @@ This format of key-value pairs does not seem to be documented and, although it r
 Fortran namelists, it is not. For example, the keys are case-sensitive, which is not the
 case in Fortran namelists. The format used to store arrays of values is also not the same
 as in Fortran namelists.
+
+A label or key may also be written with no value at all, ``label:`` at the top level or
+``key =`` in a table, which reads as ``None``. Neither ESMF nor NUOPC sets anything from
+such an entry: ESMF reads an empty label as a list of no values, or as the default the
+caller gives, and NUOPC skips a table line that is not ``key = value``, which leaves the
+attribute unset.
 """
 
 from collections.abc import Mapping
 
-from access.config.grammar_contract import BLOCK_RULE, KEY_LIST, KEY_VALUE
+from access.config.grammar_contract import BLOCK_RULE, KEY_LIST, KEY_NULL, KEY_VALUE
 from access.config.parser import ConfigParser
 
 
@@ -109,6 +115,7 @@ class NUOPCParser(ConfigParser):
         return {
             (BLOCK_RULE, KEY_VALUE): " {key} = {value}\n",
             (BLOCK_RULE, KEY_LIST): " {key} = {value}:{value}\n",
+            (BLOCK_RULE, KEY_NULL): " {key} =\n",
         }
 
     @property
@@ -120,21 +127,27 @@ start: lines*
 
 ?lines: rfile_key_value
       | rfile_key_list
+      | rfile_key_null
       | rfile_key_block
       | empty_line
 
 rfile_key_value: ws* key ":" ws* value line_end -> key_value
 rfile_key_list: ws* key ":" ws* value (ws* value)+ line_end -> key_list
 rfile_key_block: ws* key "::" line_end block "::" line_end -> key_block
+// A key with no value at all. Trailing whitespace is left to line_end, rather than to a "ws*"
+// of its own, so that there is one way to read it.
+rfile_key_null: ws* key ":" line_end -> key_null
 
 block: block_line*
 
 ?block_line: block_key_value
            | block_key_list
+           | block_key_null
            | empty_line
 
 block_key_value : ws* key eq ws* value line_end -> key_value
 block_key_list : ws* key eq ws* value (":"value)+ line_end -> key_list
+block_key_null : ws* key eq line_end -> key_null
 
 // The whitespace before "=" belongs to a rule of its own. Left as a bare "ws*" beside the
 // "ws*" that follows "=", it is ambiguous which slot a single space falls in. Here that also
