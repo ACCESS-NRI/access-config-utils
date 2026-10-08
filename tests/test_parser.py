@@ -53,12 +53,14 @@ def test_parser_declares_defaults(parser) -> None:
     """
     assert parser.entry_templates == {}
     assert parser.value_rule_priority is VALUE_RULE_PRIORITY
+    assert parser.key_case == "upper"
 
     # Whatever the subclass declares is what reaches the parsed configuration.
     ctx = parser.parse("a=1")._store.ctx
     assert ctx.case_sensitive_keys is True
     assert ctx.entry_templates == {}
     assert ctx.value_rule_priority == tuple(VALUE_RULE_PRIORITY)
+    assert ctx.key_case == "upper"
 
 
 def test_parser_appends_a_trailing_newline(parser) -> None:

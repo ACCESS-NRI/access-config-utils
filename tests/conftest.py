@@ -299,8 +299,10 @@ class FakeContext:
         lark: Any = None,
         block_rules: tuple[str, ...] = ("block",),
         repeated_blocks: str = "merge",
+        key_case: str = "upper",
     ) -> None:
         self.case_sensitive_keys = case_sensitive
+        self.key_case = key_case
         self.info = info if info is not None else RepetitionInfo()
         self.lark = lark
         self.entry_templates: dict[tuple[str, str], str] = {}
@@ -314,7 +316,9 @@ class FakeContext:
 
     def normalise_key(self, key: str) -> str:
         """Normalise as a real ``ParseContext`` would."""
-        return key if self.case_sensitive_keys else key.upper()
+        if self.case_sensitive_keys:
+            return key
+        return key.lower() if self.key_case == "lower" else key.upper()
 
 
 class FakeStore:
