@@ -274,6 +274,33 @@ class TestRemove:
         assert seen == entries
 
 
+class TestReread:
+    """Reading the container again, after the tree changed below it."""
+
+    def test_reports_and_keeps_the_fresh_references(self, store) -> None:
+        """Test that an entry gone from the tree is gone from the references."""
+        container = store.tree
+        container.children.remove(store.refs["a"].entry_nodes[0])
+
+        refs = store.reread()
+
+        assert list(refs) == ["b"]
+        assert store.refs is refs
+
+    def test_retarget_follows_the_block_a_reference_names(self, ctx) -> None:
+        """Test that a nested store is pointed at the block just read for it."""
+        tree = ctx.lark.parse("blk<\n  x = 1\n>\n", start="start")
+        AddParent().visit(tree)
+        store = ConfigStore(tree, ctx)
+        child = store.child(store.refs["blk"])
+        merged = replace(store.refs["blk"], block_nodes=(Tree("block", []),), addable=False)
+
+        child.retarget(merged)
+
+        assert child.tree is merged.block_node
+        assert child.addable is False
+
+
 class TestRender:
     """Writing the tree back out."""
 

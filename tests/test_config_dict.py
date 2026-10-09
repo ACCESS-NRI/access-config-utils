@@ -193,53 +193,87 @@ class TestDeleting:
         assert store.asked("remove") == []
 
 
-class TestDroppingAnEmptiedBlock:
-    """A block that cannot be written empty goes when its last entry does."""
+class TestResyncAfterDeleting:
+    """Reading the configurations above one again, after a deletion pruned the tree."""
 
     @staticmethod
-    def _nested(block_rule: str, repetition: bool):
-        """Return a parent config whose one key is a block held by *block_rule*."""
+    def _nested(block_rule: str, repetition: bool, reread: dict[str, EntryRef] | None = None):
+        """Return a parent config whose one key is a block held by *block_rule*.
+
+        Args:
+            block_rule: The rule holding the block's contents.
+            repetition: Whether the grammar reports that rule a plain repetition.
+            reread: What the parent reports when read again; unchanged when not given.
+
+        Returns:
+            The parent configuration, its store and the block's store.
+        """
 
         class Info:
             def is_repetition_rule(self, name: str) -> bool:
                 return repetition
 
-        inner = FakeStore({"x": ref("key_value", "x")}, ctx=FakeContext(info=Info()))
+        ctx = FakeContext(info=Info())
+        inner = FakeStore({"x": ref("key_value", "x")}, ctx=ctx)
         inner.tree = Tree(block_rule, [])
-        outer = FakeStore({"blk": ref("key_block", "blk")}, ctx=FakeContext(info=Info()))
+        outer = FakeStore({"blk": ref("key_block", "blk")}, ctx=ctx, reread=reread)
         outer.child = lambda reference, index=0: inner  # type: ignore[method-assign]
-        return Config(outer), outer
+        return Config(outer), outer, inner
 
-    def test_a_derived_type_goes_when_its_last_component_does(self) -> None:
-        """Test the block whose rule is not a repetition, so an empty one cannot be written.
+    def test_a_block_the_tree_no_longer_has_leaves_the_dict(self) -> None:
+        """Test the derived type that goes when its last component does.
 
-        A derived type is spelled a component per line; once the last one goes there is
-        nothing left to write, and the lines are already out of the tree.
+        It is spelled a component per line; once the last one goes there is nothing left
+        to write, the lines are already out of the tree, and the parent no longer reads it.
         """
-        config, store = self._nested("dtype_body", repetition=False)
+        config, outer, _ = self._nested("dtype_body", repetition=False, reread={})
+        block = config["blk"]
 
         del config["blk"]["x"]
 
         assert "blk" not in config
-        assert "blk" not in store.refs
+        assert outer.asked("reread") == [None]
+        assert block._parent is None
+
+    def test_a_block_that_survives_is_read_again(self) -> None:
+        """Test that the block's store follows the node the parent now reads for it."""
+        fresh = ref("key_block", "blk")
+        config, outer, inner = self._nested("dtype_body", repetition=False, reread={"blk": fresh})
+
+        del config["blk"]["x"]
+
+        assert "blk" in config
+        assert inner.asked("retarget") == [fresh]
+        assert inner.asked("reread") == [None]
 
     def test_an_empty_namelist_group_stays(self) -> None:
         """Test the block whose rule *is* a repetition: an empty group is still a group."""
-        config, _ = self._nested("block", repetition=True)
+        config, outer, _ = self._nested("block", repetition=True)
 
         del config["blk"]["x"]
 
         assert "blk" in config
         assert dict(config["blk"]) == {}
+        assert outer.asked("reread") == []
 
-    def test_the_configuration_of_a_whole_file_is_never_dropped(self) -> None:
-        """Test that a top-level configuration has no parent to be removed from."""
+    def test_a_merged_block_is_read_again_from_its_parent(self) -> None:
+        """Test that a block not held in the tree itself is no anchor, whatever its rule."""
+        config, outer, inner = self._nested("block", repetition=True, reread={"blk": ref("key_block", "blk")})
+        inner.addable = False
+
+        del config["blk"]["x"]
+
+        assert outer.asked("reread") == [None]
+
+    def test_the_configuration_of_a_whole_file_is_not_read_again(self) -> None:
+        """Test that a top-level configuration is its own anchor."""
         store = FakeStore({"a": ref("key_value", "a")})
         config = Config(store)
 
         del config["a"]
 
         assert dict(config) == {}
+        assert store.asked("reread") == []
 
 
 class TestKeyCase:

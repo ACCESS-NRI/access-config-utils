@@ -367,3 +367,21 @@ def select_value_rule(
         if rule_name in admitted and handler is not None and handler.type_check(value):
             return rule_name
     return None
+
+
+def identical_values(first: Any, second: Any) -> bool:
+    """Report whether two values are the same value, of the same type.
+
+    Equality is not enough, in either direction. ``1``, ``1.0`` and ``True`` compare equal
+    though each is a different value to write, and a NaN compares unequal even to itself,
+    though writing it over itself changes nothing. Comparing the type and the ``repr``
+    settles both.
+
+    Args:
+        first (Any): A value.
+        second (Any): Another value.
+
+    Returns:
+        bool: True if the two are indistinguishable.
+    """
+    return type(first) is type(second) and repr(first) == repr(second)

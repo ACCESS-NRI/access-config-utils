@@ -120,6 +120,12 @@ class TestEntryMatches:
         refs, _ = scalar_ref()
         assert entry_matches(refs, "z", 1)
 
+    def test_accepts_a_nan_read_back(self) -> None:
+        """Test that a NaN read back matches the NaN requested, though they are unequal."""
+        node = entry_node("key_value", "z", value_node("float", "nan"))
+        refs = {"z": EntryRef("key_value", (node,), (node.children[1],))}
+        assert entry_matches(refs, "z", float("nan"))
+
     def test_rejects_the_wrong_key_or_too_many_entries(self) -> None:
         """Test that a candidate producing anything but the one requested key is refused."""
         refs, _ = scalar_ref("other")

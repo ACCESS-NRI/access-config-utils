@@ -82,6 +82,23 @@ class TestUpdateNodeValue:
         assert node.children[0] is not original
         assert original == "1"
 
+    def test_leaves_a_token_already_holding_the_value(self) -> None:
+        """Test that writing a value over itself keeps the notation it was written in."""
+        node = value_node("double", "1.0d0")
+        original = node.children[0]
+
+        update_node_value(node, 1.0)
+
+        assert node.children[0] is original
+
+    def test_writes_a_nan_over_itself(self) -> None:
+        """Test that an unchanged NaN, which cannot be written anew, is no obstacle."""
+        node = value_node("float", "nan")
+
+        update_node_value(node, float("nan"))
+
+        assert str(node.children[0]) == "nan"
+
     def test_refuses_a_value_of_another_type(self) -> None:
         """Test that the type is fixed by the parse and cannot be changed by assignment."""
         with pytest.raises(TypeError, match="Trying to change value type"):

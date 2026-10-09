@@ -68,6 +68,21 @@ class TestResourceFileEntries:
         assert str(config) == source
 
     @pytest.mark.parametrize(
+        ("source", "expected"),
+        [
+            ("TEST: 1.5 2 3", [1.5, 2, 3]),
+            ("TEST: 1.0d0 2 3", [1.0, 2, 3]),
+            ("TEST: -90.0 90.0", [-90.0, 90.0]),
+        ],
+    )
+    def test_a_value_is_never_split_in_two(self, parser, source, expected) -> None:
+        """Test that values need whitespace between them, so ``1.5`` is not ``1`` ``.5``."""
+        config = parser.parse(source)
+
+        assert config["TEST"] == expected
+        assert str(config) == source
+
+    @pytest.mark.parametrize(
         "source",
         ["TEST1: a\n TEST2: b", "TEST1: a \nTEST2: b", "TEST1: a b \n TEST2: c"],
     )

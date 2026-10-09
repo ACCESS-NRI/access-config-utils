@@ -922,6 +922,23 @@ class TestEditingAValue:
 
         assert str(config) == "&L\n  w = continue\n/\n"
 
+    def test_one_list_element_leaves_the_others_as_written(self, parser) -> None:
+        """Test that writing one element does not rewrite the notation of the rest."""
+        config = parser.parse("&L\n  x = 1.0d0, 2.0D0, 1.5e3, 1e-5\n/\n")
+
+        config["L"]["X"][1] = 3.0
+
+        assert str(config) == "&L\n  x = 1.0d0, 3.0, 1.5e3, 1e-5\n/\n"
+        assert dict(parser.parse(str(config))) == dict(config)
+
+    def test_a_nan_in_a_list_does_not_block_writing_the_rest(self, parser) -> None:
+        """Test that an element which cannot be written anew is left alone."""
+        config = parser.parse("&L\n  x = 1.0, nan, 2.0\n/\n")
+
+        config["L"]["X"][0] = 5.0
+
+        assert str(config) == "&L\n  x = 5.0, nan, 2.0\n/\n"
+
     def test_one_element_of_a_repeat_splits_the_run(self, parser) -> None:
         """Test that the notation is kept rather than expanded, and the comment survives.
 
@@ -1241,6 +1258,39 @@ class TestAddingAnEntry:
 
 class TestDeleting:
     """Removing an entry, and the line or lines it occupied."""
+
+    def test_a_derived_type_component_then_the_type(self, parser) -> None:
+        """Test that the group no longer names the line a component deletion removed.
+
+        Deleting ``a%b`` takes its whole line out of the group, and the group's own
+        reference to ``a`` has to drop it, or deleting ``a`` next tries to unlink it again.
+        """
+        config = parser.parse("&L\n  a%b = 1\n  a%c = 2\n  x = 3\n/\n")
+
+        del config["L"]["A"]["B"]
+        assert str(config) == "&L\n  a%c = 2\n  x = 3\n/\n"
+        del config["L"]["A"]
+
+        assert str(config) == "&L\n  x = 3\n/\n"
+        assert dict(config["L"]) == {"X": 3}
+
+    def test_the_last_component_of_a_nested_type_takes_the_type_with_it(self, parser) -> None:
+        """Test that a type left with nothing to write leaves the dict at every level."""
+        config = parser.parse("&L\n  a%b%c = 1\n  x = 3\n/\n")
+
+        del config["L"]["A"]["B"]["C"]
+
+        assert str(config) == "&L\n  x = 3\n/\n"
+        assert dict(config["L"]) == {"X": 3}
+
+    def test_a_nested_type_emptied_beside_another_component(self, parser) -> None:
+        """Test that only the levels the file no longer has leave the dict."""
+        config = parser.parse("&L\n  a%b%c = 1\n  a%d = 2\n/\n")
+
+        del config["L"]["A"]["B"]["C"]
+
+        assert str(config) == "&L\n  a%d = 2\n/\n"
+        assert dict(config["L"]["A"]) == {"D": 2}
 
     def test_an_entry_alone_on_its_line_takes_the_line_with_it(self, parser) -> None:
         """Test that the trailing comment goes too: it described the line that has gone.

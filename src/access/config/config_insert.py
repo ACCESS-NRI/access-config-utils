@@ -33,7 +33,7 @@ from lark.exceptions import UnexpectedInput
 from access.config.entry_generate import admitted_value_rules
 from access.config.entry_render import iter_entry_snippets
 from access.config.grammar_contract import KEY_BLOCK, KEY_LIST, KEY_NULL, KEY_VALUE
-from access.config.grammar_values import UnsupportedEntryError
+from access.config.grammar_values import UnsupportedEntryError, identical_values
 from access.config.tree_edits import parse_entry_nodes, splice_entry_nodes
 from access.config.tree_navigation import entries_of, entry_insertion_index
 from access.config.tree_reader import EntryRef, entry_value, read_entries
@@ -66,7 +66,8 @@ def _same_value(stored: Any, requested: Any) -> bool:
 
     The type is compared as well as the value, because several value types share a Python
     type and a written value can be read back as the wrong one: ``Path("foo")`` writes as
-    ``foo``, which a grammar with a bare-word value type reads back as a plain ``str``.
+    ``foo``, which a grammar with a bare-word value type reads back as a plain ``str``. And
+    a NaN read back is the NaN requested, though the two compare unequal.
 
     Args:
         stored (Any): The value read back from the candidate text.
@@ -75,7 +76,7 @@ def _same_value(stored: Any, requested: Any) -> bool:
     Returns:
         bool: True if the two match in both type and value.
     """
-    return type(stored) is type(requested) and bool(stored == requested)
+    return identical_values(stored, requested)
 
 
 def entry_matches(refs: Mapping[str, EntryRef], key: str, value: Any) -> bool:

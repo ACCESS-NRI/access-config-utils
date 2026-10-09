@@ -19,6 +19,7 @@ from access.config.grammar_values import (
     VALUE_RULE_PRIORITY,
     VALUE_TYPE_HANDLER_REGISTRY,
     UnsupportedEntryError,
+    identical_values,
     select_value_rule,
 )
 
@@ -263,6 +264,26 @@ class TestSelectValueRule:
         """Test that the priority is an argument, which is how a parser overrides it."""
         assert select_value_rule("word", {"identifier", "string"}) == "string"
         assert select_value_rule("word", {"identifier", "string"}, ("identifier", "string")) == "identifier"
+
+
+class TestIdenticalValues:
+    """Whether two values are the same value, which equality does not say."""
+
+    @pytest.mark.parametrize(
+        ("first", "second", "identical"),
+        [
+            pytest.param(1, 1, True, id="same"),
+            pytest.param(1, 1.0, False, id="int-float"),
+            pytest.param(1, True, False, id="int-bool"),
+            pytest.param(math.nan, math.nan, True, id="nan"),
+            pytest.param(0.0, -0.0, False, id="signed-zero"),
+            pytest.param("a", "a", True, id="str"),
+            pytest.param(Path("a"), "a", False, id="path-str"),
+        ],
+    )
+    def test_compares_type_and_representation(self, first, second, identical) -> None:
+        """Test the cases where equality and identity of value disagree."""
+        assert identical_values(first, second) is identical
 
 
 def test_priority_covers_every_registered_rule() -> None:
