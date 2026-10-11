@@ -12,6 +12,7 @@ from access.config.fortran_nml import FortranNMLParser
 from access.config.grammar_values import UnsupportedEntryError
 from access.config.mom6_input import MOM6InputParser
 from access.config.nuopc_config import NUOPCParser
+from access.config.nuopc_runseq import NUOPCRunSeqParser
 from access.config.parser import ConfigParser
 from access.config.yaml_config import YAMLParser
 
@@ -24,4 +25,5 @@ __all__ = [
     "UnsupportedEntryError",
     "YAMLParser",
     "NUOPCParser",
+    "NUOPCRunSeqParser",
 ]

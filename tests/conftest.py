@@ -19,6 +19,7 @@ grammar will do. It is deliberately unlike any real format: it exercises every v
 once, every entry category, and three rules aliased to the wrong category.
 """
 
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -31,6 +32,7 @@ from access.config.grammar_compiled import compile_grammar
 from access.config.grammar_info import GrammarInfo
 from access.config.mom6_input import MOM6InputParser
 from access.config.nuopc_config import NUOPCParser
+from access.config.nuopc_runseq import NUOPCRunSeqParser
 from access.config.parser import ConfigParser
 from access.config.tree_reader import EntryRef
 
@@ -38,6 +40,7 @@ PARSERS = {
     "fortran_nml": FortranNMLParser,
     "mom6_input": MOM6InputParser,
     "nuopc_config": NUOPCParser,
+    "nuopc_runseq": NUOPCRunSeqParser,
 }
 
 # The entry text each grammar produces for each container and category it supports, with
@@ -60,9 +63,15 @@ CANONICAL = {
     ("fortran_nml", "block", "key_value"): "NEWKEY = 7\n",
     ("fortran_nml", "block", "key_list"): "NEWKEY = 1, 2, 3\n",
     ("fortran_nml", "block", "key_null"): "NEWKEY =\n",
+    ("nuopc_runseq", "start", "key_value"): "NEWKEY::\nATM\n::\n",
+    ("nuopc_runseq", "start", "key_list"): "NEWKEY::\n@3600\nATM\n@\n::\n",
+    ("nuopc_runseq", "start", "key_null"): "NEWKEY::\n::\n",
 }
 
 VALUES = {"key_value": 7, "key_list": [1, 2, 3], "key_null": None, "key_block": {}}
+
+# Values for a format whose only value type is a line of text, which holds no number.
+TEXT_VALUES = {"key_value": "ATM", "key_list": ["@3600", "ATM", "@"], "key_null": None}
 
 
 def canonical_rows(grammar: str) -> list[tuple[str, str, str]]:
@@ -74,7 +83,9 @@ def canonical_rows(grammar: str) -> list[tuple[str, str, str]]:
     return [(container, category, text) for (name, container, category), text in CANONICAL.items() if name == grammar]
 
 
-def assert_canonical_entry(compiled: Any, container: str, category: str, expected: str) -> None:
+def assert_canonical_entry(
+    compiled: Any, container: str, category: str, expected: str, values: Mapping[str, Any] = VALUES
+) -> None:
     """Assert the entry text a grammar produces with no neighbour to copy a style from.
 
     The first candidate has to be both the expected text and valid in that container, so
@@ -85,8 +96,9 @@ def assert_canonical_entry(compiled: Any, container: str, category: str, expecte
         container: Name of the container rule the entry is generated for.
         category: The entry category.
         expected: The exact text expected.
+        values: The value to write per category, for a format that cannot hold the usual.
     """
-    snippets = iter_entry_snippets(compiled.info, container, category, "NEWKEY", VALUES[category], EntryStyle())
+    snippets = iter_entry_snippets(compiled.info, container, category, "NEWKEY", values[category], EntryStyle())
     first = next(iter(snippets))
     assert first == expected
 

@@ -163,6 +163,29 @@ def _float_to_str(value: float, token_text: str) -> str:
         return str(value)
 
 
+def _is_text_line(value: Any) -> bool:
+    """Report whether *value* can be written as a line of free text.
+
+    The text runs to the end of the line or to a comment, and the whitespace either side of
+    it belongs to the line rather than to the value, so a value with a comment character, a
+    line break, or whitespace at either end would not read back as itself. Nor would one
+    starting with ``::``, which closes an ESMF table.
+
+    Args:
+        value (Any): The value to check.
+
+    Returns:
+        bool: True if *value* is a string that reads back unchanged as a line of text.
+    """
+    return (
+        type(value) is str
+        and value != ""
+        and value == value.strip()
+        and not any(character in value for character in "#\r\n")
+        and not value.startswith("::")
+    )
+
+
 @dataclass(frozen=True)
 class ValueTypeHandler:
     """Encapsulates all operations for a single value type.
@@ -298,6 +321,12 @@ VALUE_TYPE_HANDLER_REGISTRY: dict[str, ValueTypeHandler] = {
         # The quote is chosen by _fortran_string_to_str; this only states the preference.
         seed_token=lambda value: '""',
     ),
+    "text_line": ValueTypeHandler(
+        type_check=_is_text_line,
+        from_token=lambda token: str(token),
+        to_token=lambda value, token: value,
+        seed_token=lambda value: "",
+    ),
     "path": ValueTypeHandler(
         type_check=lambda value: isinstance(value, Path),
         from_token=lambda token: Path(token),
@@ -326,6 +355,7 @@ VALUE_RULE_PRIORITY: tuple[str, ...] = (
     "string",
     "fortran_identifier",
     "identifier",
+    "text_line",
     "path",
 )
 """Order in which value-type rules are tried when writing a value for a brand-new key.
@@ -337,6 +367,8 @@ rather than left to whichever grammar rule happens to match first:
 - ``float`` before ``double``, so plain notation is preferred over a ``D`` exponent.
 - ``string`` before ``identifier``, so quoting is preferred wherever it is allowed, and bare
   words are used only by grammars that have no ``string`` rule.
+- ``identifier`` before ``text_line``, so a whole line of free text is what a string becomes
+  only in a format with nothing narrower to write it as.
 
 Only rules the grammar actually admits are considered, so a format picks the first entry it
 supports: ``True`` becomes ``.true.`` where a grammar has ``logical``, ``True`` where it

@@ -55,6 +55,12 @@ path: PATH
 PATH_COMPONENT : /[a-zA-Z0-9._-]+/
 PATH           : ("/" | "./" | "../")? PATH_COMPONENT ("/" PATH_COMPONENT)* ("/")?
 
+// A line of free text: everything up to a comment or the end of the line, without the
+// whitespace on either side. A line starting with "::" is never one, since in an ESMF
+// resource file that closes a table.
+text_line: TEXT_LINE
+TEXT_LINE: /(?!::)[^\s#](?:[^\r\n#]*[^\s#])?/
+
 // Space, newlines and comments
 ws: WS_INLINE
 NEWLINE: CR? LF
