@@ -103,7 +103,7 @@ class TestStartSymbols:
 
         assert lark.parse("a=1", start="block").data == "block"
 
-    def test_a_grammar_without_one_keeps_a_single_start_symbol(self) -> None:
+    def test_a_grammar_without_one_has_no_block_start_symbol(self) -> None:
         """Test that ``block`` is not declared for a format that has no such rule.
 
         Lark rejects a start symbol naming a rule that does not exist, so the probe is what
@@ -145,6 +145,43 @@ class TestParseContext:
         assert ctx.case_sensitive_keys is True
         assert ctx.entry_templates == {("start", "key_value"): "{key}={value}"}
         assert ctx.value_rule_priority == ("integer",)
+
+    @pytest.mark.parametrize(
+        ("text", "accepted"),
+        [
+            pytest.param("a_b", True, id="identifier"),
+            pytest.param("a-b", False, id="hyphen"),
+            pytest.param("2fast", False, id="leading-digit"),
+            pytest.param("", False, id="empty"),
+            pytest.param(" a", False, id="ignored-whitespace"),
+            pytest.param("a b", False, id="two-names"),
+        ],
+    )
+    def test_accepts_key_asks_the_grammar(self, ctx, text, accepted) -> None:
+        """Test that a name is valid when the format's ``key`` rule reads it back whole."""
+        assert ctx.accepts_key(text) is accepted
+
+    def test_accepts_key_follows_a_wider_key_rule(self) -> None:
+        """Test that a format whose names hold hyphens and slashes accepts them."""
+        grammar = """
+            start: entry*
+            entry: key "=" integer -> key_value
+            key: NAME
+            NAME: /[A-Za-z0-9_\\-\\/]+/
+            %import config.integer
+            %import common.WS
+            %ignore WS
+        """
+        ctx = ParseContext(compile_grammar(grammar), True, {}, VALUE_RULE_PRIORITY)
+
+        assert ctx.accepts_key("horizontal-advection-scheme")
+        assert ctx.accepts_key("ocean_age_tracer/global")
+
+    def test_accepts_key_without_a_key_rule(self) -> None:
+        """Test that a grammar with no ``key`` rule, and so no entries, accepts no name."""
+        ctx = ParseContext(compile_grammar("start: integer\n%import config.integer"), True, {}, VALUE_RULE_PRIORITY)
+
+        assert not ctx.accepts_key("a")
 
     def test_normalise_key_leaves_a_case_sensitive_key_alone(self, ctx) -> None:
         """Test the format that matches keys exactly, which is all but the namelist."""

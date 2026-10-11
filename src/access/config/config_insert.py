@@ -128,11 +128,11 @@ def insert_entry(container: Tree, ctx: ParseContext, key: str, raw_key: str, val
         EntryRef: Where the new entry lives in the parse tree.
 
     Raises:
-        ValueError: If *raw_key* is not a usable key name, or *value* is a list too short
-            for the format to express as one.
+        ValueError: If *raw_key* is not a name the format's ``key`` rule reads back as
+            itself, or *value* is a list too short for the format to express as one.
         UnsupportedEntryError: If no candidate produced the requested value.
     """
-    if not isinstance(raw_key, str) or not raw_key.isidentifier():
+    if not isinstance(raw_key, str) or not ctx.accepts_key(raw_key):
         raise ValueError(f"Not a valid configuration key: {raw_key!r}")
 
     category = entry_category(value)
