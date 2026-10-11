@@ -306,11 +306,11 @@ def test_insert_entry_passes_the_style_and_container_through(container) -> None:
     ctx.entry_templates = {("start", "key_value"): "{key}={value}"}
     ctx.value_rule_priority = ("integer",)
 
-    def record(info, container_rule, category, key, value, given_style, overrides, priority):
+    def record(info, container_rule, category, keys, value, given_style, overrides, priority):
         seen.update(
             container=container_rule,
             category=category,
-            key=key,
+            keys=keys,
             style=given_style,
             overrides=overrides,
             priority=priority,
@@ -330,7 +330,7 @@ def test_insert_entry_passes_the_style_and_container_through(container) -> None:
     assert seen == {
         "container": "start",
         "category": "key_value",
-        "key": "Z",
+        "keys": ("Z",),
         "style": style,
         "overrides": ctx.entry_templates,
         "priority": ctx.value_rule_priority,

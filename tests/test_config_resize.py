@@ -108,6 +108,19 @@ class TestResizing:
 
         assert store.render() == "a = 1,  # one\n    2,\n    3,\n    4"
 
+    def test_a_windows_line_end_survives_a_comment_before_it(self, ctx) -> None:
+        """Test that a new element ends its line as the others do, carriage return and all.
+
+        The comment rule runs up to the line feed, so it holds the carriage return, and
+        blanking the comment must not take that too. The last line feed is the one the
+        store drops on writing out, as it drops the newline ``parse`` adds.
+        """
+        store = store_of(ctx, "a = 1,  # one\r\n    2\r\n")
+
+        resize(store, [1, 2, 3])
+
+        assert store.render() == "a = 1,  # one\r\n    2,\r\n    3\r"
+
     def test_keeps_the_entry_node(self, ctx) -> None:
         """Test that the references to the entry, and so the dict's, stay good."""
         store = store_of(ctx, "a = 1, 2\n")

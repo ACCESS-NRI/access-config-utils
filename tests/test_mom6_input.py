@@ -346,6 +346,15 @@ class TestAddingAnEntry:
         assert str(config) == "BOOL = True\nNEW = 1\n  \n"
         assert dict(parser.parse(str(config))) == dict(config)
 
+    def test_a_new_string_is_quoted_like_its_neighbour(self, parser) -> None:
+        """Test that the quote character of the entry above is copied."""
+        config = parser.parse("A = 'x'\n")
+
+        config["B"] = "y"
+
+        assert str(config) == "A = 'x'\nB = 'y'\n"
+        assert dict(parser.parse(str(config))) == dict(config)
+
     def test_a_new_block_copies_the_spacing_of_the_block_above(self, parser) -> None:
         """Test what carries over to a block created by an assignment.
 

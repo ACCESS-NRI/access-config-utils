@@ -18,6 +18,7 @@ from access.config.tree_navigation import (
     AddParent,
     contains_entry,
     entries_of,
+    entry_chain,
     entry_insertion_index,
     entry_nodes,
     flatten_slots,
@@ -110,6 +111,28 @@ class TestFindingEntries:
         assert entry_nodes(block) == [block]
         assert entries_of(Tree("start", [block])) == [block]
         assert entries_of(Tree("block", [inner])) == [inner]
+
+    def test_entry_chain_follows_one_entry_per_level(self) -> None:
+        """Test the derived-type component ``a%b%c = 1``, an entry in an entry in one."""
+        innermost = scalar("c")
+        middle = entry_node("key_block", "b", Tree("dtype_body", [innermost]))
+        outer = entry_node("key_block", "a", Tree("dtype_body", [middle]))
+
+        assert entry_chain(outer) == [outer, middle, innermost]
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param(Tree("block", [scalar("x")]), id="block"),
+            pytest.param(Tree("body", [scalar("b"), scalar("c")]), id="several"),
+            pytest.param(value_node(), id="none"),
+        ],
+    )
+    def test_entry_chain_ends_at_an_entry_with_no_single_entry_outside_a_block(self, body) -> None:
+        """Test that the contents of a block, or several entries, are not a next level."""
+        entry = entry_node("key_block", "a", body)
+
+        assert entry_chain(entry) == [entry]
 
     def test_contains_entry(self) -> None:
         """Test the predicate telling a child that holds an entry from one that does not."""

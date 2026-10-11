@@ -1146,6 +1146,49 @@ class TestAddingAnEntry:
         assert str(config) == f"&L\n{donor}\n{added}\n/\n"
         assert dict(parser.parse(str(config))) == dict(config)
 
+    @pytest.mark.parametrize(
+        ("source", "key", "value", "expected"),
+        [
+            pytest.param("&L\n  S = 'abc'\n/\n", "T", "x", "&L\n  S = 'abc'\n  T = 'x'\n/\n", id="quote"),
+            pytest.param(
+                "&L\n  S = 'a', 'b'\n/\n",
+                "T",
+                ["x", "y", "z"],
+                "&L\n  S = 'a', 'b'\n  T = 'x', 'y', 'z'\n/\n",
+                id="list-quote",
+            ),
+            pytest.param("&L\n  F = T\n/\n", "G", False, "&L\n  F = T\n  G = F\n/\n", id="bare-logical"),
+            pytest.param(
+                "&L\n  F = .TRUE.\n/\n", "G", False, "&L\n  F = .TRUE.\n  G = .FALSE.\n/\n", id="dotted-logical"
+            ),
+            pytest.param(
+                "&L\r\n  X = 1 ! one\r\n/\r\n", "Y", 2, "&L\r\n  X = 1 ! one\r\n  Y = 2\r\n/\r\n", id="windows-line-end"
+            ),
+            pytest.param("&L X = 1 /\n", "Y", 2, "&L X = 1 Y = 2 /\n", id="one-line-group"),
+        ],
+    )
+    def test_a_new_entry_is_written_like_its_neighbour(self, parser, source, key, value, expected) -> None:
+        """Test that the nearest entry of the same kind is copied, notation and all.
+
+        The quote character, the spelling of a logical and the line ending all come from
+        the entry above, as does a group written on one line staying on one line.
+        """
+        config = parser.parse(source)
+
+        config["L"][key] = value
+
+        assert str(config) == expected
+        assert dict(parser.parse(str(config))) == dict(config)
+
+    def test_a_new_group_copies_the_delimiters_of_the_last(self, parser) -> None:
+        """Test that a file written with ``$`` and ``$end`` gets a new group written so."""
+        config = parser.parse("$L\n  X = 1\n$end\n")
+
+        config["NEW"] = {"A": 1}
+
+        assert str(config) == "$L\n  X = 1\n$end\n$NEW\n  A = 1\n$end\n"
+        assert dict(parser.parse(str(config))) == dict(config)
+
     def test_a_new_key_lands_after_a_comment_run(self, parser) -> None:
         """Test that a comment continuing below an assignment is not written into.
 

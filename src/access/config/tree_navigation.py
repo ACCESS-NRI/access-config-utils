@@ -92,6 +92,34 @@ def entries_of(container: Tree) -> list[Tree]:
     return [entry for child in container.children if isinstance(child, Tree) for entry in entry_nodes(child)]
 
 
+def entry_chain(entry: Tree) -> list[Tree]:
+    """Return *entry* and the entries nested one inside the next below it, outermost first.
+
+    A block may be written one component per line, its key repeated on each: the Fortran
+    ``a%b%c = 1`` is an entry for ``a`` holding one for ``b`` holding one for ``c``. Each
+    level holds exactly one entry outside any ``block``, and that is what the chain follows.
+    It ends at an entry holding none -- or several, which is no chain at all.
+
+    Args:
+        entry (Tree): An entry rule node.
+
+    Returns:
+        list[Tree]: The entries, *entry* first and the innermost last; just *entry* for an
+            entry that is not a chain.
+    """
+    chain = [entry]
+    while True:
+        nested = [
+            found
+            for child in chain[-1].children
+            if isinstance(child, Tree) and child.data != BLOCK_RULE
+            for found in entry_nodes(child)
+        ]
+        if len(nested) != 1:
+            return chain
+        chain.append(nested[0])
+
+
 def contains_entry(node: Tree | Token) -> bool:
     """Report whether a container child holds a configuration entry.
 

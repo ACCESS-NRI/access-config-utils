@@ -20,7 +20,8 @@ The pipeline
 1. **Generate.** Collect every way the grammar can derive one entry of the requested
    category, as an ``EntryTemplate``. That is ``entry_generate``, which also filters out any
    derivation not holding exactly one entry of the right category, or the wrong number of
-   values for it.
+   values for it. A template copied from a neighbouring entry of the same kind, if the
+   container has one, goes ahead of all of them; see ``entry_style.donor_template``.
 2. **Rank.** Order the survivors so the most idiomatic rendering wins: a complete line, a
    block whose contents start on their own line, no blank lines, no trailing separator, and
    the whitespace of a neighbouring entry where that costs nothing.
@@ -37,9 +38,11 @@ around it.
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import replace
 
 from access.config.entry_fragments import (
     EntryTemplate,
+    Fragment,
     compile_template,
     expand_value_slots,
     shape_key,
@@ -124,12 +127,13 @@ def _ws_texts(template: EntryTemplate, style: EntryStyle) -> dict[int, str]:
     return texts
 
 
-def render(template: EntryTemplate, key: str, value_texts: Sequence[str], style: EntryStyle) -> str:
+def render(template: EntryTemplate, keys: Sequence[str], value_texts: Sequence[str], style: EntryStyle) -> str:
     """Render a template into the text of an entry.
 
     Args:
         template (EntryTemplate): The template, already grown to the right number of values.
-        key (str): The key name, written as given.
+        keys (Sequence[str]): The key names, outermost first, written as given. One for a
+            plain entry; a chain such as ``a%b = 1`` takes one per level.
         value_texts (Sequence[str]): Token text for each value, in order.
         style (EntryStyle): Whitespace to copy from a neighbouring entry.
 
@@ -143,7 +147,7 @@ def render(template: EntryTemplate, key: str, value_texts: Sequence[str], style:
         >>> from access.config.entry_fragments import Fragment
         >>> template = (Fragment("key"), Fragment("ws"), Fragment("literal", "="),
         ...             Fragment("ws"), Fragment("value"), Fragment("literal", "\\n"))
-        >>> render(template, "A", ["1"], EntryStyle())
+        >>> render(template, ["A"], ["1"], EntryStyle())
         'A = 1\\n'
 
         Given a donor style, the runs it recorded are reproduced instead. One pad per
@@ -153,7 +157,7 @@ def render(template: EntryTemplate, key: str, value_texts: Sequence[str], style:
         on the wrong side of it would move the whitespace rather than reproduce it.
 
         >>> style = EntryStyle(key_pads=("  ", "  "), key_split=1, has_donor=True)
-        >>> render(template, "A", ["1"], style)
+        >>> render(template, ["A"], ["1"], style)
         'A  =  1\\n'
     """
     ws_texts = _ws_texts(template, style)
@@ -165,7 +169,7 @@ def render(template: EntryTemplate, key: str, value_texts: Sequence[str], style:
         elif fragment.kind == "ws":
             pieces.append(ws_texts[index])
         elif fragment.kind == "key":
-            pieces.append(key)
+            pieces.append(keys[fragment.level])
         elif fragment.kind == "value":
             pieces.append(next(values))
     return "".join(pieces)
@@ -178,7 +182,7 @@ def iter_entry_snippets(
     info: GrammarInfo,
     container: str,
     category: str,
-    key: str,
+    keys: Sequence[str],
     value: object,
     style: EntryStyle,
     overrides: Mapping[tuple[str, str], str] | None = None,
@@ -186,25 +190,28 @@ def iter_entry_snippets(
 ) -> Iterator[str]:
     """Yield candidate texts for a new entry, most preferred first.
 
-    A parser-declared override for this container and category is offered first, but only
-    when *style* has no donor. A template is fixed text, so it cannot reproduce a
-    neighbour's whitespace; offered unconditionally it would space a new entry unlike the
-    entry directly above it, which is worse than the canonical layout it was meant to
-    replace. What it is for is the case where nothing nearby can say how the entry should
-    look.
+    A template copied from a neighbouring entry of the same kind comes first: it is the one
+    thing that writes the new entry exactly as the file writes the others, punctuation and
+    value notation included.
 
-    Even then the override is a preference, not a replacement: if it no longer parses --
-    because the grammar changed under it -- the caller simply moves on to the generated
-    candidates.
+    A parser-declared override for this container and category comes next, but only when
+    *style* has no donor. A template is fixed text, so it cannot reproduce a neighbour's
+    whitespace; offered unconditionally it would space a new entry unlike the entry directly
+    above it, which is worse than the canonical layout it was meant to replace. What it is
+    for is the case where nothing nearby can say how the entry should look.
+
+    Neither is more than a preference: if one does not parse, or reads back as something
+    else, the caller simply moves on to the templates the grammar derives.
 
     Args:
         info (GrammarInfo): Views over the compiled grammar.
         container (str): Name of the rule the entry will become a child of.
         category (str): One of ``ENTRY_CATEGORIES``.
-        key (str): The key name, written as given.
+        keys (Sequence[str]): The key names, outermost first, written as given: one for a
+            plain entry, one per level for a chain such as ``a%b = 1``.
         value (object): The value; a sequence of values for ``key_list``, unused for
             ``key_block`` and ``key_null``.
-        style (EntryStyle): Whitespace of a neighbouring entry.
+        style (EntryStyle): The layout of the neighbouring entries.
         overrides (Mapping[tuple[str, str], str] | None): Parser-declared templates, keyed
             by container and category.
         priority (Sequence[str]): Order in which to try the admitted value-type rules.
@@ -219,9 +226,16 @@ def iter_entry_snippets(
         options = admitted_value_rules(info, container, category)
         templates.insert(0, compile_template(override, category, options))
 
+    donor = style.donor(len(keys), category)
+    if donor is not None:
+        # The copy knows how its neighbour wrote a value, not what else may be written here.
+        options = admitted_value_rules(info, container, category)
+        admitting = [replace(fragment, options=options) if fragment.kind == "value" else fragment for fragment in donor]
+        templates.insert(0, tuple(admitting))
+
     emitted = 0
     for template in templates:
-        for text in _render_candidates(template, key, value, style, category, priority):
+        for text in _render_candidates(template, keys, value, style, category, priority):
             yield text
             emitted += 1
             if emitted >= _MAX_SNIPPETS:
@@ -269,7 +283,7 @@ def _rule_choices(values: Sequence[object], options: frozenset[str], priority: S
 
 def _render_candidates(
     template: EntryTemplate,
-    key: str,
+    keys: Sequence[str],
     value: object,
     style: EntryStyle,
     category: str,
@@ -281,12 +295,34 @@ def _render_candidates(
         template = expand_value_slots(template, len(values))
     slots = [fragment for fragment in template if fragment.kind == "value"]
     if not slots:
-        yield render(template, key, [], style)
+        yield render(template, keys, [], style)
     else:
         # Every slot of one entry admits the same value types, so the first speaks for all.
         for rule_names in _rule_choices(values, slots[0].options, priority):
-            texts = [
-                VALUE_TYPE_HANDLER_REGISTRY[name].to_new_token(item)
-                for name, item in zip(rule_names, values, strict=True)
-            ]
-            yield render(template, key, texts, style)
+            texts = [_value_text(*choice) for choice in zip(rule_names, values, slots, strict=True)]
+            yield render(template, keys, texts, style)
+
+
+def _value_text(rule: str, value: object, slot: Fragment) -> str:
+    """Return the token text writing *value* with *rule* into *slot*.
+
+    A slot copied from an existing entry knows how that entry wrote its value, and a value
+    written with the same rule takes on its notation: the quote character, the spelling of a
+    logical, the exponent letter. Where that notation cannot hold the value, it is written
+    the way a brand-new value is.
+
+    Args:
+        rule (str): The value-type rule chosen.
+        value (object): The value.
+        slot (Fragment): The value placeholder.
+
+    Returns:
+        str: The token text.
+    """
+    handler = VALUE_TYPE_HANDLER_REGISTRY[rule]
+    if slot.notation is not None and slot.notation[0] == rule:
+        try:
+            return handler.to_token(value, slot.notation[1])
+        except (TypeError, ValueError):
+            pass
+    return handler.to_new_token(value)

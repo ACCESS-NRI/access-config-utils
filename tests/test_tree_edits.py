@@ -22,6 +22,7 @@ from access.config.tree_edits import (
     _runs_of,
     _source_token,
     _value_texts,
+    blank_comments,
     merge_adjacent_repetitions,
     parse_entry_nodes,
     prune_empty_wrappers,
@@ -157,6 +158,33 @@ class TestReplaceEntryContents:
         assert entry.data == "key_value"
         assert entry.children == fresh_children
         assert all(child.parent is entry for child in entry.children)
+
+
+class TestBlankComments:
+    """Writing the comments in a copy of part of a file as nothing."""
+
+    def test_blanks_every_comment_and_nothing_else(self) -> None:
+        """Test comments at any depth, of either rule, beside text that has to stay."""
+        line = Tree(
+            "line",
+            [
+                entry_node("key_value", "a", value_node()),
+                Tree("line_end", [Tree("comment", [Token("COMMENT", "  # one")]), Token("NEWLINE", "\n")]),
+                Tree("fortran_comment", [Token("COMMENT", "! two")]),
+            ],
+        )
+
+        blank_comments(line)
+
+        assert [str(token) for token in line.scan_values(lambda _: True)] == ["a", "1", "", "\n", ""]
+
+    def test_keeps_the_carriage_return_a_comment_ran_up_to(self) -> None:
+        """Test a comment rule stopping only at the line feed, in a Windows file."""
+        comment = Tree("comment", [Token("COMMENT", "# one\r"), Tree("unusual", [])])
+
+        blank_comments(comment)
+
+        assert comment.children == [Token("COMMENT", "\r"), Tree("unusual", [])]
 
 
 class TestRemoveEntryNode:

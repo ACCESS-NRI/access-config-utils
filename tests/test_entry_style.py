@@ -1,27 +1,38 @@
 # Copyright 2025 ACCESS-NRI and contributors. See the top-level COPYRIGHT file for details.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for the whitespace a new entry should be written with.
+"""Unit tests for how a new entry should be written so that it looks like its neighbours.
 
 Nothing is faked: ``entry_style`` reads templates and parse trees, and both are built here
 directly. That is what makes the cases separable -- a container whose only entry has no
 value, a scalar and a list disagreeing about spacing, a template with an indent slot and one
 without. A grammar gives you the shapes it happens to derive, not the one under test.
+
+The exception is copying a whole entry, which writes a parse tree out and so needs a
+grammar's reconstructor. Those trees are parsed from text by the Fortran namelist grammar,
+which has every shape a copy has to deal with: a line wrapping its entry or not, a chain,
+an array qualifier, a repeat count, a skipped position and a block. The MOM6 grammar adds
+an entry holding its own comment.
 """
 
 import pytest
 from conftest import entry_node, value_node, ws_node
 from lark import Token, Tree
 
-from access.config.entry_fragments import Fragment
+from access.config.entry_fragments import EntryTemplate, Fragment
 from access.config.entry_style import (
     EntryStyle,
     canonical_ws,
     classify_slots,
+    donor_template,
     probe_entry_style,
     probe_sibling_block_style,
     style_matches,
 )
+from access.config.fortran_nml import FortranNMLParser
+from access.config.grammar_compiled import CompiledGrammar, compile_grammar
+from access.config.mom6_input import MOM6InputParser
+from access.config.tree_navigation import entries_of
 
 KEY, WS, VALUE, BLOCK = Fragment("key"), Fragment("ws"), Fragment("value"), Fragment("block")
 
@@ -36,6 +47,35 @@ LINE = (WS, KEY, WS, literal("="), WS, VALUE, WS, literal("\n"))
 
 # ``  KEY = a, b\n``: the same, with an element separator between two values.
 LIST_LINE = (WS, KEY, WS, literal("="), WS, VALUE, literal(","), WS, VALUE, WS, literal("\n"))
+
+
+@pytest.fixture(scope="module")
+def fortran() -> CompiledGrammar:
+    """Return the compiled Fortran namelist grammar."""
+    return compile_grammar(FortranNMLParser().grammar)
+
+
+@pytest.fixture(scope="module")
+def mom6() -> CompiledGrammar:
+    """Return the compiled MOM6 parameter file grammar."""
+    return compile_grammar(MOM6InputParser().grammar)
+
+
+def group_body(compiled: CompiledGrammar, text: str) -> Tree:
+    """Return the body of the one namelist group *text* holds."""
+    group = entries_of(compiled.lark.parse(text, start="start"))[0]
+    return next(child for child in group.children if isinstance(child, Tree) and child.data == "block")
+
+
+def shown(template: EntryTemplate | None) -> str | None:
+    """Return a template as text, with ``{K0}`` for a key of level 0 and ``{V}`` a value."""
+    if template is None:
+        return None
+    marks = {"key": "{{K{level}}}", "value": "{{V}}"}
+    return "".join(
+        fragment.text if fragment.kind == "literal" else marks[fragment.kind].format(level=fragment.level)
+        for fragment in template
+    )
 
 
 def styled_entry(indent: str = "", *pads: str, key: str = "a", values: int = 1) -> Tree:
@@ -69,9 +109,10 @@ class TestCanonicalWs:
         """Test the readable default, which is what makes a new entry ``KEY = value``."""
         assert canonical_ws(LINE, index) == " "
 
-    def test_empty_before_a_separator_following_a_value(self) -> None:
-        """Test that a list reads as ``a, b`` rather than ``a , b``."""
-        template = (VALUE, WS, literal(","), WS, VALUE)
+    @pytest.mark.parametrize("separator", [",", ":"])
+    def test_empty_before_a_separator_following_a_value(self, separator) -> None:
+        """Test that a list reads as ``a, b`` rather than ``a , b``, any separator alike."""
+        template = (VALUE, WS, literal(separator), WS, VALUE)
         assert canonical_ws(template, 1) == ""
         # The slot after the separator is ordinary readable whitespace.
         assert canonical_ws(template, 3) == " "
@@ -84,6 +125,14 @@ class TestCanonicalWs:
     def test_a_separator_that_is_not_punctuation_keeps_its_space(self) -> None:
         """Test that a word-like separator is spaced, as ``1 and 2`` would need to be."""
         assert canonical_ws((VALUE, WS, literal("and"), WS, VALUE), 1) == " "
+
+    def test_empty_before_any_comma(self) -> None:
+        """Test that a comma is not spaced off whatever it follows: ``"k", "v"``."""
+        assert canonical_ws((literal('"'), WS, literal(","), WS, literal('"')), 1) == ""
+
+    def test_empty_between_punctuation_and_a_key(self) -> None:
+        """Test that a chain of keys reads as ``a%b`` rather than ``a% b``."""
+        assert canonical_ws((KEY, literal("%"), WS, KEY), 2) == ""
 
 
 class TestClassifySlots:
@@ -306,3 +355,137 @@ class TestProbeSiblingBlockStyle:
         odd = entry_node("key_block", "blk", Tree("body", [styled_entry("  ", " ")]))
 
         assert probe_sibling_block_style(Tree("start", [odd])) == EntryStyle()
+
+
+class TestDonorTemplate:
+    """Copying an existing entry whole, as the template for a new one."""
+
+    def test_writes_markers_for_the_key_and_the_value(self, fortran) -> None:
+        """Test that everything else is fixed text, and the value's notation is kept."""
+        template = probe_entry_style(group_body(fortran, "&g\n  name = 'abc'\n/\n"), fortran.reconstructor).donor(
+            1, "key_value"
+        )
+
+        assert shown(template) == "  {K0} = {V}\n"
+        assert [fragment.notation for fragment in template if fragment.kind == "value"] == [("fortran_string", "'abc'")]
+
+    def test_leaves_out_a_comment_in_the_entry(self, mom6) -> None:
+        """Test that a new entry does not repeat someone else's comment."""
+        tree = mom6.lark.parse("A = 1 ! one\n", start="start")
+
+        assert shown(probe_entry_style(tree, mom6.reconstructor).donor(1, "key_value")) == "{K0} = {V}\n"
+
+    def test_takes_only_the_line_break_from_a_line_wrapping_the_entry(self, fortran) -> None:
+        """Test that a separator ending the line stays with it, as the comment does."""
+        body = group_body(fortran, "&g\n  a = 1, ! one\n/\n")
+
+        assert shown(probe_entry_style(body, fortran.reconstructor).donor(1, "key_value")) == "  {K0} = {V}\n"
+
+    def test_keeps_a_windows_line_break(self, fortran, mom6) -> None:
+        """Test that a carriage return survives, even one a comment ran up to."""
+        body = group_body(fortran, "&g\r\n  a = 1 ! one\r\n/\r\n")
+        tree = mom6.lark.parse("A = 1 ! one\r\n", start="start")
+
+        assert shown(probe_entry_style(body, fortran.reconstructor).donor(1, "key_value")) == "  {K0} = {V}\r\n"
+        assert shown(probe_entry_style(tree, mom6.reconstructor).donor(1, "key_value")) == "{K0} = {V}\r\n"
+
+    def test_an_entry_on_a_line_with_no_line_break(self, fortran) -> None:
+        """Test a group written on one line, whose entries are followed by the next."""
+        body = group_body(fortran, "&g a = 1 /\n")
+
+        assert shown(probe_entry_style(body, fortran.reconstructor).donor(1, "key_value")) == " {K0} = {V}"
+
+    def test_marks_each_key_of_a_chain_by_its_level(self, fortran) -> None:
+        """Test a derived-type component, which only a chain of the same depth can copy."""
+        style = probe_entry_style(group_body(fortran, "&g\n  a%b = 1\n/\n"), fortran.reconstructor)
+
+        assert shown(style.donor(2, "key_value")) == "  {K0}%{K1} = {V}\n"
+        assert style.donor(1, "key_value") is None
+
+    def test_leaves_out_an_array_qualifier(self, fortran) -> None:
+        """Test that a new entry is not written as one element of an array."""
+        body = group_body(fortran, "&g\n  v(3) = 1\n/\n")
+
+        assert shown(probe_entry_style(body, fortran.reconstructor).donor(1, "key_value")) == "  {K0} = {V}\n"
+
+    def test_empties_a_block(self, fortran) -> None:
+        """Test that a new group copies the delimiters of the last, not its contents."""
+        tree = fortran.lark.parse("$g\n  a = 1\n$end\n", start="start")
+
+        assert shown(probe_entry_style(tree, fortran.reconstructor).donor(1, "key_block")) == "${K0}\n$end\n"
+
+    def test_keeps_the_first_separator_and_the_tail_of_a_list(self, fortran) -> None:
+        """Test that a list is cut down to the two values ``expand_value_slots`` grows."""
+        body = group_body(fortran, "&g\n  a = 1, 2,3\n/\n")
+
+        template = probe_entry_style(body, fortran.reconstructor).donor(1, "key_list")
+
+        assert shown(template) == "  {K0} = {V}, {V}\n"
+        assert [fragment.notation for fragment in template if fragment.kind == "value"] == [
+            ("integer", "1"),
+            ("integer", "2"),
+        ]
+
+    @pytest.mark.parametrize(
+        ("text", "category"),
+        [
+            pytest.param("&g\n  a = 1,\n      2\n/\n", "key_list", id="broken-list"),
+            pytest.param("&g\n  a = 3*1\n/\n", "key_value", id="repeat"),
+            pytest.param("&g\n  a = 1, , 3\n/\n", "key_list", id="skipped-position"),
+        ],
+    )
+    def test_refuses_an_entry_a_new_one_should_not_copy(self, fortran, text, category) -> None:
+        """Test the shapes that belong to the values of an entry, not to its layout."""
+        assert probe_entry_style(group_body(fortran, text), fortran.reconstructor).donor(1, category) is None
+
+    def test_refuses_an_entry_holding_several(self) -> None:
+        """Test an entry that is not a chain, which no key path can write.
+
+        Refused before anything is written out, so no reconstructor is needed.
+        """
+        nested = Tree("body", [entry_node("key_value", "b", value_node()), entry_node("key_value", "c", value_node())])
+        entry = entry_node("key_block", "a", nested)
+
+        assert donor_template(entry, entry, None) is None
+
+
+class TestProbingDonors:
+    """Which entries a container offers to copy, and when."""
+
+    def test_copies_the_last_entry_of_each_kind(self, fortran) -> None:
+        """Test that a scalar and a list are each copied from the nearest of their kind."""
+        body = group_body(fortran, "&g\n  a = 1\n  b = 'x'\n  c = 1, 2\n/\n")
+
+        style = probe_entry_style(body, fortran.reconstructor)
+
+        assert [signature for signature, _ in style.donors] == [(1, "key_list"), (1, "key_value")]
+        assert style.donor(1, "key_value")[-2].notation == ("fortran_string", "'x'")
+
+    def test_skips_a_line_holding_several_entries(self, fortran) -> None:
+        """Test that an entry sharing its line is not copied: that line is set for both."""
+        body = group_body(fortran, "&g\n  a = 1\n  b = 2, c = 'x'\n/\n")
+
+        template = probe_entry_style(body, fortran.reconstructor).donor(1, "key_value")
+
+        assert template[-2].notation == ("integer", "1")
+
+    def test_tries_the_entry_above_one_that_cannot_be_copied(self, fortran) -> None:
+        """Test that a list skipping a position does not stop the one above being copied."""
+        body = group_body(fortran, "&g\n  a = 1, 2\n  b = 1, , 3\n/\n")
+
+        assert shown(probe_entry_style(body, fortran.reconstructor).donor(1, "key_list")) == "  {K0} = {V}, {V}\n"
+
+    def test_copies_nothing_without_a_reconstructor(self, fortran) -> None:
+        """Test that the whitespace can still be read on its own."""
+        style = probe_entry_style(group_body(fortran, "&g\n  a = 1\n/\n"))
+
+        assert style.has_donor
+        assert style.donors == ()
+
+    def test_a_created_block_copies_the_entries_of_its_sibling(self, fortran) -> None:
+        """Test that the first entry of a new group is written like those of the last."""
+        tree = fortran.lark.parse("&g\n  a = 'x'\n/\n", start="start")
+
+        style = probe_sibling_block_style(tree, fortran.reconstructor)
+
+        assert shown(style.donor(1, "key_value")) == "  {K0} = {V}\n"
