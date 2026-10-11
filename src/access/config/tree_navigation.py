@@ -32,7 +32,7 @@ from ``grammar_contract``, which states in full what a grammar has to provide.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from typing import Any, TypeGuard
 
 from lark import Token, Tree, Visitor
@@ -161,6 +161,57 @@ def entry_insertion_index(container: Tree) -> int:
     while index < len(container.children) and is_comment_line(container.children[index]):
         index += 1
     return index
+
+
+def locate_entry(entry: Tree, containers: Collection[str]) -> tuple[Tree, Tree, tuple[int, ...]]:
+    """Return the container an entry is written in, its line there, and the way down to it.
+
+    A container holds lines, and a line is usually an entry, but not always: a namelist line
+    may hold several assignments, and a derived-type component is an entry inside the entry
+    for its type. The line is what can be written on its own, parsed with the container's
+    rule as the start symbol.
+
+    Children are matched by identity: a ``Tree`` compares by its contents, so two lines
+    written the same way would otherwise be mistaken for each other.
+
+    Args:
+        entry (Tree): An entry rule node in the parse tree.
+        containers (Collection[str]): Names of the rules a line can be parsed in, the
+            parser's start symbols.
+
+    Returns:
+        tuple[Tree, Tree, tuple[int, ...]]: The container, the line, and the child indices
+            leading from the line down to the entry -- empty when the line is the entry.
+    """
+    path: list[int] = []
+    node = entry
+    parent: Tree = entry.parent  # type: ignore[attr-defined]
+    while str(parent.data) not in containers:
+        path.append(next(index for index, child in enumerate(parent.children) if child is node))
+        node, parent = parent, parent.parent  # type: ignore[attr-defined]
+    return parent, node, tuple(reversed(path))
+
+
+def node_at(root: Tree, path: Sequence[int]) -> Tree:
+    """Return the rule node reached from *root* by the child indices of *path*.
+
+    Args:
+        root (Tree): The node to start from.
+        path (Sequence[int]): Child indices, outermost first.
+
+    Returns:
+        Tree: The node reached.
+
+    Raises:
+        IndexError: If *path* leads to a child that does not exist, or is not a rule node.
+    """
+    node = root
+    for index in path:
+        child = node.children[index]
+        if not isinstance(child, Tree):
+            raise IndexError(f"Child {index} of '{node.data}' is not a rule node")
+        node = child
+    return node
 
 
 # --- Values ---

@@ -26,6 +26,7 @@ from access.config.tree_edits import (
     parse_entry_nodes,
     prune_empty_wrappers,
     remove_entry_node,
+    replace_entry_contents,
     replace_value_node,
     splice_entry_nodes,
     update_node_value,
@@ -140,6 +141,22 @@ class TestSpliceEntryNodes:
         splice_entry_nodes(container, nodes, 0)
 
         assert container.children == nodes
+
+
+class TestReplaceEntryContents:
+    """Giving an entry the contents of a freshly parsed one, keeping the node itself."""
+
+    def test_takes_the_children_and_the_rule_of_the_fresh_entry(self) -> None:
+        """Test that the node keeps its identity and adopts what it now holds."""
+        entry = entry_node("key_list", "a", value_node(text="1"), value_node(text="2"))
+        fresh = entry_node("key_value", "a", value_node(text="3"))
+        fresh_children = list(fresh.children)
+
+        replace_entry_contents(entry, fresh)
+
+        assert entry.data == "key_value"
+        assert entry.children == fresh_children
+        assert all(child.parent is entry for child in entry.children)
 
 
 class TestRemoveEntryNode:

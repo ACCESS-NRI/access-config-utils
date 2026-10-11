@@ -1256,6 +1256,106 @@ class TestAddingAnEntry:
         assert dict(parser.parse(str(single))) == dict(single)
 
 
+class TestResizingAList:
+    """A list that grows or shrinks, laid out around the elements that stay."""
+
+    MIXED = "&L\n  x = 1, 2,  ! c\n     3, 4\n/\n"
+    ONE_PER_LINE = "&L\n  x = 1,\n      2,\n      3\n/\n"
+
+    @pytest.mark.parametrize(
+        ("source", "change", "written"),
+        [
+            pytest.param(MIXED, lambda x: x.insert(2, 9), "&L\n  x = 1, 2, 9,  ! c\n     3, 4\n/\n", id="mixed-insert"),
+            pytest.param(MIXED, lambda x: x.remove(2), "&L\n  x = 1,  ! c\n     3, 4\n/\n", id="mixed-delete-before"),
+            pytest.param(MIXED, lambda x: x.remove(3), "&L\n  x = 1, 2,  ! c\n     4\n/\n", id="mixed-delete-after"),
+            pytest.param(
+                ONE_PER_LINE,
+                lambda x: x.append(4),
+                "&L\n  x = 1,\n      2,\n      3,\n      4\n/\n",
+                id="one-per-line-append",
+            ),
+            pytest.param(ONE_PER_LINE, lambda x: x.pop(), "&L\n  x = 1,\n      2\n/\n", id="one-per-line-pop"),
+            pytest.param(
+                ONE_PER_LINE,
+                lambda x: x.insert(0, 0),
+                "&L\n  x = 0,\n      1,\n      2,\n      3\n/\n",
+                id="one-per-line-prepend",
+            ),
+            pytest.param("&nml x = 1, 2 /\n", lambda x: x.append(3), "&nml x = 1, 2, 3 /\n", id="single-line-namelist"),
+            pytest.param(
+                "&L\n  s = 'a' 'b'\n/\n", lambda x: x.append("it's"), "&L\n  s = 'a' 'b' 'it''s'\n/\n", id="strings"
+            ),
+        ],
+    )
+    def test_layout(self, parser, source, change, written) -> None:
+        """Test that line breaks, comments and notation stay, and new elements match."""
+        config = parser.parse(source)
+        group = next(iter(config))
+
+        change(config[group][next(iter(config[group]))])
+
+        assert str(config) == written
+        assert dict(parser.parse(str(config))) == dict(config)
+
+    def test_another_entry_on_the_same_line_is_left_alone(self, parser) -> None:
+        """Test that only the list's own entry is rewritten, the line's other one kept."""
+        config = parser.parse("&L\n  x = 1, 2, y = 3, 4,\n/\n")
+        other = config["L"]["X"]
+
+        config["L"]["Y"].append(5)
+        other[0] = 7
+
+        assert str(config) == "&L\n  x = 7, 2, y = 3, 4, 5,\n/\n"
+
+    def test_a_derived_type_component(self, parser) -> None:
+        """Test a list that is an entry inside the entry for its type."""
+        config = parser.parse("&L\n  a%b = 1, 2\n/\n")
+
+        config["L"]["A"]["B"].append(3)
+
+        assert str(config) == "&L\n  a%b = 1, 2, 3\n/\n"
+
+    def test_a_whole_list_of_another_length(self, parser) -> None:
+        """Test that assigning a list matches the old values to keep their places."""
+        config = parser.parse("&L\n  x = 1, 2, 3, 4  ! c\n/\n")
+
+        config["L"]["X"] = [1, 4]
+
+        assert str(config) == "&L\n  x = 1, 4  ! c\n/\n"
+
+    @pytest.mark.parametrize(
+        ("source", "reason"),
+        [
+            pytest.param("&L\n  x(2) = 1, 2\n/\n", "array qualifiers", id="qualifier"),
+            pytest.param("&L\n  x = 1, , 3\n/\n", "unset", id="skipped"),
+            pytest.param("&L\n  x = 1, 2\n  x = 3, 4\n/\n", "more than once", id="assigned-twice"),
+            pytest.param("&L\n  x = 3*1\n/\n", "repeat count", id="repeat"),
+        ],
+    )
+    def test_what_cannot_be_resized(self, parser, source, reason) -> None:
+        """Test the lists whose values are not written one token apiece in one entry."""
+        config = parser.parse(source)
+
+        with pytest.raises(ValueError, match=reason):
+            config["L"]["X"].append(9)
+        assert str(config) == source
+
+    def test_a_list_after_its_repeat_was_split(self, parser) -> None:
+        """Test that splitting a repeat through one element leaves the list writable.
+
+        The split replaces the node backing the run, and the references to it have to
+        follow, or assigning the whole list next writes through nodes no longer in the tree.
+        """
+        config = parser.parse("&L\n  x = 3*1\n/\n")
+
+        config["L"]["X"][1] = 2
+        assert str(config) == "&L\n  x = 1, 2, 1\n/\n"
+        config["L"]["X"] = [5, 5, 5]
+        config["L"]["X"].append(6)
+
+        assert str(config) == "&L\n  x = 5, 5, 5, 6\n/\n"
+
+
 class TestDeleting:
     """Removing an entry, and the line or lines it occupied."""
 

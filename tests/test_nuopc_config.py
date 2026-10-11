@@ -489,6 +489,27 @@ class TestEditingAValue:
         assert dict(parser.parse(str(config))) == dict(config)
 
 
+class TestResizingAList:
+    """A list that grows or shrinks, at either level."""
+
+    def test_a_resource_file_list(self, parser) -> None:
+        """Test that a new element copies the spacing, and the comment stays at the end."""
+        config = parser.parse("component_list: MED ATM  OCN # c\n")
+
+        config["component_list"].append("WAV")
+
+        assert str(config) == "component_list: MED ATM  OCN  WAV # c\n"
+
+    def test_a_table_list(self, parser) -> None:
+        """Test that a table list keeps its colon separator."""
+        config = parser.parse("ALLCOMP_attributes::\n  ocn2glc_levels = 1:10:19\n::\n")
+
+        config["ALLCOMP_attributes"]["ocn2glc_levels"].append(26)
+
+        assert str(config) == "ALLCOMP_attributes::\n  ocn2glc_levels = 1:10:19:26\n::\n"
+        assert dict(parser.parse(str(config))) == dict(config)
+
+
 class TestAddingAnEntry:
     """Writing a key the file does not have, in the syntax of the level it goes into."""
 

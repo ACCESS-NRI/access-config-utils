@@ -24,6 +24,8 @@ from access.config.tree_navigation import (
     index_positions,
     is_comment_line,
     is_value_node,
+    locate_entry,
+    node_at,
     node_values,
     place_indexed,
     repeat_parts,
@@ -198,6 +200,58 @@ def repeat(count: int, inner: Tree | None = None) -> Tree:
     if inner is not None:
         children.append(inner)
     return Tree("repeat", children)
+
+
+class TestLocatingAnEntry:
+    """Finding the line an entry is written on, and the way down to it."""
+
+    def test_an_entry_that_is_its_own_line(self) -> None:
+        """Test the usual case, where the container holds the entry directly."""
+        entry = scalar()
+        container = Tree("start", [entry])
+        AddParent().visit(container)
+
+        assert locate_entry(entry, {"start"}) == (container, entry, ())
+
+    def test_an_entry_nested_in_its_line(self) -> None:
+        """Test a component inside the entry for its type, inside a line of two entries."""
+        inner = scalar("b")
+        outer = entry_node("key_block", "a", Tree("dtype_body", [inner]))
+        held = line(scalar("x"), outer)
+        container = Tree("block", [held])
+        AddParent().visit(container)
+
+        found, found_line, path = locate_entry(inner, {"block", "start"})
+
+        assert found is container
+        assert found_line is held
+        assert path == (1, 1, 0)
+        assert node_at(held, path) is inner
+
+    def test_matches_by_identity_not_by_contents(self) -> None:
+        """Test that a line written just like the one before it is not mistaken for it."""
+        first, second = scalar(), scalar()
+        container = Tree("start", [line(first), line(second)])
+        AddParent().visit(container)
+
+        _, found_line, path = locate_entry(second, {"start"})
+
+        assert found_line is container.children[1]
+        assert path == (0,)
+
+
+class TestNodeAt:
+    """Following a path of child indices down from a node."""
+
+    def test_the_empty_path_is_the_node_itself(self) -> None:
+        """Test that a line which is the entry is reached without moving."""
+        node = scalar()
+        assert node_at(node, ()) is node
+
+    def test_a_path_ending_on_a_token_is_refused(self) -> None:
+        """Test that only rule nodes are reached."""
+        with pytest.raises(IndexError, match="not a rule node"):
+            node_at(scalar(), (0, 0))
 
 
 class TestReadingValues:

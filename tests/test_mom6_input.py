@@ -316,6 +316,19 @@ class TestEditingAValue:
         assert dict(parser.parse(str(config))) == dict(config)
 
 
+class TestResizingAList:
+    """A list that grows or shrinks."""
+
+    def test_a_list_in_a_block(self, parser) -> None:
+        """Test that a new first element is spaced like the rest."""
+        config = parser.parse("KPP%\nC = 4, 5\n%KPP\n")
+
+        config["KPP"]["C"].insert(0, 0)
+
+        assert str(config) == "KPP%\nC = 0, 4, 5\n%KPP\n"
+        assert dict(parser.parse(str(config))) == dict(config)
+
+
 class TestAddingAnEntry:
     """Writing a key the file does not have, in the format's own syntax."""
 

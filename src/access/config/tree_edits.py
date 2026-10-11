@@ -124,6 +124,24 @@ def splice_entry_nodes(container: Tree, nodes: Sequence[Tree | Token], index: in
     container.children[index:index] = nodes
 
 
+def replace_entry_contents(entry: Tree, fresh: Tree) -> None:
+    """Make *entry* hold what *fresh* holds, keeping the node itself.
+
+    An entry node is what the references to an entry name, and what a line holding other
+    entries keeps in its place, so a rewritten entry keeps its node and takes on the
+    children of a freshly parsed one instead. The children are moved, not copied.
+
+    Args:
+        entry (Tree): The entry rule node in the parse tree.
+        fresh (Tree): A freshly parsed entry rule node to take the contents of.
+    """
+    for child in fresh.children:
+        if isinstance(child, Tree):
+            child.parent = entry  # type: ignore[attr-defined]
+    entry.children = fresh.children
+    entry.data = fresh.data
+
+
 def remove_entry_node(entry_node: Tree, info: GrammarInfo) -> None:
     """Unlink an entry from the tree, repairing the shape its removal leaves behind.
 
