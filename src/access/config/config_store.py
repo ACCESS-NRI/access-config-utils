@@ -210,7 +210,7 @@ class ConfigStore:
                     written.append(entries[origin])
                 else:
                     neighbour = written[-1] if written else entries[0]
-                    written.append(self._insert_record(key, value, neighbour, after=bool(written)))
+                    written.append(self._insert_record(value, neighbour, after=bool(written)))
         except (ValueError, TypeError):
             for entry in written:
                 if not any(entry is old for old in entries):
@@ -218,11 +218,10 @@ class ConfigStore:
             raise
         return written
 
-    def _insert_record(self, key: str, value: Any, neighbour: Tree, *, after: bool) -> Tree:
+    def _insert_record(self, value: Any, neighbour: Tree, *, after: bool) -> Tree:
         """Write a record beside another of the same key, as a copy of it.
 
         Args:
-            key (str): The normalised key.
             value (Any): The record.
             neighbour (Tree): The entry writing the record to copy and to go beside.
             after (bool): Whether to go after it rather than before.
@@ -234,13 +233,10 @@ class ConfigStore:
         index = entry_insertion_index(self.tree, line) if after else line
         template = donor_template(self.tree.children[line], neighbour, self.ctx.reconstructor)
         style = EntryStyle(indent_of(neighbour), (((1, KEY_VALUE), template),)) if template else EntryStyle()
-        spelled = [str(key_token(neighbour))]
-        ref = insert_entry(self.tree, self.ctx, [key], spelled, value, style, index, KEY_VALUE)
+        ref = insert_entry(self.tree, self.ctx, [str(key_token(neighbour))], value, style, index, KEY_VALUE)
         return ref.entry_nodes[0]
 
-    def add_path(
-        self, keys: Sequence[str], raw_keys: Sequence[str], value: Any, category: str | None = None
-    ) -> EntryRef:
+    def add_path(self, raw_keys: Sequence[str], value: Any, category: str | None = None) -> EntryRef:
         """Write an entry for a key path this container does not have yet.
 
         One key is a plain entry, written after the last entry of the container. More are a
@@ -253,8 +249,6 @@ class ConfigStore:
         in a block created this session -- from the style handed down when it was created.
 
         Args:
-            keys (Sequence[str]): The normalised key path, used to check what the candidate
-                read back as.
             raw_keys (Sequence[str]): The key path as the caller wrote it, for the text.
             value (Any): The value to store under the innermost key. A ``dict`` creates an
                 empty block.
@@ -272,16 +266,15 @@ class ConfigStore:
         """
         if not self.addable:
             raise UnsupportedEntryError(
-                f"Cannot add '{keys[-1]}': this block has no body in the file for a new entry to go in. "
+                f"Cannot add '{raw_keys[-1]}': this block has no body in the file for a new entry to go in. "
                 "It is either merged from several blocks, or written one component per line"
             )
+        keys = [self.ctx.normalise_key(key) for key in raw_keys]
         index, spelled = self._insertion_point(keys)
         style = probe_entry_style(self.tree, self.ctx.reconstructor, upto=index)
         if style.indent is None:
             style = self.fallback_style
-        ref = insert_entry(
-            self.tree, self.ctx, keys, [*spelled, *raw_keys[len(spelled) :]], value, style, index, category
-        )
+        ref = insert_entry(self.tree, self.ctx, [*spelled, *raw_keys[len(spelled) :]], value, style, index, category)
         if len(keys) == 1:
             self.refs[keys[0]] = ref
         else:

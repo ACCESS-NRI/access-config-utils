@@ -165,8 +165,8 @@ class TestAdd:
         node = entry_node("key_value", "z", value_node())
         ref = EntryRef("key_value", (node,), (node.children[1],))
 
-        def fake_insert(container, ctx, keys, raw_keys, value, style, index, category):
-            calls.append({"container": container, "keys": keys, "raw_keys": raw_keys, "value": value, "style": style})
+        def fake_insert(container, ctx, raw_keys, value, style, index, category):
+            calls.append({"container": container, "raw_keys": raw_keys, "value": value, "style": style})
             return ref
 
         with patch.object(config_store, "insert_entry", fake_insert):
@@ -176,16 +176,16 @@ class TestAdd:
         """Test that the new entry joins the store's own references."""
         _, ref = spy
 
-        assert store.add_path(("z",), ("z",), 3) is ref
+        assert store.add_path(("z",), 3) is ref
         assert store.refs["z"] is ref
 
     def test_passes_the_container_and_the_key_as_written(self, store, spy) -> None:
-        """Test that both spellings travel: the normalised key, and the one for the file."""
+        """Test that the key travels as the caller spelled it, for the text of the entry."""
         calls, _ = spy
-        store.add_path(("Z",), ("z",), 3)
+        store.add_path(("z",), 3)
 
         assert calls[0]["container"] is store.tree
-        assert (calls[0]["keys"], calls[0]["raw_keys"]) == (("Z",), ["z"])
+        assert calls[0]["raw_keys"] == ["z"]
 
     def test_offers_the_indent_of_the_entries_already_there(self, ctx, spy) -> None:
         """Test that a container with entries dictates how the new one is indented."""
@@ -193,14 +193,14 @@ class TestAdd:
         tree = ctx.lark.parse("  a = 1\n    b = 2\n", start="start")
         AddParent().visit(tree)
 
-        ConfigStore(tree, ctx).add_path(("z",), ("z",), 3)
+        ConfigStore(tree, ctx).add_path(("z",), 3)
 
         assert calls[0]["style"].indent == "    "
 
     def test_offers_a_copy_of_the_entries_already_there(self, store, spy) -> None:
         """Test that the store passes its reconstructor on, so whole entries are copied."""
         calls, _ = spy
-        store.add_path(("z",), ("z",), 3)
+        store.add_path(("z",), 3)
 
         assert calls[0]["style"].donor(1, "key_value") is not None
 
@@ -217,7 +217,7 @@ class TestAdd:
         block = store.child(store.refs["blk"])
         block.fallback_style = EntryStyle(indent="    ")
 
-        block.add_path(("z",), ("z",), 3)
+        block.add_path(("z",), 3)
 
         assert calls[0]["style"].indent == "    "
 
@@ -236,7 +236,7 @@ class TestAddingAChain:
         """Test that a component joins the others, spelling the type the way they do."""
         store = self.store_of(chain_ctx, "a%b = 1\na%c = 2\nx = 3\n")
 
-        ref = store.add_path(("A", "D"), ("A", "d"), 4)
+        ref = store.add_path(("A", "d"), 4)
 
         assert store.render() == "a%b = 1\na%c = 2\na%d = 4\nx = 3"
         # The new line on its own; the store reads it together with the other two.
@@ -247,7 +247,7 @@ class TestAddingAChain:
         """Test that a line sharing two keys wins over a later one sharing only one."""
         store = self.store_of(chain_ctx, "a%b%c = 1\na%d = 2\n")
 
-        store.add_path(("A", "B", "E"), ("A", "B", "e"), 3)
+        store.add_path(("A", "B", "e"), 3)
 
         assert store.render() == "a%b%c = 1\na%b%e = 3\na%d = 2"
 
@@ -255,7 +255,7 @@ class TestAddingAChain:
         """Test a component of a type the file does not write yet."""
         store = self.store_of(chain_ctx, "a%b = 1\nx = 3\n")
 
-        store.add_path(("N", "A"), ("n", "a"), 1)
+        store.add_path(("n", "a"), 1)
 
         assert store.render() == "a%b = 1\nx = 3\nn%a = 1"
 
@@ -352,7 +352,7 @@ class TestUnaddableBlocks:
         store = ConfigStore(tree, ctx, addable=False)
 
         with pytest.raises(UnsupportedEntryError, match="no body in the file"):
-            store.add_path(("z",), ("z",), 1)
+            store.add_path(("z",), 1)
 
     def test_a_child_inherits_the_flag_from_its_reference(self, ctx) -> None:
         """Test that ``child`` passes on what the reader decided about the block."""

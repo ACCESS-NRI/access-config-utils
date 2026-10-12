@@ -134,14 +134,14 @@ class TestAddingAKey:
         """Return a store that will report a scalar reference for a newly added key."""
         return FakeStore({}, added={"z": ref("key_value", "z")})
 
-    def test_passes_both_spellings_and_stores_the_result(self, adding) -> None:
-        """Test that the normalised key indexes the dict, the written one the file."""
+    def test_passes_the_key_as_written_and_stores_the_result(self, adding) -> None:
+        """Test that the store gets the key as written, and the result is stored."""
         config = Config(adding)
 
         config["z"] = 5
 
         assert config["z"] == 1
-        assert adding.asked("add_path") == [(("z",), ("z",), 5)]
+        assert adding.asked("add_path") == [(("z",), 5)]
 
     def test_a_case_insensitive_format_normalises_the_dict_key_only(self) -> None:
         """Test the namelist: the entry is keyed uppercase, the file keeps the spelling."""
@@ -151,7 +151,7 @@ class TestAddingAKey:
         config["z"] = 5
 
         assert "Z" in config
-        assert store.asked("add_path") == [(("Z",), ("z",), 5)]
+        assert store.asked("add_path") == [(("z",), 5)]
 
     def test_a_new_block_is_given_a_style_and_then_filled(self) -> None:
         """Test the two things that only happen for a block.
@@ -170,7 +170,7 @@ class TestAddingAKey:
         # Asked about the entry just written, so siblings are searched from above it.
         assert store.asked("created_block_style") == [store.refs["blk"].entry_nodes[0]]
         assert inner.fallback_style.indent == "  "
-        assert inner.asked("add_path") == [(("x",), ("x",), 1)]
+        assert inner.asked("add_path") == [(("x",), 1)]
 
 
 class TestAddingBelowABlockWithNoBody:
@@ -207,7 +207,7 @@ class TestAddingBelowABlockWithNoBody:
 
         block["z"] = 5
 
-        assert outer.asked("add_path") == [(("blk", "z"), ("blk", "z"), 5)]
+        assert outer.asked("add_path") == [(("blk", "z"), 5)]
         assert inner.asked("reread") == [fresh]
         assert config["blk"] is block
         assert block["z"] == 1
@@ -230,9 +230,9 @@ class TestAddingBelowABlockWithNoBody:
         config["t"] = {"a": 1, "b": 2}
 
         assert outer.asked("add_path") == [
-            (("t",), ("t",), {"a": 1, "b": 2}),
-            (("t", "a"), ("t", "a"), 1),
-            (("t", "b"), ("t", "b"), 2),
+            (("t",), {"a": 1, "b": 2}),
+            (("t", "a"), 1),
+            (("t", "b"), 2),
         ]
         assert dict(config["t"]) == {"a": 1, "b": 1}
 
@@ -251,8 +251,8 @@ class TestAddingBelowABlockWithNoBody:
 
         config["t"] = {"a": {"y": 1}, "b": 2}
 
-        assert outer.asked("add_path")[-1] == (("t", "b"), ("t", "b"), 2)
-        assert innermost.asked("add_path") == [(("y",), ("y",), 1)]
+        assert outer.asked("add_path")[-1] == (("t", "b"), 2)
+        assert innermost.asked("add_path") == [(("y",), 1)]
         # The block one level down is spaced like a sibling of the line just written.
         assert outer.asked("created_block_style") == [outer.refs["t"].entry_nodes[0]]
 
@@ -280,7 +280,7 @@ class TestAddingBelowABlockWithNoBody:
         with pytest.raises(UnsupportedEntryError):
             Config(store)["z"] = 1
 
-        assert store.asked("add_path") == [(("z",), ("z",), 1)]
+        assert store.asked("add_path") == [(("z",), 1)]
 
 
 class TestDeleting:
@@ -465,7 +465,7 @@ class TestRemainingMappingProtocol:
 
         cfg.update({"y": 2}, z=3)
 
-        assert store.asked("add_path") == [(("y",), ("y",), 2), (("z",), ("z",), 3)]
+        assert store.asked("add_path") == [(("y",), 2), (("z",), 3)]
 
     def test_update_from_pairs(self, config) -> None:
         """Test the iterable-of-pairs form, which takes the other branch."""
@@ -473,7 +473,7 @@ class TestRemainingMappingProtocol:
 
         cfg.update([("y", 2)])
 
-        assert store.asked("add_path") == [(("y",), ("y",), 2)]
+        assert store.asked("add_path") == [(("y",), 2)]
 
     def test_setdefault(self, config) -> None:
         """Test that an absent key is added and a present one is left as it is."""
@@ -481,7 +481,7 @@ class TestRemainingMappingProtocol:
 
         assert cfg.setdefault("a", 99) == 1
         assert cfg.setdefault("z", 3) == 1
-        assert store.asked("add_path") == [(("z",), ("z",), 3)]
+        assert store.asked("add_path") == [(("z",), 3)]
 
     def test_in_place_merge(self, config) -> None:
         """Test that ``|=`` goes through assignment rather than dict's own merge."""
@@ -489,7 +489,7 @@ class TestRemainingMappingProtocol:
 
         cfg |= {"z": 3}
 
-        assert store.asked("add_path") == [(("z",), ("z",), 3)]
+        assert store.asked("add_path") == [(("z",), 3)]
 
     def test_clear(self, config) -> None:
         """Test that emptying the dict empties the tree with it."""
@@ -714,7 +714,7 @@ class TestAddingRecords:
 
         config["r"] = [{"value": "a", "x": 1}]
 
-        assert store.asked("add_path") == [(("r",), ("r",), {"value": "a", "x": 1}, "key_value")]
+        assert store.asked("add_path") == [(("r",), {"value": "a", "x": 1}, "key_value")]
         assert config["r"] == [{"value": "a", "x": 1}]
         assert isinstance(config["r"][0], ConfigRecord)
 

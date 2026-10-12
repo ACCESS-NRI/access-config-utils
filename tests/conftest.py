@@ -399,16 +399,17 @@ class FakeStore:
         call = (key, value)
         self.calls.append(("replace", call if origins is None else (*call, list(origins))))
 
-    def add_path(self, keys: Sequence[str], raw_keys: Sequence[str], value: Any, category: Any = None) -> EntryRef:
+    def add_path(self, raw_keys: Sequence[str], value: Any, category: Any = None) -> EntryRef:
         """Record the addition and return the reference declared for it, or refuse it.
 
         The category is recorded only when one is given, as it is for a record.
         """
-        call = (tuple(keys), tuple(raw_keys), value)
+        call = (tuple(raw_keys), value)
         self.calls.append(("add_path", call if category is None else (*call, category)))
-        if tuple(keys) in self._refused:
+        keys = tuple(self.ctx.normalise_key(key) for key in raw_keys)
+        if keys in self._refused:
             raise UnsupportedEntryError(f"Refused {list(keys)}")
-        self.refs[keys[0]] = self._added[keys[0] if len(keys) == 1 else tuple(keys)]
+        self.refs[keys[0]] = self._added[keys[0] if len(keys) == 1 else keys]
         return self.refs[keys[0]]
 
     def created_block_style(self, entry: Tree | None = None) -> EntryStyle:

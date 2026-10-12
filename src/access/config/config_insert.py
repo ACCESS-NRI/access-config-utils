@@ -114,7 +114,6 @@ def entry_matches(
 def insert_entry(
     container: Tree,
     ctx: ParseContext,
-    keys: Sequence[str],
     raw_keys: Sequence[str],
     value: Any,
     style: EntryStyle,
@@ -126,9 +125,9 @@ def insert_entry(
     Args:
         container (Tree): The container rule node to add the entry to.
         ctx (ParseContext): The compiled grammar and the per-parser settings.
-        keys (Sequence[str]): The normalised key path, used to check what the candidate read
-            back as: one key, or one per level of a chain such as ``a%b = 1``.
-        raw_keys (Sequence[str]): The same keys spelled for the file text.
+        raw_keys (Sequence[str]): The key path as it is spelled in the file text: one key,
+            or one per level of a chain such as ``a%b = 1``. The candidate has to read back
+            as the normalised form of each.
         value (Any): The value to store under the innermost key. A ``dict`` creates an empty
             block; its contents are added afterwards, by the caller, one key at a time.
         style (EntryStyle): The layout to copy from the neighbouring entries.
@@ -155,7 +154,8 @@ def insert_entry(
     if category == KEY_LIST and len(value) < 2:
         # Every supported format needs at least two values to be a list rather than a
         # scalar, and writing a scalar would put the wrong type in the dict.
-        raise ValueError(f"A new list needs at least two elements: '{keys[-1]}'")
+        raise ValueError(f"A new list needs at least two elements: '{raw_keys[-1]}'")
+    keys = [ctx.normalise_key(key) for key in raw_keys]
 
     container_rule = str(container.data)
     if index is None:

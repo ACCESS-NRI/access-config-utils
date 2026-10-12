@@ -484,9 +484,7 @@ class Config(dict):
         records = isinstance(value, list) and len(value) > 0 and all(isinstance(item, dict) for item in value)
         anchor, path = self._nearest_addable()
         first = _plain(value[0]) if records else value
-        keys, ref, written, rest = anchor._write_path(
-            [*path, key], [*path, raw_key], first, KEY_VALUE if records else None
-        )
+        keys, ref, written, rest = anchor._write_path([*path, raw_key], first, KEY_VALUE if records else None)
         if len(keys) == 1:
             dict.__setitem__(self, key, self._wrap(key, ref))
         else:
@@ -525,25 +523,24 @@ class Config(dict):
         return anchor, path[::-1]
 
     def _write_path(
-        self, keys: list[str], raw_keys: list[str], value: Any, category: str | None = None
+        self, raw_keys: list[str], value: Any, category: str | None = None
     ) -> tuple[list[str], EntryRef, Any, _Leftovers]:
-        """Write *value* at the key path *keys* below this configuration, deeper if need be.
+        """Write *value* at a key path below this configuration, deeper if need be.
 
         A non-empty ``dict`` the format refuses as a block is written as its first item one
         level down instead, and so on, until something is written or there is nothing left
         to go down into. A record, written with a *category* of its own, never is.
 
         Args:
-            keys (list[str]): The normalised key path.
-            raw_keys (list[str]): The same keys as the caller wrote them.
+            raw_keys (list[str]): The key path as the caller wrote it.
             value (Any): The value to store.
             category (str | None): The category of entry to write, where *value* does not
                 say: ``key_value`` for a record, which is a ``dict``.
 
         Returns:
-            tuple[list[str], EntryRef, Any, _Leftovers]: The key path written, the new
-                entry, the value written at the end of it, and the items of each dict gone
-                down through that are still to add.
+            tuple[list[str], EntryRef, Any, _Leftovers]: The key path written, normalised,
+                the new entry, the value written at the end of it, and the items of each
+                dict gone down through that are still to add.
 
         Raises:
             UnsupportedEntryError: The refusal of the path first asked for, if no level
@@ -553,14 +550,15 @@ class Config(dict):
         refusal = None
         while True:
             try:
-                return keys, self._store.add_path(keys, raw_keys, value, category), value, rest
+                ref = self._store.add_path(raw_keys, value, category)
+                return [self._store.ctx.normalise_key(raw) for raw in raw_keys], ref, value, rest
             except UnsupportedEntryError as error:
                 refusal = refusal or error
                 if category is not None or not isinstance(value, dict) or not value:
                     raise refusal from None
             (raw, inner), *others = value.items()
-            rest.append((len(keys), others))
-            keys, raw_keys, value = [*keys, self._store.ctx.normalise_key(raw)], [*raw_keys, raw], inner
+            rest.append((len(raw_keys), others))
+            raw_keys, value = [*raw_keys, raw], inner
 
     def _at(self, path: Sequence[str]) -> Any:
         """Return what the keys of *path* lead to from this configuration."""

@@ -246,17 +246,17 @@ class TestInsertEntryRejections:
     def test_a_key_that_is_not_a_usable_name(self, container, key) -> None:
         """Test that the key has to be spellable in the file: it is written verbatim."""
         with pytest.raises(ValueError, match="Not a valid configuration key"):
-            insert_entry(container, FakeContext(), (key,), (key,), 1, EntryStyle())
+            insert_entry(container, FakeContext(), (key,), 1, EntryStyle())
 
     def test_every_key_of_a_chain_is_checked(self, container) -> None:
         """Test that a usable outer key does not let an unusable inner one through."""
         with pytest.raises(ValueError, match="'a b'"):
-            insert_entry(container, FakeContext(), ("a", "a b"), ("a", "a b"), 1, EntryStyle())
+            insert_entry(container, FakeContext(), ("a", "a b"), 1, EntryStyle())
 
     def test_a_key_that_is_not_a_string(self, container) -> None:
         """Test that a non-string key is refused rather than formatted into the text."""
         with pytest.raises(ValueError, match="Not a valid configuration key"):
-            insert_entry(container, FakeContext(), ("1",), (1,), 1, EntryStyle())
+            insert_entry(container, FakeContext(), (1,), 1, EntryStyle())
 
     @pytest.mark.parametrize("value", [[], [1]])
     def test_a_list_too_short_to_be_one(self, container, value) -> None:
@@ -266,7 +266,7 @@ class TestInsertEntryRejections:
         and writing a scalar would put the wrong type in the dict.
         """
         with pytest.raises(ValueError, match="at least two elements"):
-            insert_entry(container, FakeContext(), ("z",), ("z",), value, EntryStyle())
+            insert_entry(container, FakeContext(), ("z",), value, EntryStyle())
 
 
 class TestInsertEntryCandidates:
@@ -277,7 +277,7 @@ class TestInsertEntryCandidates:
         refs, node = scalar_ref()
         offer(("z = 1\n", (refs, node)))
 
-        ref = insert_entry(container, FakeContext(), ("z",), ("z",), 1, EntryStyle())
+        ref = insert_entry(container, FakeContext(), ("z",), 1, EntryStyle())
 
         assert ref is refs["z"]
         # Spliced at the index reported, not appended.
@@ -289,7 +289,7 @@ class TestInsertEntryCandidates:
         refs, node = scalar_ref()
         offer(("z = 1\n", (refs, node)))
 
-        insert_entry(container, FakeContext(), ("z",), ("z",), 1, EntryStyle(), 0)
+        insert_entry(container, FakeContext(), ("z",), 1, EntryStyle(), 0)
 
         assert container.children[0].children == [node]
 
@@ -298,7 +298,7 @@ class TestInsertEntryCandidates:
         refs, node = scalar_ref()
         offer(("bad\n", UnexpectedInput()), ("z = 1\n", (refs, node)))
 
-        assert insert_entry(container, FakeContext(), ("z",), ("z",), 1, EntryStyle()) is refs["z"]
+        assert insert_entry(container, FakeContext(), ("z",), 1, EntryStyle()) is refs["z"]
 
     @pytest.mark.parametrize("error", [ValueError("no values"), TypeError("no key")])
     def test_skips_a_candidate_the_reader_rejects(self, container, offer, error) -> None:
@@ -310,7 +310,7 @@ class TestInsertEntryCandidates:
         refs, node = scalar_ref()
         offer(("odd\n", (error, Tree("line", []))), ("z = 1\n", (refs, node)))
 
-        assert insert_entry(container, FakeContext(), ("z",), ("z",), 1, EntryStyle()) is refs["z"]
+        assert insert_entry(container, FakeContext(), ("z",), 1, EntryStyle()) is refs["z"]
 
     def test_skips_a_candidate_that_reads_back_wrong(self, container, offer) -> None:
         """Test the check that makes ranking a matter of style rather than of correctness.
@@ -325,7 +325,7 @@ class TestInsertEntryCandidates:
         # The first read-back reports the string "1", not the integer asked for.
         wrong["z"] = EntryRef("key_value", (wrong_node,), (value_node("string", "'1'"),))
 
-        assert insert_entry(container, FakeContext(), ("z",), ("z",), 1, EntryStyle()) is right["z"]
+        assert insert_entry(container, FakeContext(), ("z",), 1, EntryStyle()) is right["z"]
 
     def test_nothing_is_spliced_until_a_candidate_passes(self, container, offer) -> None:
         """Test that a rejected candidate leaves the tree untouched."""
@@ -333,7 +333,7 @@ class TestInsertEntryCandidates:
         offer(("bad\n", UnexpectedInput()))
 
         with pytest.raises(UnsupportedEntryError):
-            insert_entry(container, FakeContext(), ("z",), ("z",), 1, EntryStyle())
+            insert_entry(container, FakeContext(), ("z",), 1, EntryStyle())
 
         assert container.children == before
 
@@ -346,14 +346,14 @@ class TestInsertEntryExhausted:
         offer()
 
         with pytest.raises(UnsupportedEntryError, match="cannot store .* as 'z'"):
-            insert_entry(container, FakeContext(), ("z",), ("z",), object(), EntryStyle())
+            insert_entry(container, FakeContext(), ("z",), object(), EntryStyle())
 
     def test_names_each_key_of_a_chain(self, container, offer) -> None:
         """Test that a key path is named the way it is indexed."""
         offer()
 
         with pytest.raises(UnsupportedEntryError, match=r"as \['a'\]\['b'\] here"):
-            insert_entry(container, FakeContext(), ("a", "b"), ("a", "b"), object(), EntryStyle())
+            insert_entry(container, FakeContext(), ("a", "b"), object(), EntryStyle())
 
     def test_lists_the_value_types_the_format_writes(self, container, offer) -> None:
         """Test the hint, which is what turns "no" into something actionable."""
@@ -362,7 +362,7 @@ class TestInsertEntryExhausted:
         ctx.info.value_rules = frozenset({"integer", "float"})
 
         with pytest.raises(UnsupportedEntryError, match=r"value types this format writes: \['float', 'integer'\]"):
-            insert_entry(container, ctx, ("z",), ("z",), "text", EntryStyle())
+            insert_entry(container, ctx, ("z",), "text", EntryStyle())
 
 
 def test_insert_entry_passes_the_style_and_template_through(container) -> None:
@@ -394,7 +394,7 @@ def test_insert_entry_passes_the_style_and_template_through(container) -> None:
     patches = patch.multiple(config_insert, iter_entry_snippets=record, entry_insertion_index=lambda c: 0)
 
     with patches, pytest.raises(UnsupportedEntryError):
-        insert_entry(container, ctx, ("Z",), ("Z",), 1, style)
+        insert_entry(container, ctx, ("Z",), 1, style)
 
     assert seen == {
         "category": "key_value",
@@ -428,7 +428,7 @@ def test_insert_entry_reads_the_candidate_in_a_throwaway_container(container) ->
     )
 
     with patches, pytest.raises(UnsupportedEntryError):
-        insert_entry(container, FakeContext(), ("z",), ("z",), 1, EntryStyle())
+        insert_entry(container, FakeContext(), ("z",), 1, EntryStyle())
 
     [throwaway] = read_from
     assert throwaway is not container
@@ -447,6 +447,6 @@ def test_insert_entry_writes_a_dict_as_the_category_asked_for(container) -> None
     patches = patch.multiple(config_insert, iter_entry_snippets=record, entry_insertion_index=lambda c: 0)
 
     with patches, pytest.raises(UnsupportedEntryError, match="key_value"):
-        insert_entry(container, FakeContext(), ("r",), ("r",), {"value": "x", "a": 1}, EntryStyle(), None, "key_value")
+        insert_entry(container, FakeContext(), ("r",), {"value": "x", "a": 1}, EntryStyle(), None, "key_value")
 
     assert asked == ["key_value"]
