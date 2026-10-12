@@ -26,7 +26,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
-from lark import Token, Tree
+from lark import Tree
 from lark.visitors import Interpreter
 
 from access.config.grammar_contract import (
@@ -35,13 +35,13 @@ from access.config.grammar_contract import (
     KEY_BLOCK,
     KEY_LIST,
     KEY_NULL,
-    KEY_RULE,
     KEY_VALUE,
 )
 from access.config.tree_navigation import (
     flatten_slots,
     index_positions,
     is_value_node,
+    key_token,
     node_values,
     place_indexed,
 )
@@ -332,9 +332,6 @@ class EntryReader(Interpreter):
     def _get_key(self, tree: Tree) -> str:
         """Given an entry rule node, extract and return the key name.
 
-        Finds the ``"key"`` rule node among *tree*'s children, then reads the ``Token``
-        (terminal) that is its first child and that token's text is the key name.
-
         Args:
             tree (Tree): An entry rule node (e.g. ``Tree`` with ``.data == "key_value"``).
 
@@ -346,20 +343,7 @@ class EntryReader(Interpreter):
             TypeError: If no ``Token`` is found as the first child of the ``"key"`` rule
                 node.
         """
-        key_rules = [child.children for child in tree.children if child.data == KEY_RULE]
-        if len(key_rules) == 0:
-            raise ValueError("No 'key' rule nodes found among children of key rule node")
-        else:
-            # Multiple "key" rule nodes are possible (e.g., if the tree is a key_block
-            # storing one of more key_values) but the correct one is always the first.
-            key_rule = key_rules[0]
-
-        # The token holding the key name is the first child of the "key" rule node.
-        key_token = key_rule[0]
-        if not isinstance(key_token, Token):
-            raise TypeError("No key found.")
-
-        return self._ctx.normalise_key(key_token.value)
+        return self._ctx.normalise_key(key_token(tree).value)
 
     @staticmethod
     def _value_nodes(tree: Tree) -> tuple[Tree | None, ...]:

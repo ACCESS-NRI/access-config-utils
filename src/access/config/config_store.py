@@ -33,6 +33,7 @@ from access.config.grammar_contract import KEY_LIST, KEY_VALUE
 from access.config.grammar_values import UnsupportedEntryError
 from access.config.list_layout import align_values
 from access.config.tree_edits import remove_entry_node, update_node_value, write_values
+from access.config.tree_navigation import entry_chain, entry_insertion_index, entry_nodes, key_token, line_index
 from access.config.tree_reader import EntryRef, entry_value, read_entries
 
 if TYPE_CHECKING:
@@ -142,50 +143,94 @@ class ConfigStore:
         self.refs[key] = resize_entry(ref, self.ctx, key, values, origins)
         return self.refs[key].value_nodes
 
-    def add(self, key: str, raw_key: str, value: Any) -> EntryRef:
-        """Write an entry for a key this container does not have yet.
+    def add_path(self, keys: Sequence[str], raw_keys: Sequence[str], value: Any) -> EntryRef:
+        """Write an entry for a key path this container does not have yet.
 
-        The layout comes from the entries already in this container, or -- when there are
-        none, as in a block created this session -- from the style handed down when it was
-        created.
+        One key is a plain entry, written after the last entry of the container. More are a
+        chain, as in the Fortran ``a%b = 1``: a block written one component per line, each
+        line repeating its key. Such a line goes after the last one sharing the most leading
+        keys with it, so that a type's components stay together, and spells those keys the
+        way that line does.
+
+        The layout comes from the entries above the new one, or -- when there are none, as
+        in a block created this session -- from the style handed down when it was created.
 
         Args:
-            key (str): The normalised key, used to check what the candidate read back as.
-            raw_key (str): The key as the caller wrote it, used for the file text.
-            value (Any): The value to store. A ``dict`` creates an empty block.
+            keys (Sequence[str]): The normalised key path, used to check what the candidate
+                read back as.
+            raw_keys (Sequence[str]): The key path as the caller wrote it, for the text.
+            value (Any): The value to store under the innermost key. A ``dict`` creates an
+                empty block.
 
         Returns:
-            EntryRef: Where the new entry landed.
+            EntryRef: The new entry, read on its own: for a chain, the reference to its
+                outermost key, whose block holds the rest.
 
         Raises:
-            ValueError: If *raw_key* is unusable, or *value* is a list too short to write.
+            ValueError: If a key is unusable, or *value* is a list too short to write.
             UnsupportedEntryError: If the format cannot express *value* here, or this
                 container has no body in the file for a new entry to go in.
         """
         if not self.addable:
             raise UnsupportedEntryError(
-                f"Cannot add '{key}': this block has no body in the file for a new entry to go in. "
+                f"Cannot add '{keys[-1]}': this block has no body in the file for a new entry to go in. "
                 "It is either merged from several blocks, or written one component per line"
             )
-        style = probe_entry_style(self.tree, self.ctx.reconstructor)
+        index, spelled = self._insertion_point(keys)
+        style = probe_entry_style(self.tree, self.ctx.reconstructor, upto=index)
         if not style.has_donor:
             style = self.fallback_style
-        ref = insert_entry(self.tree, self.ctx, key, raw_key, value, style)
-        self.refs[key] = ref
+        ref = insert_entry(self.tree, self.ctx, keys, [*spelled, *raw_keys[len(spelled) :]], value, style, index)
+        if len(keys) == 1:
+            self.refs[keys[0]] = ref
+        else:
+            # The new line may extend a block the file already writes, which reads afresh.
+            self.reread()
         return ref
 
-    def created_block_style(self) -> EntryStyle:
+    def _insertion_point(self, keys: Sequence[str]) -> tuple[int, list[str]]:
+        """Return where an entry for *keys* goes, and how the keys it shares are spelled.
+
+        Args:
+            keys (Sequence[str]): The normalised key path.
+
+        Returns:
+            tuple[int, list[str]]: The index among the children of the container, and the
+                leading keys the new entry shares with the line it follows, as that line
+                spells them.
+        """
+        if len(keys) == 1:
+            return entry_insertion_index(self.tree), []
+        after, spelled = None, []
+        for position, line in enumerate(self.tree.children):
+            for entry in entry_nodes(line) if isinstance(line, Tree) else []:
+                shared = []
+                for link, key in zip(entry_chain(entry), keys, strict=False):
+                    token = key_token(link)
+                    if self.ctx.normalise_key(token) != key:
+                        break
+                    shared.append(str(token))
+                if shared and len(shared) >= len(spelled):
+                    after, spelled = position, shared
+        return entry_insertion_index(self.tree, after), spelled
+
+    def created_block_style(self, entry: Tree | None = None) -> EntryStyle:
         """Return the style the contents of a block just created should follow.
 
         A new block is empty, so nothing in it can say how its contents should be laid out.
-        The nearest sibling block answers instead, falling back to this container's own
-        style so that a block nested in a new block inherits it too rather than dropping
+        The nearest sibling block above it answers instead, falling back to this container's
+        own style so that a block nested in a new block inherits it too rather than dropping
         back to the canonical layout.
+
+        Args:
+            entry (Tree | None): The entry just written, whose block is new; ``None`` to
+                search every block of the container, from the last.
 
         Returns:
             EntryStyle: The style to hand to the new block's store.
         """
-        sibling = probe_sibling_block_style(self.tree, self.ctx.reconstructor)
+        upto = None if entry is None else line_index(self.tree, entry)
+        sibling = probe_sibling_block_style(self.tree, self.ctx.reconstructor, upto)
         return sibling if sibling.has_donor else self.fallback_style
 
     def remove(self, key: str) -> None:

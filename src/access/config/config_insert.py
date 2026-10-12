@@ -24,7 +24,7 @@ a ``str``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from lark import Tree
@@ -79,7 +79,7 @@ def _same_value(stored: Any, requested: Any) -> bool:
     return identical_values(stored, requested)
 
 
-def entry_matches(refs: Mapping[str, EntryRef], key: str, value: Any) -> bool:
+def entry_matches(refs: Mapping[str, EntryRef], keys: Sequence[str], value: Any, ctx: ParseContext) -> bool:
     """Report whether a candidate entry, read back from its text, holds what was asked for.
 
     This is what makes candidate ranking a matter of style rather than of correctness: a
@@ -87,15 +87,24 @@ def entry_matches(refs: Mapping[str, EntryRef], key: str, value: Any) -> bool:
 
     Args:
         refs (Mapping[str, EntryRef]): The entries read back from the candidate.
-        key (str): The normalised key expected.
-        value (Any): The value requested.
+        keys (Sequence[str]): The normalised key path expected: one key for a plain entry,
+            and for a chain such as ``a%b = 1`` one per level, each a block holding the
+            next and nothing else.
+        value (Any): The value requested for the innermost key.
+        ctx (ParseContext): Reads the blocks of a chain.
 
     Returns:
         bool: True if the candidate is an exact match.
     """
-    if set(refs) != {key}:
-        return False
-    ref = refs[key]
+    for level, key in enumerate(keys):
+        if set(refs) != {key}:
+            return False
+        ref = refs[key]
+        if level < len(keys) - 1:
+            if ref.category != KEY_BLOCK:
+                return False
+            assert ref.block_node is not None
+            refs = read_entries(ref.block_node, ctx)
     if ref.category != entry_category(value):
         return False
     if ref.category == KEY_BLOCK:
@@ -112,43 +121,57 @@ def entry_matches(refs: Mapping[str, EntryRef], key: str, value: Any) -> bool:
     return _same_value(stored, value)
 
 
-def insert_entry(container: Tree, ctx: ParseContext, key: str, raw_key: str, value: Any, style: EntryStyle) -> EntryRef:
+def insert_entry(
+    container: Tree,
+    ctx: ParseContext,
+    keys: Sequence[str],
+    raw_keys: Sequence[str],
+    value: Any,
+    style: EntryStyle,
+    index: int | None = None,
+) -> EntryRef:
     """Write a new entry into *container* and return where it landed.
 
     Args:
         container (Tree): The container rule node to add the entry to.
         ctx (ParseContext): The compiled grammar and the per-parser settings.
-        key (str): The normalised key, used to check what the candidate read back as.
-        raw_key (str): The key as the caller wrote it, used for the file text.
-        value (Any): The value to store. A ``dict`` creates an empty block; its contents are
-            added afterwards, by the caller, one key at a time.
-        style (EntryStyle): Whitespace to copy from a neighbouring entry.
+        keys (Sequence[str]): The normalised key path, used to check what the candidate read
+            back as: one key, or one per level of a chain such as ``a%b = 1``.
+        raw_keys (Sequence[str]): The same keys spelled for the file text.
+        value (Any): The value to store under the innermost key. A ``dict`` creates an empty
+            block; its contents are added afterwards, by the caller, one key at a time.
+        style (EntryStyle): The layout to copy from the neighbouring entries.
+        index (int | None): Where among the children of *container* the entry goes, or
+            ``None`` for after the last entry, as ``entry_insertion_index`` finds it.
 
     Returns:
-        EntryRef: Where the new entry lives in the parse tree.
+        EntryRef: Where the new entry lives in the parse tree: for a chain, the reference to
+            its outermost key, read on its own.
 
     Raises:
-        ValueError: If *raw_key* is not a name the format's ``key`` rule reads back as
-            itself, or *value* is a list too short for the format to express as one.
+        ValueError: If a key is not a name the format's ``key`` rule reads back as itself,
+            or *value* is a list too short for the format to express as one.
         UnsupportedEntryError: If no candidate produced the requested value.
     """
-    if not isinstance(raw_key, str) or not ctx.accepts_key(raw_key):
-        raise ValueError(f"Not a valid configuration key: {raw_key!r}")
+    for raw_key in raw_keys:
+        if not isinstance(raw_key, str) or not ctx.accepts_key(raw_key):
+            raise ValueError(f"Not a valid configuration key: {raw_key!r}")
 
     category = entry_category(value)
     if category == KEY_LIST and len(value) < 2:
         # Every supported format needs at least two values to be a list rather than a
         # scalar, and writing a scalar would put the wrong type in the dict.
-        raise ValueError(f"A new list needs at least two elements: '{key}'")
+        raise ValueError(f"A new list needs at least two elements: '{keys[-1]}'")
 
     container_rule = str(container.data)
-    index = entry_insertion_index(container)
+    if index is None:
+        index = entry_insertion_index(container)
 
     for snippet in iter_entry_snippets(
         ctx.info,
         container_rule,
         category,
-        (raw_key,),
+        raw_keys,
         value,
         style,
         ctx.entry_templates,
@@ -162,15 +185,22 @@ def insert_entry(container: Tree, ctx: ParseContext, key: str, raw_key: str, val
             refs = read_entries(Tree(container.data, list(nodes)), ctx)
         except (UnexpectedInput, ValueError, TypeError):
             continue
-        if not entry_matches(refs, key, value):
+        if not entry_matches(refs, keys, value, ctx):
             continue
 
         splice_entry_nodes(container, nodes, index)
-        return refs[key]
+        return refs[keys[0]]
 
-    admitted = sorted(admitted_value_rules(ctx.info, container_rule, category))
+    admitted = sorted(admitted_value_rules(ctx.info, container_rule, category, len(keys)))
     raise UnsupportedEntryError(
-        f"This format cannot store {value!r} as '{raw_key}' here: there is no way to "
+        f"This format cannot store {value!r} as {_spelled(raw_keys)} here: there is no way to "
         f"write a {category} in '{container_rule}' with this value"
         + (f" (value types allowed here: {admitted})" if admitted else "")
     )
+
+
+def _spelled(raw_keys: Sequence[str]) -> str:
+    """Return a key path as a message names it: ``'a'``, or ``['a']['b']`` for a chain."""
+    if len(raw_keys) == 1:
+        return repr(raw_keys[0])
+    return "".join(f"[{key!r}]" for key in raw_keys)

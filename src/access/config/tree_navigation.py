@@ -37,7 +37,7 @@ from typing import Any, TypeGuard
 
 from lark import Token, Tree, Visitor
 
-from access.config.grammar_contract import BLOCK_RULE, COMMENT_RULES, ENTRY_CATEGORIES, REPEAT_RULE
+from access.config.grammar_contract import BLOCK_RULE, COMMENT_RULES, ENTRY_CATEGORIES, KEY_RULE, REPEAT_RULE
 from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
 
 
@@ -156,13 +156,15 @@ def is_comment_line(node: Tree | Token) -> bool:
     return isinstance(node, Tree) and not contains_entry(node) and _holds_comment(node)
 
 
-def entry_insertion_index(container: Tree) -> int:
+def entry_insertion_index(container: Tree, after: int | None = None) -> int:
     """Return the index in ``container.children`` at which a new entry belongs.
 
     One past the last child that holds an entry, so a new entry follows the last existing
     assignment and comes *before* any trailing blank lines or the token closing a block.
     Simply appending would put it after all of those, which for a block would place it
-    outside the block entirely.
+    outside the block entirely. Given a line to follow instead, one past that line: an
+    entry written beside others of its kind, such as one more component of a derived type
+    whose components are written one per line, goes after the last of them.
 
     The search is over the container's *direct* children even though the test for holding an
     entry looks deeper: one child can be a whole line carrying several assignments, and a
@@ -177,18 +179,68 @@ def entry_insertion_index(container: Tree) -> int:
 
     Args:
         container (Tree): A container rule node: the parse tree root, or a ``"block"`` node.
+        after (int | None): The index of the child to follow, or ``None`` for the last one
+            holding an entry.
 
     Returns:
         int: The insertion index; ``0`` when the container holds neither an entry nor a
             leading comment.
     """
-    index = 0
-    for position, child in enumerate(container.children):
-        if contains_entry(child):
-            index = position + 1
+    if after is None:
+        index = 0
+        for position, child in enumerate(container.children):
+            if contains_entry(child):
+                index = position + 1
+    else:
+        index = after + 1
     while index < len(container.children) and is_comment_line(container.children[index]):
         index += 1
     return index
+
+
+def line_index(container: Tree, entry: Tree) -> int:
+    """Return the index of the child of *container* that *entry* is written in.
+
+    Children are matched by identity, as in ``locate_entry``.
+
+    Args:
+        container (Tree): A container rule node.
+        entry (Tree): An entry rule node written in one of its children.
+
+    Returns:
+        int: The index in ``container.children``.
+    """
+    return next(
+        index
+        for index, child in enumerate(container.children)
+        if isinstance(child, Tree) and any(found is entry for found in entry_nodes(child))
+    )
+
+
+def key_token(entry: Tree) -> Token:
+    """Return the token naming the key of an entry, as the file spells it.
+
+    That is the first child of the first ``key`` rule node among the entry's children. An
+    entry may hold more than one -- MOM6 writes a block's key again to close it -- and the
+    first is the one that names it.
+
+    Args:
+        entry (Tree): An entry rule node.
+
+    Returns:
+        Token: The key token.
+
+    Raises:
+        ValueError: If no ``key`` rule node is among the children.
+        TypeError: If the first child of the ``key`` rule node is not a ``Token``.
+    """
+    keys = [child for child in entry.children if isinstance(child, Tree) and child.data == KEY_RULE]
+    if not keys:
+        raise ValueError("No 'key' rule nodes found among children of key rule node")
+    token = keys[0].children[0]
+    if not isinstance(token, Token):
+        raise TypeError("No key found.")
+    return token
 
 
 def locate_entry(entry: Tree, containers: Collection[str]) -> tuple[Tree, Tree, tuple[int, ...]]:

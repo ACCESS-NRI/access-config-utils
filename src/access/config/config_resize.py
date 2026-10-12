@@ -262,7 +262,7 @@ def _read_candidate(
         refs = read_entries(Tree(container.data, [fresh]), ctx)
     except (UnexpectedInput, IndexError, ValueError, TypeError):
         return None
-    if not entry_matches(refs, key, list(values)):
+    if not entry_matches(refs, (key,), list(values), ctx):
         return None
     probe = copy.deepcopy(line)
     target = node_at(probe, path)

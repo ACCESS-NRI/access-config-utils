@@ -10,9 +10,10 @@ that is what ``ConfigParser`` is the entry point to, and because round-trip fide
 property of the stack rather than of any module in it. Together with the four format modules
 these are the tests that would catch a break the isolated ones cannot see.
 
-Everything runs against ``TOY_GRAMMAR``, which is unlike any real format on purpose: it
-admits every value type at once and every entry category, so one grammar reaches paths that
-would otherwise need three.
+Nearly everything runs against ``TOY_GRAMMAR``, which is unlike any real format on purpose:
+it admits every value type at once and every entry category, so one grammar reaches paths
+that would otherwise need three. What it cannot write is a block named by a chain of keys,
+which ``HeaderParser`` adds.
 """
 
 from pathlib import Path
@@ -979,3 +980,60 @@ def test_config_non_finite_floats(parser):
 
     # None of the refused assignments changed the file.
     assert str(config) == "a=1.0 b=(1.0, 2.0)c=1.0d0"
+
+
+class HeaderParser(ConfigParser):
+    """Parser for headers naming a block by a chain of keys, as an FMS field table does.
+
+    ``"tracer", "age"`` is a block for ``tracer`` holding a block for ``age``, whose
+    contents follow on lines of their own. Several headers for one type merge into one
+    block, so the type's block has no body in the file and a new name has to be written as
+    a whole header.
+    """
+
+    @property
+    def case_sensitive_keys(self) -> bool:
+        return True
+
+    @property
+    def block_rules(self) -> tuple[str, ...]:
+        return ("block", "name_body")
+
+    @property
+    def grammar(self) -> str:
+        return """
+    start: (header | blank_line)*
+    header: ws* "\\"" key "\\"" comma ws* name_body -> key_block
+    name_body: name
+    name: "\\"" key "\\"" block closer -> key_block
+    block: pair*
+    pair: NEWLINE ws* "\\"" key "\\"" comma ws* string -> key_value
+    closer: ws* "/" ws* NEWLINE
+    comma: ws* ","
+    blank_line: ws* NEWLINE
+
+    %import config.key
+    %import config.string
+    %import config.ws
+    %import config.NEWLINE
+"""
+
+
+def test_config_add_a_block_through_a_chain_of_keys() -> None:
+    """Test a new name added to a type whose headers are merged.
+
+    The header goes after the last one of the type, written like it, and the block it opens
+    is filled with lines written like those of the block above. A reference held to the type
+    sees the new name.
+    """
+    text = '"tracer", "a"\n  "x", \'1\' /\n"tracer", "b"\n  "y", \'2\' /\n"diag", "q"\n  "w", \'4\' /\n'
+    config = HeaderParser().parse(text)
+    held = config["tracer"]
+
+    held["c"] = {"z": "3"}
+
+    added = '"tracer", "c"\n  "z", \'3\' /\n'
+    assert str(config) == text.replace('"diag"', added + '"diag"')
+    assert held is config["tracer"]
+    assert held["c"] == {"z": "3"}
+    assert dict(HeaderParser().parse(str(config))) == dict(config)

@@ -19,12 +19,11 @@ compose, over a file carrying comments, blank lines, free text and several group
 from pathlib import Path
 
 import pytest
-from conftest import assert_canonical_entry, canonical_rows
+from conftest import assert_canonical_entry, canonical_rows, chain_rows
 from lark.exceptions import UnexpectedInput
 
 from access.config.fortran_nml import FortranNMLParser
 from access.config.grammar_compiled import compile_grammar
-from access.config.grammar_values import UnsupportedEntryError
 
 
 @pytest.fixture(scope="module")
@@ -1269,9 +1268,10 @@ class TestAddingAnEntry:
         with pytest.raises(TypeError):
             config["TOPLEVEL"] = 1
 
-        # Namelists do not nest.
+        # Namelists do not nest, and a derived type is written by its components, so one
+        # with none has nothing to write.
         with pytest.raises(TypeError):
-            config["L"]["NESTED"] = {"A": 1}
+            config["L"]["NESTED"] = {}
 
         # The grammar has no value type for a path.
         with pytest.raises(TypeError):
@@ -1279,24 +1279,72 @@ class TestAddingAnEntry:
 
         assert str(config) == "&L\n  X = 1\n/\n"
 
-    def test_a_derived_type_has_no_body_to_add_to(self, parser) -> None:
-        """Test that a block with nowhere for an entry to go refuses, not drops it.
 
-        A derived type is written one component per line, so there is nowhere inside it, and
-        a merged block's root is not in the parse tree at all. The group around them
-        is a real block, so it still takes new keys.
-        """
-        merged = parser.parse("&L\n A%B = 1\n A%C = 2\n/\n")
-        with pytest.raises(UnsupportedEntryError):
-            merged["L"]["A"]["D"] = 3
+class TestAddingADerivedTypeComponent:
+    """A key added to a derived type, which is written one component per line.
 
-        single = parser.parse("&L\n A%B = 1\n/\n")
-        with pytest.raises(UnsupportedEntryError):
-            single["L"]["A"]["C"] = 2
+    A derived type has no body of its own to write a line in, so the line goes in the
+    group, carrying the type's name and the component's, after the last line of the type.
+    """
 
-        single["L"]["NEW"] = 2
-        assert str(single) == "&L\n A%B = 1\n NEW = 2\n/\n"
-        assert dict(parser.parse(str(single))) == dict(single)
+    @pytest.mark.parametrize(
+        ("source", "path", "key", "expected"),
+        [
+            pytest.param(
+                "&L\n A%B = 1\n A%C = 2\n/\n", ["L", "A"], "d", "&L\n A%B = 1\n A%C = 2\n A%d = 3\n/\n", id="merged"
+            ),
+            pytest.param("&L\n A%B = 1\n/\n", ["L", "A"], "C", "&L\n A%B = 1\n A%C = 3\n/\n", id="single"),
+            pytest.param(
+                "&l\n  a%b = 1\n  x = 2\n/\n", ["l", "a"], "c", "&l\n  a%b = 1\n  a%c = 3\n  x = 2\n/\n", id="mid-group"
+            ),
+            pytest.param(
+                "&l\n  a%b%c = 1\n  x = 2\n/\n",
+                ["l", "a", "b"],
+                "d",
+                "&l\n  a%b%c = 1\n  a%b%d = 3\n  x = 2\n/\n",
+                id="nested",
+            ),
+            pytest.param(
+                "&l\n  a%b%c = 1\n  x = 2\n/\n",
+                ["l", "a"],
+                "e",
+                "&l\n  a%b%c = 1\n  a%e = 3\n  x = 2\n/\n",
+                id="outer-level",
+            ),
+        ],
+    )
+    def test_goes_after_the_last_line_of_the_type(self, parser, source, path, key, expected) -> None:
+        """Test that the type keeps its lines together, spelled as the file spells it."""
+        config = parser.parse(source)
+        held = config
+        for step in path:
+            held = held[step]
+
+        held[key] = 3
+
+        assert str(config) == expected
+        assert dict(parser.parse(str(config))) == dict(config)
+        # A reference held to the type sees the new component.
+        assert held[key] == 3
+
+    def test_a_new_type_is_written_by_its_components(self, parser) -> None:
+        """Test that a dict for a type the group does not have is a line per component."""
+        config = parser.parse("&L\n  X = 1\n/\n")
+
+        config["L"]["NESTED"] = {"A": 1, "B": {"C": 2, "D": 3}, "E": 4}
+
+        assert str(config) == ("&L\n  X = 1\n  NESTED%A = 1\n  NESTED%B%C = 2\n  NESTED%B%D = 3\n  NESTED%E = 4\n/\n")
+        assert dict(parser.parse(str(config))) == dict(config)
+        assert config["L"]["NESTED"] == {"A": 1, "B": {"C": 2, "D": 3}, "E": 4}
+
+    def test_the_group_around_a_type_still_takes_keys_of_its_own(self, parser) -> None:
+        """Test that a key of the group goes after the last entry, as ever."""
+        config = parser.parse("&L\n A%B = 1\n/\n")
+
+        config["L"]["NEW"] = 2
+
+        assert str(config) == "&L\n A%B = 1\n NEW = 2\n/\n"
+        assert dict(parser.parse(str(config))) == dict(config)
 
 
 class TestResizingAList:
@@ -1716,3 +1764,10 @@ def test_canonical_entry_text(parser, container, category, expected) -> None:
     statement of what this grammar can express and how it spells it.
     """
     assert_canonical_entry(compile_grammar(parser.grammar), container, category, expected)
+
+
+@pytest.mark.parametrize(("container", "category", "depth", "expected"), chain_rows("fortran_nml"))
+def test_canonical_chain_entry_text(parser, container, category, depth, expected) -> None:
+    """Test the text of a new derived-type component, with no neighbour to copy from."""
+    keys = ("A", "B", "C")[:depth]
+    assert_canonical_entry(compile_grammar(parser.grammar), container, category, expected, keys=keys)

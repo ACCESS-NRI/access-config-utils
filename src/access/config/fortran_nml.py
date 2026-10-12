@@ -26,6 +26,10 @@ class FortranNMLParser(ConfigParser):
     see ``repeated_blocks``. An unqualified assignment over a longer entry overlays it from
     the first position, as Fortran does, so ``x = 1, 2`` then ``x = 3`` is ``[3, 2]``.
 
+    A new component of a derived type is written as a line of its own, ``a%d = 1``, and a
+    ``dict`` assigned to a new type as one such line per component, since a derived type is
+    written no other way.
+
     A group whose body this cannot derive raises, rather than being read as the free text
     that may surround a group: a file that round-trips with a whole group missing from the
     configuration is worse than one that is refused.
@@ -52,8 +56,9 @@ class FortranNMLParser(ConfigParser):
 
         A derived type is a block written one component per line rather than as a delimited
         body, so its contents rule is named separately. Keeping the two distinguishable is
-        what lets a new key be added to a namelist but refused inside a derived type, where
-        there is no body for it to go in.
+        what tells a new key of a namelist, written in its body, from a new component of a
+        derived type, which has no body to go in and is written as a line of the group
+        carrying the type's name too: ``a%d = 1``, after the type's last line.
         """
         return (BLOCK_RULE, "dtype_body")
 

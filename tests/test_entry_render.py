@@ -41,6 +41,8 @@ def value(options: frozenset[str] = NUMERIC) -> Fragment:
 LINE = (KEY, WS, literal("="), WS, value(), literal("\n"))
 # ``KEY = a, b\n``, the two-value form every list template starts from.
 LIST_LINE = (KEY, WS, literal("="), WS, value(), literal(","), WS, value(), literal("\n"))
+# ``A%B = value\n``, a chain of two keys, as the Fortran derived-type component is written.
+CHAIN = (KEY, literal("%"), Fragment("key", level=1), WS, literal("="), WS, value(), literal("\n"))
 
 
 @pytest.fixture
@@ -59,8 +61,8 @@ def offer() -> Iterator[object]:
             stack.enter_context(
                 patch.multiple(
                     entry_render,
-                    grammar_templates=lambda info, c, cat: tuple(templates),
-                    admitted_value_rules=lambda info, c, cat: admitted,
+                    grammar_templates=lambda info, c, cat, depth: tuple(templates),
+                    admitted_value_rules=lambda info, c, cat, depth=1: admitted,
                 )
             )
 
@@ -153,6 +155,17 @@ class TestRanking:
         style = EntryStyle(key_pads=("  ", "  "), key_split=1, has_donor=True)
         assert snippets("key_value", ("K",), 1, style)[0] == "K  =  1\n"
 
+    def test_asks_for_templates_as_deep_as_the_key_path(self) -> None:
+        """Test that a key path of two is written with a template for a chain of two."""
+        fakes = patch.multiple(
+            entry_render,
+            grammar_templates=lambda info, c, cat, depth: (CHAIN,) if depth == 2 else (LINE,),
+            admitted_value_rules=lambda info, c, cat, depth=1: NUMERIC,
+        )
+
+        with fakes:
+            assert snippets("key_value", ("A", "B"), 1, EntryStyle(), None, ("integer",)) == ["A%B = 1\n"]
+
     def test_generation_order_is_the_final_tie_break(self, offer) -> None:
         """Test that two indistinguishable templates come out in the order offered."""
         offer(LINE, tuple(LINE))
@@ -220,6 +233,12 @@ class TestParserTemplateOverride:
         offer(LINE)
 
         assert snippets("key_value", ("K",), 1, EntryStyle(has_donor=True), self.OVERRIDE)[0] == "K = 1\n"
+
+    def test_is_not_offered_for_a_chain_of_keys(self, offer) -> None:
+        """Test that a template writing one key is not used for a key path of two."""
+        offer(CHAIN)
+
+        assert snippets("key_value", ("A", "B"), 1, EntryStyle(), self.OVERRIDE, ("integer",)) == ["A%B = 1\n"]
 
     def test_a_declaration_for_another_container_is_ignored(self, offer) -> None:
         """Test that the override is looked up by container and category together."""

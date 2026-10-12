@@ -32,11 +32,15 @@ from access.config.tree_reader import EntryRef
 
 GRAMMAR = """
     start: line*
-    ?line: scalar | listed | blk | empty_line
+    ?line: scalar | listed | blk | chained | empty_line
     scalar: ws* key ws* "=" ws* value line_end -> key_value
     listed: ws* key ws* "=" ws* value (ws* "," ws* value)+ line_end -> key_list
     blk: key "<" line_end block ">" line_end -> key_block
     block: (scalar | listed | empty_line)*
+    // A block written one component per line, as a Fortran derived type is: "a%b = 1".
+    chained: ws* key "%" link -> key_block
+    link: component | chained
+    component: key ws* "=" ws* value line_end -> key_value
     ?value: integer | string
     empty_line: line_end
     line_end: ws* NEWLINE
@@ -53,6 +57,12 @@ GRAMMAR = """
 def ctx() -> ParseContext:
     """Return a context over the grammar above, with a real reconstructor."""
     return ParseContext(compile_grammar(GRAMMAR), True, {}, ("integer", "string"))
+
+
+@pytest.fixture(scope="module")
+def chain_ctx() -> ParseContext:
+    """Return a context reading ``link`` as a block too, with keys that ignore case."""
+    return ParseContext(compile_grammar(GRAMMAR), False, {}, ("integer", "string"), ("block", "link"))
 
 
 @pytest.fixture
@@ -153,8 +163,8 @@ class TestAdd:
         node = entry_node("key_value", "z", value_node())
         ref = EntryRef("key_value", (node,), (node.children[1],))
 
-        def fake_insert(container, ctx, key, raw_key, value, style):
-            calls.append({"container": container, "key": key, "raw_key": raw_key, "value": value, "style": style})
+        def fake_insert(container, ctx, keys, raw_keys, value, style, index):
+            calls.append({"container": container, "keys": keys, "raw_keys": raw_keys, "value": value, "style": style})
             return ref
 
         with patch.object(config_store, "insert_entry", fake_insert):
@@ -164,21 +174,21 @@ class TestAdd:
         """Test that the new entry joins the store's own references."""
         _, ref = spy
 
-        assert store.add("z", "z", 3) is ref
+        assert store.add_path(("z",), ("z",), 3) is ref
         assert store.refs["z"] is ref
 
     def test_passes_the_container_and_the_key_as_written(self, store, spy) -> None:
         """Test that both spellings travel: the normalised key, and the one for the file."""
         calls, _ = spy
-        store.add("Z", "z", 3)
+        store.add_path(("Z",), ("z",), 3)
 
         assert calls[0]["container"] is store.tree
-        assert (calls[0]["key"], calls[0]["raw_key"]) == ("Z", "z")
+        assert (calls[0]["keys"], calls[0]["raw_keys"]) == (("Z",), ["z"])
 
     def test_offers_the_style_of_the_entries_already_there(self, store, spy) -> None:
         """Test that a container with entries dictates how the new one is spaced."""
         calls, _ = spy
-        store.add("z", "z", 3)
+        store.add_path(("z",), ("z",), 3)
 
         assert calls[0]["style"].has_donor
         # One run per whitespace slot the neighbour used: either side of the "=".
@@ -187,7 +197,7 @@ class TestAdd:
     def test_offers_a_copy_of_the_entries_already_there(self, store, spy) -> None:
         """Test that the store passes its reconstructor on, so whole entries are copied."""
         calls, _ = spy
-        store.add("z", "z", 3)
+        store.add_path(("z",), ("z",), 3)
 
         assert calls[0]["style"].donor(1, "key_value") is not None
 
@@ -204,9 +214,47 @@ class TestAdd:
         block = store.child(store.refs["blk"])
         block.fallback_style = EntryStyle(indent="    ", has_donor=True)
 
-        block.add("z", "z", 3)
+        block.add_path(("z",), ("z",), 3)
 
         assert calls[0]["style"].indent == "    "
+
+
+class TestAddingAChain:
+    """A key path written as one line, beside the lines writing the same block."""
+
+    @staticmethod
+    def store_of(ctx: ParseContext, text: str) -> ConfigStore:
+        """Return a store over *text*."""
+        tree = ctx.lark.parse(text, start="start")
+        AddParent().visit(tree)
+        return ConfigStore(tree, ctx)
+
+    def test_goes_after_the_last_line_sharing_its_keys(self, chain_ctx) -> None:
+        """Test that a component joins the others, spelling the type the way they do."""
+        store = self.store_of(chain_ctx, "a%b = 1\na%c = 2\nx = 3\n")
+
+        ref = store.add_path(("A", "D"), ("A", "d"), 4)
+
+        assert store.render() == "a%b = 1\na%c = 2\na%d = 4\nx = 3"
+        # The new line on its own; the store reads it together with the other two.
+        assert len(ref.entry_nodes) == 1
+        assert len(store.refs["A"].entry_nodes) == 3
+
+    def test_follows_the_line_sharing_the_most_keys(self, chain_ctx) -> None:
+        """Test that a line sharing two keys wins over a later one sharing only one."""
+        store = self.store_of(chain_ctx, "a%b%c = 1\na%d = 2\n")
+
+        store.add_path(("A", "B", "E"), ("A", "B", "e"), 3)
+
+        assert store.render() == "a%b%c = 1\na%b%e = 3\na%d = 2"
+
+    def test_a_chain_sharing_no_key_goes_after_the_last_entry(self, chain_ctx) -> None:
+        """Test a component of a type the file does not write yet."""
+        store = self.store_of(chain_ctx, "a%b = 1\nx = 3\n")
+
+        store.add_path(("N", "A"), ("n", "a"), 1)
+
+        assert store.render() == "a%b = 1\nx = 3\nn%a = 1"
 
 
 class TestUnaddableBlocks:
@@ -219,7 +267,7 @@ class TestUnaddableBlocks:
         store = ConfigStore(tree, ctx, addable=False)
 
         with pytest.raises(UnsupportedEntryError, match="no body in the file"):
-            store.add("z", "z", 1)
+            store.add_path(("z",), ("z",), 1)
 
     def test_a_child_inherits_the_flag_from_its_reference(self, ctx) -> None:
         """Test that ``child`` passes on what the reader decided about the block."""
@@ -248,6 +296,14 @@ class TestCreatedBlockStyle:
         AddParent().visit(tree)
 
         assert ConfigStore(tree, ctx).created_block_style().donor(1, "key_value") is not None
+
+    def test_taken_from_the_block_above_the_one_created(self, ctx) -> None:
+        """Test that a block written among others copies the one above it, not the last."""
+        tree = ctx.lark.parse("old<\n    p = 1\n>\nnew<\n>\nlast<\n  q = 1\n>\n", start="start")
+        AddParent().visit(tree)
+        store = ConfigStore(tree, ctx)
+
+        assert store.created_block_style(store.refs["new"].entry_nodes[0]).indent == "    "
 
     def test_falls_back_to_this_container_own(self, ctx) -> None:
         """Test that a block nested in a new block inherits rather than going canonical."""

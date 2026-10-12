@@ -90,8 +90,10 @@ class ConfigParser(ABC):
 
         Nearly always just ``"block"``. A format with more than one kind of block declares
         them all, most-addable first: the first name is the one new entries are written
-        into, and a block held by any of the others is read and edited but not added to.
-        A block written one component per line, rather than as a delimited body, is one.
+        into, and a block held by any of the others has no body to write one in. A block
+        written one component per line, rather than as a delimited body, is one: a key
+        added to it is written by the block holding it, as a line carrying the whole key
+        path.
 
         Returns:
             Sequence[str]: The rule names.
