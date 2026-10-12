@@ -548,6 +548,8 @@ class TestConfigList:
                 lambda values: values.extend(iter([3, 4])), [0, 1, 2, 3, 4], [0, 1, 2, None, None], id="extend"
             ),
             pytest.param(lambda values: values.insert(1, 9), [0, 9, 1, 2], [0, None, 1, 2], id="insert"),
+            pytest.param(lambda values: values.insert(-1, 9), [0, 1, 9, 2], [0, 1, None, 2], id="insert-negative"),
+            pytest.param(lambda values: values.insert(9, 9), [0, 1, 2, 9], [0, 1, 2, None], id="insert-past-the-end"),
             pytest.param(lambda values: values.remove(1), [0, 2], [0, 2], id="remove"),
             pytest.param(lambda values: values.pop(), [0, 1], [0, 1], id="pop"),
             pytest.param(lambda values: values.__delitem__(slice(0, 2)), [2], [2], id="del-slice"),

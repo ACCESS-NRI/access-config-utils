@@ -150,20 +150,15 @@ class ConfigList(list):
 
     def append(self, value: Any) -> None:
         """Override to add the element to the parse tree too."""
-        self._write([*self, value], [*range(len(self)), None])
+        self[len(self) :] = [value]
 
     def extend(self, values: Iterable[Any]) -> None:
         """Override to add the elements to the parse tree too."""
-        added = list(values)
-        self._write([*self, *added], [*range(len(self)), *[None] * len(added)])
+        self[len(self) :] = values
 
     def insert(self, index: SupportsIndex, value: Any) -> None:
         """Override to add the element to the parse tree too."""
-        updated = list(self)
-        updated.insert(index, value)
-        origins: list[int | None] = list(range(len(self)))
-        origins.insert(index, None)
-        self._write(updated, origins)
+        self[index:index] = [value]
 
     def pop(self, index: SupportsIndex = -1) -> Any:
         """Override to remove the element from the parse tree too."""
