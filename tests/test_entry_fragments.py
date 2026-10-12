@@ -4,23 +4,15 @@
 """Unit tests for the template type and the operations on one template alone.
 
 ``entry_fragments`` imports nothing but rule names, so nothing is faked here and no grammar
-is compiled. Every template is written out fragment by fragment, which is what lets the
-ranking terms be tested one at a time: a real grammar hands you whatever derivations it has,
-never the pair that differs in exactly the term under test.
+is compiled. Every template is written out fragment by fragment, which is what lets each
+operation be tested on exactly the shape it is about.
 """
 
 import pytest
 
-from access.config.entry_fragments import (
-    Fragment,
-    compile_template,
-    count_fragments,
-    expand_value_slots,
-    neighbour_fragment,
-    shape_key,
-)
+from access.config.entry_fragments import Fragment, compile_template, expand_value_slots, neighbour_fragment
 
-KEY, WS, VALUE, BLOCK = Fragment("key"), Fragment("ws"), Fragment("value"), Fragment("block")
+KEY, WS, VALUE = Fragment("key"), Fragment("ws"), Fragment("value")
 
 
 def literal(text: str) -> Fragment:
@@ -30,13 +22,6 @@ def literal(text: str) -> Fragment:
 
 # ``KEY = value`` followed by a newline: the shape most grammars derive for a scalar entry.
 LINE = (KEY, WS, literal("="), WS, VALUE, literal("\n"))
-
-
-def test_count_fragments() -> None:
-    """Test counting the fragments of one kind."""
-    assert count_fragments(LINE, "ws") == 2
-    assert count_fragments(LINE, "value") == 1
-    assert count_fragments(LINE, "block") == 0
 
 
 class TestNeighbourFragment:
@@ -53,83 +38,8 @@ class TestNeighbourFragment:
         assert neighbour_fragment((WS, WS), 0, 1) is None
 
     def test_accepts_an_index_one_past_the_end(self) -> None:
-        """Test the call ``shape_key`` makes to find the last fragment of a template."""
+        """Test the call that finds the last fragment of a template."""
         assert neighbour_fragment(LINE, len(LINE), -1) == literal("\n")
-
-
-class TestShapeKey:
-    """The style-independent ranking terms, smaller being preferred."""
-
-    def test_prefers_a_template_that_ends_the_line(self) -> None:
-        """Test the first term, which stops an entry running into what follows it."""
-        assert shape_key(LINE)[0] == 0
-        assert shape_key((KEY, literal("="), VALUE))[0] == 1
-
-    def test_a_trailing_whitespace_slot_does_not_hide_the_newline(self) -> None:
-        """Test that the newline is looked for past a whitespace placeholder at the end.
-
-        The comment on the implementation is precise about this: the *last fragment* has to
-        be the newline, not the last literal, or a list continued across lines would
-        score as a complete line.
-        """
-        assert shape_key((KEY, literal("="), VALUE, literal("\n"), WS))[0] == 0
-        assert shape_key((KEY, literal("="), VALUE, literal(",\n"), VALUE))[0] == 1
-
-    def test_prefers_a_block_body_on_its_own_line(self) -> None:
-        """Test the second term, which leaves a new block room for its first keys."""
-        assert shape_key((KEY, literal("<\n"), BLOCK, literal(">\n")))[1] == 0
-        assert shape_key((KEY, literal("<"), BLOCK, literal(">\n")))[1] == 1
-
-    def test_a_block_at_the_start_has_nothing_before_it(self) -> None:
-        """Test the case where the block placeholder has no preceding fragment at all."""
-        assert shape_key((BLOCK, KEY, literal("\n")))[1] == 1
-
-    def test_a_template_with_no_block_passes_the_block_term(self) -> None:
-        """Test that a scalar template is not penalised by a term about blocks."""
-        assert shape_key(LINE)[1] == 0
-
-    def test_counts_newlines_other_than_the_one_ending_the_entry(self) -> None:
-        """Test the third term, which is what stops a blank line being added."""
-        assert shape_key(LINE)[2] == 0
-        assert shape_key((KEY, literal("="), VALUE, literal("\n\n")))[2] == 1
-
-    def test_prefers_values_parted_by_punctuation(self) -> None:
-        """Test the fourth term, which is what keeps a written list comma-separated.
-
-        A Fortran namelist reads ``1 2 3`` as well as ``1, 2, 3``, so both derivations
-        exist. Whitespace alone is the weaker of the two: a stricter reader of the same
-        format may not split the run.
-        """
-        commas = (KEY, literal("="), VALUE, literal(","), WS, VALUE, literal("\n"))
-        blanks = (KEY, literal("="), VALUE, WS, VALUE, literal("\n"))
-
-        assert shape_key(commas)[3] == 0
-        assert shape_key(blanks)[3] == 1
-        # It has to outrank the fixed-text term, which prefers the blank form for being
-        # one character shorter, so the whole key must order the same way.
-        assert shape_key(commas) < shape_key(blanks)
-
-    def test_a_template_with_fewer_than_two_values_passes_that_term(self) -> None:
-        """Test that a scalar template is not penalised by a term about value separators."""
-        assert shape_key(LINE)[3] == 0
-
-    def test_measures_fixed_text_ignoring_whitespace(self) -> None:
-        """Test the fifth term, which is what rejects an optional trailing separator."""
-        assert shape_key(LINE)[4] == len("=")
-        assert shape_key((KEY, literal("="), VALUE, literal(","), literal("\n")))[4] == len("=,")
-
-    def test_prefers_more_whitespace_slots_and_fewer_keys(self) -> None:
-        """Test the last two terms: spare whitespace is free, a repeated key is not."""
-        assert shape_key(LINE)[5] == -2
-        assert shape_key(LINE)[6] == 1
-        assert shape_key((KEY, literal("%\n"), BLOCK, literal("%"), KEY, literal("\n")))[6] == 2
-
-    def test_orders_a_realistic_pair(self) -> None:
-        """Test the terms together, on the choice a Fortran list actually presents."""
-        one_line = (KEY, WS, literal("="), WS, VALUE, literal(","), WS, VALUE, literal("\n"))
-        continued = (KEY, WS, literal("="), WS, VALUE, literal(",\n"), WS, VALUE, literal("\n"))
-
-        assert shape_key(one_line) < shape_key(continued)
 
 
 class TestExpandValueSlots:
@@ -148,7 +58,7 @@ class TestExpandValueSlots:
             "value", "literal", "ws",
             "value", "literal",
         ]  # fmt: skip
-        assert count_fragments(grown, "value") == 4
+        assert [f.kind for f in grown].count("value") == 4
 
     def test_two_values_is_the_template_unchanged(self) -> None:
         """Test the shortest list a format can express, where nothing needs repeating."""
@@ -171,7 +81,7 @@ class TestCompileTemplate:
 
     def test_splits_text_around_its_markers(self) -> None:
         """Test that the markers become placeholders and the rest becomes fixed text."""
-        template = compile_template("{key} = {value}\n", "key_value", 1, None, frozenset({"integer"}))
+        template = compile_template("{key} = {value}\n", "key_value", 1, None)
 
         assert [(f.kind, f.text) for f in template] == [
             ("key", ""),
@@ -179,23 +89,21 @@ class TestCompileTemplate:
             ("value", ""),
             ("literal", "\n"),
         ]
-        # The admitted value rules are carried on the value placeholder, for rendering.
-        assert template[2].options == frozenset({"integer"})
 
     def test_a_key_written_twice(self) -> None:
         """Test a block template, whose key closes it as well as opening it."""
-        template = compile_template("{key}%\n%{key}\n", "key_block", 1, None, frozenset())
+        template = compile_template("{key}%\n%{key}\n", "key_block", 1, None)
 
         assert [f.kind for f in template] == ["key", "literal", "key", "literal"]
 
     def test_text_with_no_marker_at_all(self) -> None:
         """Test that a template without a key is refused."""
         with pytest.raises(ValueError, match="key"):
-            compile_template("just text", "key_null", 1, None, frozenset())
+            compile_template("just text", "key_null", 1, None)
 
     def test_a_marker_at_the_very_start(self) -> None:
         """Test that a template opening on a marker emits no empty literal before it."""
-        template = compile_template("{key}=", "key_null", 1, None, frozenset())
+        template = compile_template("{key}=", "key_null", 1, None)
         assert [f.kind for f in template] == ["key", "literal"]
 
     @pytest.mark.parametrize(
@@ -214,25 +122,25 @@ class TestCompileTemplate:
         element separator, and every template needs a key.
         """
         with pytest.raises(ValueError, match=message):
-            compile_template(text, category, 1, None, frozenset())
+            compile_template(text, category, 1, None)
 
     @pytest.mark.parametrize(("depth", "written"), [(1, "A"), (2, "A%B"), (3, "A%B%C")])
     def test_keys_writes_every_key_of_a_chain(self, depth, written) -> None:
         """Test that ``{keys:SEP}`` writes one key per level, parted by SEP."""
-        template = compile_template("{keys:%} =\n", "key_null", depth, None, frozenset())
+        template = compile_template("{keys:%} =\n", "key_null", depth, None)
 
         assert [(f.kind, f.level) for f in template if f.kind == "key"] == [("key", level) for level in range(depth)]
         assert "".join(f.text if f.kind == "literal" else "A%B%C"[2 * f.level] for f in template) == written + " =\n"
 
     def test_a_separator_may_hold_any_text_but_a_closing_brace(self) -> None:
         """Test the field table header, whose keys are parted by ``", "`` inside quotes."""
-        template = compile_template('"{keys:", "}"/\n', "key_block", 3, None, frozenset())
+        template = compile_template('"{keys:", "}"/\n', "key_block", 3, None)
 
         assert [f.text for f in template if f.kind == "literal"] == ['"', '", "', '", "', '"/\n']
 
     def test_a_template_for_one_key_cannot_write_a_chain(self) -> None:
         """Test that ``{key}`` is no template at a depth of two: it names the one key."""
-        assert compile_template("{key} = 1\n", "key_null", 2, None, frozenset()) is None
+        assert compile_template("{key} = 1\n", "key_null", 2, None) is None
 
     @pytest.mark.parametrize(
         ("text", "indent", "written"),
@@ -247,7 +155,7 @@ class TestCompileTemplate:
     )
     def test_indent_replaces_the_whitespace_the_first_keys_line_starts_with(self, text, indent, written) -> None:
         """Test that the file's indentation takes the place of the template's own."""
-        template = compile_template(text, "key_null", 1, indent, frozenset())
+        template = compile_template(text, "key_null", 1, indent)
 
         key = next(index for index, fragment in enumerate(template) if fragment.kind == "key")
         assert "".join(f.text for f in template[:key]) == written

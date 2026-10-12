@@ -11,25 +11,19 @@ caller hands that text back to Lark with the container rule as the start symbol,
 builds nodes that are by construction the ones it would have produced for a file containing
 the entry.
 
-The text is derived from the compiled grammar itself, so a new format gets entry synthesis
-for free.
-
 The pipeline
 ------------
 
-1. **Generate.** Collect every way the grammar can derive one entry of the requested
-   category, as an ``EntryTemplate``. That is ``entry_generate``, which also filters out any
-   derivation not holding exactly one entry of the right category, or the wrong number of
-   values for it. A template copied from a neighbouring entry of the same kind, if the
-   container has one, goes ahead of all of them; see ``entry_style.donor_template``.
-2. **Rank.** Order the survivors so the most idiomatic rendering wins: a complete line, a
-   block whose contents start on their own line, no blank lines, no trailing separator, and
-   the whitespace of a neighbouring entry where that costs nothing.
-3. **Render.** Substitute the key, the value and the whitespace, then let the caller
-   validate the result by parsing it.
+1. **Template.** A new entry is written as a copy of the nearest entry of its kind in the
+   file, if there is one; see ``entry_style.donor_template``. Otherwise it is written from
+   the template its parser declares in ``ConfigParser.entry_templates``, indented like the
+   entry above where the file shows one.
+2. **Render.** Substitute the key, the value and the whitespace, once for each way the
+   value can be written: every value-type rule the format has that accepts it, most
+   preferred first.
 
-Because step 3 is validated by parsing, ranking only decides which *valid* rendering is
-used. It can change how the output looks, never whether it is correct.
+The caller validates each candidate by parsing it and reading it back, so what is offered
+first is a matter of style: it can change how the output looks, never whether it is correct.
 Synthesis is reached through the ordinary mapping interface: assigning a key the
 configuration does not have writes it in the format's own syntax, spaced like the entries
 around it.
@@ -37,76 +31,12 @@ around it.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import replace
+from collections.abc import Iterator, Sequence
 
-from access.config.entry_fragments import (
-    EntryTemplate,
-    Fragment,
-    compile_template,
-    expand_value_slots,
-    shape_key,
-)
-from access.config.entry_generate import admitted_value_rules, grammar_templates
-from access.config.entry_style import EntryStyle, canonical_ws, classify_slots, style_matches
+from access.config.entry_fragments import EntryTemplate, Fragment, compile_template, expand_value_slots
+from access.config.entry_style import EntryStyle, canonical_ws, classify_slots
 from access.config.grammar_contract import KEY_LIST, KEY_VALUE
-from access.config.grammar_info import GrammarInfo
-from access.config.grammar_values import (
-    VALUE_RULE_PRIORITY,
-    VALUE_TYPE_HANDLER_REGISTRY,
-    select_value_rule,
-)
-
-_MAX_SNIPPETS = 64
-"""Cap on the candidate texts offered for a single insertion."""
-
-# --- Ranking ---
-
-
-def _rank_key(template: EntryTemplate, style: EntryStyle, order: int) -> tuple[int, ...]:
-    """Return the sort key for a complete template; smaller is preferred.
-
-    The terms of ``shape_key``, with a preference for reproducing a neighbouring entry's
-    whitespace, and generation order last so the result is deterministic.
-
-    Matching the neighbouring style ranks *below* the amount of fixed text, so style can
-    only decide between templates that write the same thing. Ranked any higher, a grammar
-    with an optional trailing separator would have one added purely to make the whitespace
-    runs line up.
-
-    Args:
-        template (EntryTemplate): The template to score.
-        style (EntryStyle): Whitespace of a neighbouring entry.
-        order (int): Position in generation order, as a final tie-break.
-
-    Returns:
-        tuple[int, ...]: The sort key.
-    """
-    ends_line, block_ok, newlines, parted, literal_length, negated_ws, keys = shape_key(template)
-    mismatch = 0 if style_matches(template, style) else 1
-    return (ends_line, block_ok, newlines, parted, literal_length, mismatch, negated_ws, keys, order)
-
-
-def _ranked_templates(
-    info: GrammarInfo, container: str, category: str, depth: int, style: EntryStyle
-) -> list[EntryTemplate]:
-    """Return the templates for a new entry, most idiomatic first.
-
-    Args:
-        info (GrammarInfo): Views over the compiled grammar.
-        container (str): Container rule name.
-        category (str): Entry category.
-        depth (int): How many keys the entry chains together.
-        style (EntryStyle): Whitespace of a neighbouring entry, used as a preference.
-
-    Returns:
-        list[EntryTemplate]: The ranked templates.
-    """
-    templates = grammar_templates(info, container, category, depth)
-    scored = [(_rank_key(template, style, order), template) for order, template in enumerate(templates)]
-    scored.sort(key=lambda item: item[0])
-    return [template for _, template in scored]
-
+from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY, select_value_rule
 
 # --- Rendering ---
 
@@ -182,14 +112,13 @@ def render(template: EntryTemplate, keys: Sequence[str], value_texts: Sequence[s
 
 
 def iter_entry_snippets(
-    info: GrammarInfo,
-    container: str,
     category: str,
     keys: Sequence[str],
     value: object,
     style: EntryStyle,
-    overrides: Mapping[tuple[str, str], str] | None = None,
-    priority: Sequence[str] = VALUE_RULE_PRIORITY,
+    declared: str | None,
+    admitted: frozenset[str],
+    priority: Sequence[str],
 ) -> Iterator[str]:
     """Yield candidate texts for a new entry, most preferred first.
 
@@ -197,53 +126,35 @@ def iter_entry_snippets(
     thing that writes the new entry exactly as the file writes the others, punctuation and
     value notation included.
 
-    The template the parser declares for this container and category comes next, written
-    with the indentation of the entry above where the file shows one, and then with its
-    own. It is how the first entry of a kind is written when the file has none to copy.
+    The template the parser declares for this kind of entry comes next, written with the
+    indentation of the entry above where the file shows one, and then with its own. It is
+    how the first entry of a kind is written when the file has none to copy.
 
     Neither is more than a preference: if one does not parse, or reads back as something
-    else, the caller simply moves on to the templates the grammar derives.
+    else, the caller simply moves on.
 
     Args:
-        info (GrammarInfo): Views over the compiled grammar.
-        container (str): Name of the rule the entry will become a child of.
         category (str): One of ``ENTRY_CATEGORIES``.
         keys (Sequence[str]): The key names, outermost first, written as given: one for a
             plain entry, one per level for a chain such as ``a%b = 1``.
         value (object): The value; a sequence of values for ``key_list``, unused for
             ``key_block`` and ``key_null``.
         style (EntryStyle): The layout of the neighbouring entries.
-        overrides (Mapping[tuple[str, str], str] | None): Parser-declared templates, keyed
-            by container and category.
+        declared (str | None): The text the parser declares for this container and
+            category, if it does.
+        admitted (frozenset[str]): The value-type rules the format has.
         priority (Sequence[str]): Order in which to try the admitted value-type rules.
 
     Yields:
         str: Candidate entry text, to be validated by parsing.
     """
     depth = len(keys)
-    templates = _ranked_templates(info, container, category, depth, style)
-
-    declared = (overrides or {}).get((container, category))
+    templates = [style.donor(depth, category)]
     if declared is not None:
-        options = admitted_value_rules(info, container, category, depth)
         shown = style.indent if style.has_donor else None
-        compiled = (compile_template(declared, category, depth, indent, options) for indent in (shown, None))
-        templates[0:0] = dict.fromkeys(template for template in compiled if template is not None)
-
-    donor = style.donor(depth, category)
-    if donor is not None:
-        # The copy knows how its neighbour wrote a value, not what else may be written here.
-        options = admitted_value_rules(info, container, category, depth)
-        admitting = [replace(fragment, options=options) if fragment.kind == "value" else fragment for fragment in donor]
-        templates.insert(0, tuple(admitting))
-
-    emitted = 0
-    for template in templates:
-        for text in _render_candidates(template, keys, value, style, category, priority):
-            yield text
-            emitted += 1
-            if emitted >= _MAX_SNIPPETS:
-                return
+        templates += [compile_template(declared, category, depth, indent) for indent in (shown, None)]
+    for template in dict.fromkeys(template for template in templates if template is not None):
+        yield from _render_candidates(template, keys, value, style, category, admitted, priority)
 
 
 def _values_for(category: str, value: object) -> list[object]:
@@ -255,7 +166,7 @@ def _values_for(category: str, value: object) -> list[object]:
     return []
 
 
-def _rule_choices(values: Sequence[object], options: frozenset[str], priority: Sequence[str]) -> Iterator[list[str]]:
+def _rule_choices(values: Sequence[object], admitted: frozenset[str], priority: Sequence[str]) -> Iterator[list[str]]:
     """Yield ways of writing *values*, a value-type rule per value, most preferred first.
 
     Every admitted rule accepting all the values is offered, not just the most preferred
@@ -266,7 +177,7 @@ def _rule_choices(values: Sequence[object], options: frozenset[str], priority: S
 
     Args:
         values (Sequence[object]): The values to write.
-        options (frozenset[str]): Value-type rules admitted in this position.
+        admitted (frozenset[str]): The value-type rules the format has.
         priority (Sequence[str]): Order in which to consider rules.
 
     Yields:
@@ -275,12 +186,12 @@ def _rule_choices(values: Sequence[object], options: frozenset[str], priority: S
     offered: list[list[str]] = []
     for rule_name in priority:
         handler = VALUE_TYPE_HANDLER_REGISTRY.get(rule_name)
-        if rule_name in options and handler is not None and all(handler.type_check(item) for item in values):
+        if rule_name in admitted and handler is not None and all(handler.type_check(item) for item in values):
             offered.append([rule_name] * len(values))
             yield offered[-1]
 
     # A list may hold values of different types, which no single rule covers.
-    per_value = [select_value_rule(item, options, priority) for item in values]
+    per_value = [select_value_rule(item, admitted, priority) for item in values]
     if all(name is not None for name in per_value) and per_value not in offered:
         yield [name for name in per_value if name is not None]
 
@@ -291,6 +202,7 @@ def _render_candidates(
     value: object,
     style: EntryStyle,
     category: str,
+    admitted: frozenset[str],
     priority: Sequence[str],
 ) -> Iterator[str]:
     """Yield renderings of *template*, one per way of writing the value."""
@@ -301,8 +213,7 @@ def _render_candidates(
     if not slots:
         yield render(template, keys, [], style)
     else:
-        # Every slot of one entry admits the same value types, so the first speaks for all.
-        for rule_names in _rule_choices(values, slots[0].options, priority):
+        for rule_names in _rule_choices(values, admitted, priority):
             texts = [_value_text(*choice) for choice in zip(rule_names, values, slots, strict=True)]
             yield render(template, keys, texts, style)
 

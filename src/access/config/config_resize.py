@@ -30,8 +30,7 @@ from lark import Token, Tree
 from lark.exceptions import UnexpectedInput
 
 from access.config.config_insert import entry_matches
-from access.config.entry_generate import admitted_value_rules
-from access.config.grammar_contract import KEY_LIST, REPEAT_RULE
+from access.config.grammar_contract import REPEAT_RULE
 from access.config.grammar_values import (
     VALUE_TYPE_HANDLER_REGISTRY,
     UnsupportedEntryError,
@@ -79,7 +78,7 @@ def resize_entry(
         _marked_text(ctx, container, line, path, blank=True),
         len(ref.value_nodes),
     )
-    value_texts = _value_texts(ref, ctx, str(container.data), key, values, origins)
+    value_texts = _value_texts(ref, ctx, key, values, origins)
     for candidate in layout_candidates(text, value_texts, origins):
         fresh = _read_candidate(ctx, container, line, path, candidate, key, values)
         if fresh is not None:
@@ -141,12 +140,7 @@ def _marked_text(ctx: ParseContext, container: Tree, line: Tree, path: Sequence[
 
 
 def _value_texts(
-    ref: EntryRef,
-    ctx: ParseContext,
-    container_rule: str,
-    key: str,
-    values: Sequence[Any],
-    origins: Sequence[int | None],
+    ref: EntryRef, ctx: ParseContext, key: str, values: Sequence[Any], origins: Sequence[int | None]
 ) -> list[str]:
     """Return the token text to write each new value with.
 
@@ -158,7 +152,6 @@ def _value_texts(
     Args:
         ref (EntryRef): The entry being rewritten.
         ctx (ParseContext): The compiled grammar and the per-parser settings.
-        container_rule (str): The rule the entry's line is in.
         key (str): The key, for the error message.
         values (Sequence[Any]): The new values.
         origins (Sequence[int | None]): The old position each new value stands in for.
@@ -185,8 +178,7 @@ def _value_texts(
             if handler.type_check(value):
                 texts.append(handler.to_token(value, str(node.children[0])))
                 continue
-        admitted = admitted_value_rules(ctx.info, container_rule, KEY_LIST)
-        rule = select_value_rule(value, admitted, ctx.value_rule_priority)
+        rule = select_value_rule(value, ctx.info.value_rules, ctx.value_rule_priority)
         if rule is None:
             raise UnsupportedEntryError(f"This format cannot store {value!r} in the list '{key}'")
         texts.append(VALUE_TYPE_HANDLER_REGISTRY[rule].to_new_token(value))

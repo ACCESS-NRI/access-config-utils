@@ -34,9 +34,9 @@ class ConfigParser(ABC):
     ``grammar_contract`` -- the rule names there are what lets one set of machinery read,
     edit and extend every format.
 
-    A parser may steer the text of a *new* entry through the ``entry_templates`` and
-    ``value_rule_priority`` properties, but the defaults derive everything from the grammar
-    and are normally enough.
+    A new entry is written as a copy of the nearest entry of its kind. For the first entry
+    of a kind, which has none to copy, a parser declares the text in ``entry_templates``;
+    ``value_rule_priority`` says how a new value is spelled where several rules would do.
 
     This class is abstract to prevent instantiation, as it requires a grammar in order to
     work at all.

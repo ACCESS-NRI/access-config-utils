@@ -24,6 +24,7 @@ from typing import Any
 
 import pytest
 from lark import Lark, Token, Tree
+from lark.exceptions import UnexpectedInput
 
 from access.config.entry_render import iter_entry_snippets
 from access.config.entry_style import EntryStyle
@@ -120,9 +121,10 @@ def assert_canonical_entry(
 ) -> None:
     """Assert the entry text a parser writes for a kind of entry the file has none of.
 
-    The first candidate has to be both the expected text and valid in that container, so
-    this pins the template the parser declares, the choice of a value type and the
-    rendering, against a real grammar.
+    The first candidate that parses in that container has to be the expected text, which
+    pins the template the parser declares, the choice of a value type and the rendering
+    against a real grammar. A candidate that does not parse is passed over, as the caller
+    passes it over.
 
     Args:
         parser: The parser, which declares the template and supplies the grammar.
@@ -133,16 +135,26 @@ def assert_canonical_entry(
         keys: The key path, one key per entry of the chain.
     """
     compiled = compile_grammar(parser.grammar)
-    snippets = iter_entry_snippets(
-        compiled.info, container, category, keys, values[category], EntryStyle(), parser.entry_templates
+    candidates = iter_entry_snippets(
+        category,
+        keys,
+        values[category],
+        EntryStyle(),
+        parser.entry_templates.get((container, category)),
+        compiled.info.value_rules,
+        tuple(parser.value_rule_priority),
     )
-    first = next(iter(snippets))
-    assert first == expected
-
-    # The text must parse in the container it was generated for, and yield that category.
-    parsed = compiled.lark.parse(first, start=container)
-    categories = {node.data for node in parsed.iter_subtrees()} | {parsed.data}
-    assert category in categories
+    for text in candidates:
+        try:
+            parsed = compiled.lark.parse(text, start=container)
+        except UnexpectedInput:
+            continue
+        # The text must yield that category.
+        categories = {node.data for node in parsed.iter_subtrees()} | {parsed.data}
+        assert category in categories
+        assert text == expected
+        return
+    pytest.fail("No candidate parses")
 
 
 @pytest.fixture(scope="session")
@@ -211,12 +223,28 @@ TOY_GRAMMAR = """
 """
 
 
+# What the toy grammar writes for each kind of entry it has: whitespace is discarded, so
+# the entries are written tight.
+TOY_TEMPLATES = {
+    ("start", "key_null"): "{key}=",
+    ("start", "key_value"): "{key}={value}",
+    ("start", "key_list"): "{key}={value},{value}",
+    ("start", "key_block"): "{key}<>",
+    ("block", "key_value"): "{key}:{value}",
+    ("block", "key_list"): "{key}:{value}|{value}",
+}
+
+
 class Parser(ConfigParser):
     """Parser using the grammar defined above, with case sensitive keys."""
 
     @property
     def case_sensitive_keys(self) -> bool:
         return True
+
+    @property
+    def entry_templates(self) -> Mapping[tuple[str, str], str]:
+        return TOY_TEMPLATES
 
     @property
     def grammar(self) -> str:
@@ -235,6 +263,10 @@ class CaseParser(ConfigParser):
     @property
     def case_sensitive_keys(self) -> bool:
         return False
+
+    @property
+    def entry_templates(self) -> Mapping[tuple[str, str], str]:
+        return TOY_TEMPLATES
 
     @property
     def grammar(self) -> str:
@@ -291,8 +323,11 @@ class RepetitionInfo:
     """Stands in for ``GrammarInfo``, reporting every rule a plain repetition.
 
     That is what a namelist group's block is, so a deletion inside a fake nested
-    configuration stays there, as it does inside a real group.
+    configuration stays there, as it does inside a real group. It has no value type, unless
+    a test gives it some.
     """
+
+    value_rules: frozenset[str] = frozenset()
 
     def is_repetition_rule(self, name: str) -> bool:
         """Report that *name* is a plain repetition."""

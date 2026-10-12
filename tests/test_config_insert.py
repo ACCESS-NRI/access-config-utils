@@ -50,7 +50,7 @@ def offer() -> Iterator[object]:
     """
     with ExitStack() as stack:
 
-        def _offer(*candidates: tuple[str, Any], admitted: set[str] | None = None):
+        def _offer(*candidates: tuple[str, Any]):
             scripted = dict(candidates)
             # Which candidate the reader is being asked about. Tracked rather than deduced
             # from the tree, because two candidates can parse into structurally equal nodes.
@@ -79,7 +79,6 @@ def offer() -> Iterator[object]:
                     parse_entry_nodes=fake_parse,
                     read_entries=fake_read,
                     entry_insertion_index=lambda c: 1,
-                    admitted_value_rules=lambda i, c, cat, depth: frozenset(admitted or ()),
                 )
             )
 
@@ -356,62 +355,53 @@ class TestInsertEntryExhausted:
         with pytest.raises(UnsupportedEntryError, match=r"as \['a'\]\['b'\] here"):
             insert_entry(container, FakeContext(), ("a", "b"), ("a", "b"), object(), EntryStyle())
 
-    def test_lists_the_value_types_the_container_admits(self, container, offer) -> None:
+    def test_lists_the_value_types_the_format_writes(self, container, offer) -> None:
         """Test the hint, which is what turns "no" into something actionable."""
-        offer(admitted={"integer", "float"})
-
-        with pytest.raises(UnsupportedEntryError, match=r"value types allowed here: \['float', 'integer'\]"):
-            insert_entry(container, FakeContext(), ("z",), ("z",), "text", EntryStyle())
-
-    def test_omits_the_hint_where_nothing_is_admitted(self, container, offer) -> None:
-        """Test that a container admitting nothing does not offer an empty list."""
         offer()
+        ctx = FakeContext()
+        ctx.info.value_rules = frozenset({"integer", "float"})
 
-        with pytest.raises(UnsupportedEntryError) as raised:
-            insert_entry(container, FakeContext(), ("z",), ("z",), "text", EntryStyle())
-
-        assert "value types allowed here" not in str(raised.value)
+        with pytest.raises(UnsupportedEntryError, match=r"value types this format writes: \['float', 'integer'\]"):
+            insert_entry(container, ctx, ("z",), ("z",), "text", EntryStyle())
 
 
-def test_insert_entry_passes_the_style_and_container_through(container) -> None:
+def test_insert_entry_passes_the_style_and_template_through(container) -> None:
     """Test that what the caller decided about layout reaches synthesis unchanged.
 
     ``config_store`` works out which style applies -- the container's own entries, or what
-    a created block inherited -- and this module's only job with it is to hand it on.
+    a created block inherited -- and this module's only job with it is to hand it on, with
+    the template the parser declares for this container and category and what the format
+    can write.
     """
     seen: dict[str, object] = {}
     style = EntryStyle(indent="    ", has_donor=True)
     ctx = FakeContext()
-    ctx.entry_templates = {("start", "key_value"): "{key}={value}"}
+    ctx.entry_templates = {("start", "key_value"): "{key}={value}", ("block", "key_value"): "{key}:{value}"}
     ctx.value_rule_priority = ("integer",)
+    ctx.info.value_rules = frozenset({"integer"})
 
-    def record(info, container_rule, category, keys, value, given_style, overrides, priority):
+    def record(category, keys, value, given_style, declared, admitted, priority):
         seen.update(
-            container=container_rule,
             category=category,
             keys=keys,
             style=given_style,
-            overrides=overrides,
+            declared=declared,
+            admitted=admitted,
             priority=priority,
         )
         return iter(())
 
-    patches = patch.multiple(
-        config_insert,
-        iter_entry_snippets=record,
-        entry_insertion_index=lambda c: 0,
-        admitted_value_rules=lambda i, c, cat, depth: frozenset(),
-    )
+    patches = patch.multiple(config_insert, iter_entry_snippets=record, entry_insertion_index=lambda c: 0)
 
     with patches, pytest.raises(UnsupportedEntryError):
         insert_entry(container, ctx, ("Z",), ("Z",), 1, style)
 
     assert seen == {
-        "container": "start",
         "category": "key_value",
         "keys": ("Z",),
         "style": style,
-        "overrides": ctx.entry_templates,
+        "declared": "{key}={value}",
+        "admitted": ctx.info.value_rules,
         "priority": ctx.value_rule_priority,
     }
 
@@ -434,7 +424,6 @@ def test_insert_entry_reads_the_candidate_in_a_throwaway_container(container) ->
         iter_entry_snippets=lambda *a: iter(["z=1"]),
         parse_entry_nodes=lambda *a: [node],
         entry_insertion_index=lambda c: 0,
-        admitted_value_rules=lambda i, c, cat, depth: frozenset(),
         read_entries=fake_read,
     )
 
@@ -451,16 +440,11 @@ def test_insert_entry_writes_a_dict_as_the_category_asked_for(container) -> None
     """Test that a record asks for a scalar entry, where a dict would make a block."""
     asked: list[str] = []
 
-    def record(info, container_rule, category, *rest):
+    def record(category, *rest):
         asked.append(category)
         return iter(())
 
-    patches = patch.multiple(
-        config_insert,
-        iter_entry_snippets=record,
-        entry_insertion_index=lambda c: 0,
-        admitted_value_rules=lambda i, c, cat, depth: frozenset(),
-    )
+    patches = patch.multiple(config_insert, iter_entry_snippets=record, entry_insertion_index=lambda c: 0)
 
     with patches, pytest.raises(UnsupportedEntryError, match="key_value"):
         insert_entry(container, FakeContext(), ("r",), ("r",), {"value": "x", "a": 1}, EntryStyle(), None, "key_value")
