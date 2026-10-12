@@ -10,7 +10,7 @@ nameable. So a grammar that spells one of these differently does not merely read
 it silently stops working.
 
 This module is the single statement of that contract. Collecting the names here means a
-rename is one edit rather than a hunt through five modules. One duplication is irreducible:
+rename is one edit rather than a hunt through the package. One duplication is irreducible:
 the reader has to define a method literally named after each entry category, because that is
 how Lark dispatches. ``ENTRY_CATEGORIES`` and those method names are held together by a test
 rather than by construction.
@@ -41,9 +41,9 @@ filters anonymous string tokens out of the tree before it looks, so punctuation 
 two syntaxes apart has to sit in a rule of its own: a bare ``"="`` or ``","`` between two
 otherwise identical shapes leaves the two indistinguishable once the tree is built.
 
-Where the consequences are spelled out: the parse tree these rules produce in
-``parse_tree_ops``, the value types in ``grammar_values``, how an entry is written back out
-in ``entry_templates``.
+Where the consequences are spelled out: how the parse tree these rules produce is read in
+``tree_reader`` and ``tree_navigation``, the value types in ``grammar_values``, how a new
+entry is written in ``entry_render``.
 """
 
 from __future__ import annotations
@@ -147,7 +147,7 @@ that it can be replicated for a list of any length -- see ``expand_value_slots``
 """
 
 ENTRY_CATEGORIES: Final = tuple(VALUE_SLOT_COUNTS)
-"""Rule names (or aliases) that ``ConfigToDict`` recognises as a configuration entry.
+"""Rule names (or aliases) that ``EntryReader`` recognises as a configuration entry.
 
 Derived from ``VALUE_SLOT_COUNTS`` rather than written out again, so that adding a category
 cannot leave the two disagreeing.

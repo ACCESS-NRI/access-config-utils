@@ -9,9 +9,8 @@ the parser never built, which is a different problem and gets a module of its ow
 Nothing here builds a node by hand. ``entry_render`` synthesises the *text* of the entry
 from the grammar, ``parse_entry_nodes`` hands that text back to Lark with the enclosing
 rule as the start symbol, and Lark therefore produces the nodes -- so rule inlining, ``->``
-aliases,
-filtered-out anonymous terminals and ``%import`` terminal renaming all take care of
-themselves.
+aliases, filtered-out anonymous terminals and ``%import`` terminal renaming all take care
+of themselves.
 
 Candidates are offered in order of how idiomatic they are, and **every one is validated in
 full before the tree is touched**: it must parse, and reading it back must give exactly the
