@@ -71,14 +71,7 @@ class GrammarInfo:
 
     @classmethod
     def from_lark(cls, lark: Lark) -> GrammarInfo:
-        """Build the views for a compiled Lark instance.
-
-        Args:
-            lark (Lark): The compiled parser.
-
-        Returns:
-            GrammarInfo: The pre-computed views.
-        """
+        """Build the views for a compiled Lark instance."""
         rules_by_origin: dict[str, list[Rule]] = {}
         used: set[str] = set()
         for rule in lark.rules:
@@ -96,12 +89,6 @@ class GrammarInfo:
         Recognised by shape: every alternative is either empty or the single repetition
         helper rule Lark generates for this rule, as ``random_text: (/.+/|NEWLINE)*``
         compiles to ``random_text: __random_text_star_5 |``.
-
-        Args:
-            name (str): Rule name.
-
-        Returns:
-            bool: True if the rule is a plain repetition.
         """
         rules = self.rules_by_origin.get(name)
         if not rules:
@@ -182,12 +169,6 @@ class ParseContext:
         or a slash accepts them, and one restricted to identifiers refuses everything else.
         The name has to be the whole text, as a single token: a grammar ignoring whitespace
         would otherwise accept ``" a"`` and write ``a``.
-
-        Args:
-            text (str): The name as the caller wrote it.
-
-        Returns:
-            bool: True if *text* reads back as exactly that key.
         """
         try:
             tree = self.lark.parse(text, start=KEY_RULE)
@@ -202,12 +183,6 @@ class ParseContext:
         A case-insensitive format stores its keys in one case, so that two spellings of one
         key are the same entry. The spelling the caller used is kept only for the file text
         of a brand-new entry.
-
-        Args:
-            key (str): The key as written.
-
-        Returns:
-            str: The normalised key.
         """
         return _KEY_CASES[self.key_case](key)
 
@@ -229,12 +204,6 @@ def compile_grammar(grammar: str) -> CompiledGrammar:
 
     Because the result has more than one start symbol, **every** ``parse()`` call on it must
     name one explicitly, or Lark raises ``ConfigurationError``.
-
-    Args:
-        grammar (str): The grammar text.
-
-    Returns:
-        CompiledGrammar: The compiled parser and the artefacts derived from it.
     """
     lark = _build(grammar, [START_RULE])
     defined = {str(rule.origin.name) for rule in lark.rules}
@@ -245,13 +214,5 @@ def compile_grammar(grammar: str) -> CompiledGrammar:
 
 
 def _build(grammar: str, start: list[str]) -> Lark:
-    """Build a Lark parser for a grammar with the given start symbols.
-
-    Args:
-        grammar (str): The grammar text.
-        start (list[str]): Names of the rules usable as start symbols.
-
-    Returns:
-        Lark: The compiled parser.
-    """
+    """Build a Lark parser for a grammar with the given start symbols."""
     return Lark(grammar, import_paths=[GRAMMAR_DIR], maybe_placeholders=False, start=start)
