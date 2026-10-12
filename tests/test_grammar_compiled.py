@@ -196,3 +196,10 @@ class TestParseContext:
 
         assert ctx.normalise_key("MixedCase") == "MIXEDCASE"
         assert ctx.normalise_key("MIXEDCASE") == "MIXEDCASE"
+
+    def test_normalise_key_lowercases_when_the_parser_says_so(self) -> None:
+        """Test the field table, whose reader lowercases names, as its dict does."""
+        ctx = ParseContext(compile_grammar(WITHOUT_BLOCK), False, {}, VALUE_RULE_PRIORITY, key_case="lower")
+
+        assert ctx.normalise_key("MixedCase") == "mixedcase"
+        assert ctx.normalise_key("mixedcase") == "mixedcase"

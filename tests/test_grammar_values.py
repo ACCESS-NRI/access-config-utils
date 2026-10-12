@@ -42,6 +42,16 @@ ROUND_TRIPS = [
     ("fortran_string", "'quoted'", "quoted", '"quoted"'),
     ("text_line", "MED -> OCN :remapMethod=redist", "MED -> OCN :remapMethod=redist", "MED -> OCN :remapMethod=redist"),
     ("path", "/dir/file.nc", Path("/dir/file.nc"), "/dir/file.nc"),
+    ("inferred_string", '"kg/kg"', "kg/kg", '"kg/kg"'),
+    ("inferred_string", '"3.e-6"', 3.0e-6, '"3e-06"'),
+    ("inferred_text", "3", 3, "3"),
+    ("inferred_text", ".true.", True, ".true."),
+    (
+        "named_assignments",
+        '"fixed", "surface_value=1.e30"',
+        {"value": "fixed", "surface_value": 1.0e30},
+        '"fixed", "surface_value=1e+30"',
+    ),
 ]
 
 
@@ -306,6 +316,200 @@ class TestIdenticalValues:
         assert identical_values(first, second) is identical
 
 
+class TestInferredTyping:
+    """Reading a value's type from its spelling, as the FMS field manager does."""
+
+    @pytest.mark.parametrize(
+        ("text", "value"),
+        [
+            pytest.param("3", 3, id="integer"),
+            pytest.param("-3", -3, id="negative"),
+            pytest.param("+3", 3, id="signed"),
+            pytest.param("3.0", 3.0, id="real"),
+            pytest.param("1.e30", 1.0e30, id="exponent"),
+            pytest.param("1.E-6", 1.0e-6, id="upper-exponent"),
+            pytest.param(".5", 0.5, id="leading-point"),
+            pytest.param("1e5", 1.0e5, id="no-point"),
+            pytest.param("t", True, id="letter"),
+            pytest.param(".F.", False, id="dotted-letter"),
+            pytest.param("TRUE", True, id="word"),
+            pytest.param(".false.", False, id="dotted-word"),
+            pytest.param("kg/kg", "kg/kg", id="text"),
+            pytest.param("specific humidity", "specific humidity", id="words"),
+            pytest.param("'3'", "3", id="quoted"),
+            # A letter other than an exponent's makes text of anything.
+            pytest.param("1.0d0", "1.0d0", id="d-exponent"),
+            pytest.param("inf", "inf", id="inf"),
+            pytest.param(".T", ".T", id="half-dotted"),
+            # Spellings the field manager would fail to read stay text.
+            pytest.param("1.2.3", "1.2.3", id="two-points"),
+            pytest.param(".", ".", id="point"),
+        ],
+    )
+    def test_reads_the_type_from_the_spelling(self, text, value) -> None:
+        """Test each spelling, bare and in double quotes with padding around it."""
+        assert identical_values(VALUE_TYPE_HANDLER_REGISTRY["inferred_text"].from_token(text), value)
+        assert identical_values(VALUE_TYPE_HANDLER_REGISTRY["inferred_string"].from_token(f'" {text} "'), value)
+
+    @pytest.mark.parametrize(
+        ("value", "accepted"),
+        [
+            pytest.param(True, True, id="bool"),
+            pytest.param(3, True, id="int"),
+            pytest.param(2.5, True, id="float"),
+            pytest.param("a b", True, id="str"),
+            pytest.param(float("nan"), False, id="nan"),
+            pytest.param("", False, id="empty"),
+            pytest.param(" a", False, id="padded"),
+            pytest.param("a,b", False, id="comma"),
+            pytest.param("a=b", False, id="equals"),
+            pytest.param('a"b', False, id="double-quote"),
+            pytest.param("a\nb", False, id="line-break"),
+            pytest.param([1, 2], False, id="list"),
+            pytest.param(None, False, id="none"),
+        ],
+    )
+    def test_accepts_what_a_spelling_can_hold(self, value, accepted) -> None:
+        """Test that only a value the field manager can read back as itself is taken."""
+        assert VALUE_TYPE_HANDLER_REGISTRY["inferred_string"].type_check(value) is accepted
+        assert VALUE_TYPE_HANDLER_REGISTRY["inferred_text"].type_check(value) is accepted
+
+    @pytest.mark.parametrize(
+        ("value", "token", "written"),
+        [
+            pytest.param(False, '"T"', '"F"', id="logical-letter"),
+            pytest.param(False, '".TRUE."', '".FALSE."', id="logical-dotted"),
+            pytest.param(2.0e-6, '"1.E-6"', '"2E-06"', id="exponent-letter"),
+            pytest.param(4, '"3"', '"4"', id="integer"),
+            pytest.param("g", '"  kg/kg "', '"  g "', id="padding"),
+            pytest.param("x", "\"'y'\"", "\"'x'\"", id="quoted-stays-quoted"),
+        ],
+    )
+    def test_writes_in_the_notation_it_replaces(self, value, token, written) -> None:
+        """Test that a new value is spelled as the one it replaces was."""
+        assert VALUE_TYPE_HANDLER_REGISTRY["inferred_string"].to_token(value, token) == written
+
+    @pytest.mark.parametrize(
+        ("value", "written"),
+        [
+            pytest.param("3", "'3'", id="number"),
+            pytest.param("T", "'T'", id="logical"),
+            pytest.param("'a", "''a'", id="leading-quote"),
+            pytest.param("a/", "'a/'", id="closing-slash"),
+        ],
+    )
+    def test_quotes_a_string_that_would_read_back_as_something_else(self, value, written) -> None:
+        """Test the single quotes the field manager reads a string from.
+
+        A string ending with ``/`` is quoted only where it would end its line, since the
+        field manager takes a ``/`` there as the end of the entry.
+        """
+        assert VALUE_TYPE_HANDLER_REGISTRY["inferred_text"].to_new_token(value) == written
+        expected = '"a/"' if value == "a/" else f'"{written}"'
+        assert VALUE_TYPE_HANDLER_REGISTRY["inferred_string"].to_new_token(value) == expected
+
+    @pytest.mark.parametrize(
+        ("value", "token"), [pytest.param("x", "3", id="int-to-str"), pytest.param(1, "t", id="bool-to-int")]
+    )
+    def test_refuses_a_value_of_another_type(self, value, token) -> None:
+        """Test that a value keeps the type its spelling gave it, as every format's does."""
+        with pytest.raises(TypeError, match="change value type"):
+            VALUE_TYPE_HANDLER_REGISTRY["inferred_text"].to_token(value, token)
+
+
+class TestNamedAssignments:
+    """A name and a control of comma-separated parameters, read as one record."""
+
+    HANDLER = VALUE_TYPE_HANDLER_REGISTRY["named_assignments"]
+    RAYLEIGH = '"KaraStr","itable=1333,jtable=953,rayleigh_damp_table=5400"'
+
+    def test_reads_the_name_and_each_parameter(self) -> None:
+        """Test a record as an OM2 ocean field table writes one."""
+        assert self.HANDLER.from_token(self.RAYLEIGH) == {
+            "value": "KaraStr",
+            "itable": 1333,
+            "jtable": 953,
+            "rayleigh_damp_table": 5400,
+        }
+
+    def test_a_segment_with_no_equals_sign_continues_a_list(self) -> None:
+        """Test ``a=1, 2,3``: the field manager splits the values of ``a`` on its commas."""
+        record = self.HANDLER.from_token('"fixed", "a=1, 2,3, b = x"')
+
+        assert record == {"value": "fixed", "a": [1, 2, 3], "b": "x"}
+
+    @pytest.mark.parametrize(
+        "control",
+        [
+            pytest.param("1,a=2", id="comma-before-equals"),
+            pytest.param("a=b=c", id="two-equals"),
+            pytest.param("a=1,a=2", id="twice"),
+            pytest.param("value=1", id="named-value"),
+            pytest.param("=1", id="no-name"),
+        ],
+    )
+    def test_refuses_a_control_it_cannot_read(self, control) -> None:
+        """Test the controls the field manager refuses, or that would not read as a dict."""
+        with pytest.raises(ValueError):
+            self.HANDLER.from_token(f'"fixed", "{control}"')
+
+    def test_refuses_a_token_that_is_not_two_strings(self) -> None:
+        """Test that only the shape the grammar matches is read."""
+        with pytest.raises(ValueError, match="Not a name and a control"):
+            self.HANDLER.from_token('"fixed"')
+
+    @pytest.mark.parametrize(
+        ("value", "accepted"),
+        [
+            pytest.param({"value": "fixed", "a": 1, "b": [1, 2.5]}, True, id="record"),
+            pytest.param({"value": "fixed"}, False, id="no-parameter"),
+            pytest.param({"a": 1}, False, id="no-name"),
+            pytest.param({"value": 3, "a": 1}, False, id="numeric-name"),
+            pytest.param({"value": "", "a": 1}, False, id="empty-name"),
+            pytest.param({"value": 'a"b', "a": 1}, False, id="quote-in-name"),
+            pytest.param({"value": "fixed", "a b,": 1}, False, id="comma-in-key"),
+            pytest.param({"value": "fixed", " a": 1}, False, id="padded-key"),
+            pytest.param({"value": "fixed", "a": [1]}, False, id="list-of-one"),
+            pytest.param({"value": "fixed", "a": "x,y"}, False, id="comma-in-value"),
+            pytest.param("fixed", False, id="not-a-dict"),
+        ],
+    )
+    def test_accepts_a_record_a_control_can_hold(self, value, accepted) -> None:
+        """Test that only what reads back as the same record is taken."""
+        assert self.HANDLER.type_check(value) is accepted
+
+    def test_writes_an_unchanged_record_as_it_was(self) -> None:
+        """Test that writing a record over itself changes no character of it."""
+        token = '"fixed", "a=1, 2,3, b = x"'
+
+        assert self.HANDLER.to_token(self.HANDLER.from_token(token), token) == token
+
+    def test_changes_only_what_changed(self) -> None:
+        """Test a changed, a removed and a new parameter, and a renamed record.
+
+        The changed one keeps its padding, the others theirs, and the new one is parted
+        from the one before it as the last two parameters are.
+        """
+        token = '"fixed", "a=1, 2,3, b = x, c=1.E-6"'
+        record = {"value": "other", "a": [1, 5], "c": 2.0e-6, "d": "new"}
+
+        assert self.HANDLER.to_token(record, token) == '"other", "a=1, 5, c=2E-06, d=new"'
+
+    def test_a_parameter_changing_type_is_written_afresh(self) -> None:
+        """Test that a record, a dict, may hold a parameter of another type than before."""
+        assert self.HANDLER.to_token({"value": "f", "a": "x"}, '"f", "a=1"') == '"f", "a=x"'
+
+    def test_a_new_record(self) -> None:
+        """Test the seed: a name and a control, parted as the field tables part them."""
+        assert self.HANDLER.to_new_token({"value": "fixed", "a": 3.0e-6, "b": "3"}) == '"fixed", "a=3e-06,b=\'3\'"'
+
+    def test_only_a_record_collects(self) -> None:
+        """Test that a record is the one value an entry holds one of several of."""
+        assert [rule for rule, handler in VALUE_TYPE_HANDLER_REGISTRY.items() if handler.collects] == [
+            "named_assignments"
+        ]
+
+
 def test_priority_covers_every_registered_rule() -> None:
     """Test that no value type is left unreachable when a new key is written.
 
@@ -316,7 +520,7 @@ def test_priority_covers_every_registered_rule() -> None:
 
 
 def test_priority_states_the_ambiguous_pairs() -> None:
-    """Test the order of the five pairs whose members accept the same Python type.
+    """Test the order of the six pairs whose members accept the same Python type.
 
     These are the whole reason the order exists: without it the choice would fall to
     whichever grammar rule happened to match first.
@@ -328,3 +532,4 @@ def test_priority_states_the_ambiguous_pairs() -> None:
     assert order.index("complex") < order.index("double_complex")
     assert order.index("string") < order.index("identifier")
     assert order.index("identifier") < order.index("text_line")
+    assert order.index("inferred_string") < order.index("inferred_text")

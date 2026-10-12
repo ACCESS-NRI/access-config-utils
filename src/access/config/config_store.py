@@ -28,9 +28,9 @@ from lark.exceptions import UnexpectedInput
 
 from access.config.config_insert import insert_entry
 from access.config.config_resize import resize_entry
-from access.config.entry_style import EntryStyle, probe_entry_style, probe_sibling_block_style
+from access.config.entry_style import EntryStyle, donor_template, probe_entry_style, probe_sibling_block_style
 from access.config.grammar_contract import KEY_LIST, KEY_VALUE
-from access.config.grammar_values import UnsupportedEntryError
+from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY, UnsupportedEntryError
 from access.config.list_layout import align_values
 from access.config.tree_edits import remove_entry_node, update_node_value, write_values
 from access.config.tree_navigation import entry_chain, entry_insertion_index, entry_nodes, key_token, line_index
@@ -121,6 +121,9 @@ class ConfigStore:
     def resize(self, key: str, values: Sequence[Any], origins: Sequence[int | None]) -> tuple[Tree | None, ...]:
         """Write a list of a different length into an entry that already exists.
 
+        A list of records, which the file writes one entry per record, changes length by
+        gaining and losing entries; see ``_resize_records``.
+
         Args:
             key (str): The normalised key.
             values (Sequence[Any]): The values the list is to hold.
@@ -140,10 +143,126 @@ class ConfigStore:
         ref = self.refs[key]
         if ref.category != KEY_LIST:
             raise TypeError(f"Trying to change the type of variable '{key}'")
-        self.refs[key] = resize_entry(ref, self.ctx, key, values, origins)
+        if ref.collected:
+            self._resize_records(key, values, origins)
+        else:
+            self.refs[key] = resize_entry(ref, self.ctx, key, values, origins)
         return self.refs[key].value_nodes
 
-    def add_path(self, keys: Sequence[str], raw_keys: Sequence[str], value: Any) -> EntryRef:
+    def _resize_records(self, key: str, values: Sequence[Any], origins: Sequence[int | None]) -> None:
+        """Change how many records a key holds, an entry per record.
+
+        Each new record is written beside the one before it -- or, for a new first record,
+        before the old first -- as a copy of that neighbour, so it takes its spacing, its
+        spelling of the key and the notation of each parameter the two share. Then the
+        records that stay are written, and the ones that go removed. Nothing is changed
+        until every record has been checked, and a new one that cannot be written takes the
+        others written before it back out.
+
+        Args:
+            key (str): The normalised key.
+            values (Sequence[Any]): The records the list is to hold.
+            origins (Sequence[int | None]): For each record, the position of the old one it
+                stands in for, or ``None`` for a new one.
+
+        Raises:
+            ValueError: If no record is left: the key is then gone from the file, which is
+                a deletion, not an edit.
+            TypeError: If a value is not a record.
+            UnsupportedEntryError: If the block has no body in the file for a new record to
+                go in, or a new record cannot be written.
+        """
+        nodes = self._check_records(key, values, origins)
+        entries = self.refs[key].entry_nodes
+        written = self._insert_records(key, values, origins)
+        for value, origin in zip(values, origins, strict=True):
+            if origin is not None:
+                update_node_value(nodes[origin], value)
+        for entry in entries:
+            if not any(entry is kept for kept in written):
+                remove_entry_node(entry, self.ctx.info)
+        self.reread()
+
+    def _check_records(self, key: str, values: Sequence[Any], origins: Sequence[int | None]) -> list[Tree]:
+        """Refuse a list of records that cannot be written, before anything is.
+
+        Args:
+            key (str): The normalised key.
+            values (Sequence[Any]): The records the list is to hold.
+            origins (Sequence[int | None]): The old position each stands in for.
+
+        Returns:
+            list[Tree]: The value node of each old record.
+
+        Raises:
+            ValueError: If no record is left.
+            TypeError: If a value is not a record.
+            UnsupportedEntryError: If a new record has no body in the file to go in.
+        """
+        if not values:
+            raise ValueError(f"A list of records keeps at least one: delete '{key}' to remove them all")
+        nodes = [node for node in self.refs[key].value_nodes if node is not None]
+        handler = VALUE_TYPE_HANDLER_REGISTRY[str(nodes[0].data)]
+        if not all(handler.type_check(value) for value in values):
+            raise TypeError(f"Trying to change the type of a record of '{key}'")
+        if any(origin is None for origin in origins) and not self.addable:
+            raise UnsupportedEntryError(f"Cannot add a record to '{key}': this block has no body in the file for it")
+        return nodes
+
+    def _insert_records(self, key: str, values: Sequence[Any], origins: Sequence[int | None]) -> list[Tree]:
+        """Write each new record, and return the entry holding every record, in order.
+
+        Args:
+            key (str): The normalised key.
+            values (Sequence[Any]): The records the list is to hold.
+            origins (Sequence[int | None]): The old position each stands in for.
+
+        Returns:
+            list[Tree]: The entry of each record, old or new.
+
+        Raises:
+            ValueError: If a new record cannot be written, as ``insert_entry`` reports.
+            TypeError: The same, for a value the format cannot express.
+        """
+        entries = self.refs[key].entry_nodes
+        written: list[Tree] = []
+        try:
+            for value, origin in zip(values, origins, strict=True):
+                if origin is not None:
+                    written.append(entries[origin])
+                else:
+                    neighbour = written[-1] if written else entries[0]
+                    written.append(self._insert_record(key, value, neighbour, after=bool(written)))
+        except (ValueError, TypeError):
+            for entry in written:
+                if not any(entry is old for old in entries):
+                    remove_entry_node(entry, self.ctx.info)
+            raise
+        return written
+
+    def _insert_record(self, key: str, value: Any, neighbour: Tree, *, after: bool) -> Tree:
+        """Write a record beside another of the same key, as a copy of it.
+
+        Args:
+            key (str): The normalised key.
+            value (Any): The record.
+            neighbour (Tree): The entry writing the record to copy and to go beside.
+            after (bool): Whether to go after it rather than before.
+
+        Returns:
+            Tree: The entry written.
+        """
+        line = line_index(self.tree, neighbour)
+        index = entry_insertion_index(self.tree, line) if after else line
+        template = donor_template(self.tree.children[line], neighbour, self.ctx.reconstructor)
+        style = EntryStyle(has_donor=True, donors=(((1, KEY_VALUE), template),)) if template else EntryStyle()
+        spelled = [str(key_token(neighbour))]
+        ref = insert_entry(self.tree, self.ctx, [key], spelled, value, style, index, KEY_VALUE)
+        return ref.entry_nodes[0]
+
+    def add_path(
+        self, keys: Sequence[str], raw_keys: Sequence[str], value: Any, category: str | None = None
+    ) -> EntryRef:
         """Write an entry for a key path this container does not have yet.
 
         One key is a plain entry, written after the last entry of the container. More are a
@@ -161,6 +280,8 @@ class ConfigStore:
             raw_keys (Sequence[str]): The key path as the caller wrote it, for the text.
             value (Any): The value to store under the innermost key. A ``dict`` creates an
                 empty block.
+            category (str | None): The category of entry to write, where *value* does not
+                say: ``key_value`` for a record, which is a ``dict``.
 
         Returns:
             EntryRef: The new entry, read on its own: for a chain, the reference to its
@@ -180,7 +301,9 @@ class ConfigStore:
         style = probe_entry_style(self.tree, self.ctx.reconstructor, upto=index)
         if not style.has_donor:
             style = self.fallback_style
-        ref = insert_entry(self.tree, self.ctx, keys, [*spelled, *raw_keys[len(spelled) :]], value, style, index)
+        ref = insert_entry(
+            self.tree, self.ctx, keys, [*spelled, *raw_keys[len(spelled) :]], value, style, index, category
+        )
         if len(keys) == 1:
             self.refs[keys[0]] = ref
         else:

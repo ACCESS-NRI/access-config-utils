@@ -312,6 +312,44 @@ def repeat(count: int, inner: Tree | None = None) -> Tree:
     return Tree("repeat", children)
 
 
+def record(key: str = "r", control: str = "a=1") -> Tree:
+    """Return an entry writing one record under *key*: a name and a control."""
+    return entry_node("key_value", key, value_node("named_assignments", f'"fixed", "{control}"'))
+
+
+class TestRecords:
+    """Entries each writing one record of a list, as an FMS field table writes a method."""
+
+    def test_records_of_one_key_are_one_list_in_file_order(self) -> None:
+        """Test that every entry of the key adds its record, rather than replacing it."""
+        first, other, second = record(control="a=1"), entry_node("key_value", "x", value_node()), record(control="a=2")
+
+        refs = read_entries(container(first, other, second), FakeContext())
+
+        ref = refs["r"]
+        assert (ref.category, ref.collected) == ("key_list", True)
+        assert ref.entry_nodes == (first, second)
+        assert entry_value(ref) == [{"value": "fixed", "a": 1}, {"value": "fixed", "a": 2}]
+
+    def test_one_record_is_a_list_of_one(self) -> None:
+        """Test that the value has the same shape however many records the file writes."""
+        assert entry_value(read_entries(container(record()), FakeContext())["r"]) == [{"value": "fixed", "a": 1}]
+
+    @pytest.mark.parametrize(
+        "other",
+        [
+            pytest.param(entry_node("key_value", "r", value_node()), id="value"),
+            pytest.param(entry_node("key_list", "r", value_node(), value_node()), id="list"),
+            pytest.param(entry_node("key_null", "r"), id="null"),
+        ],
+    )
+    def test_a_key_written_both_as_records_and_otherwise_is_refused(self, other) -> None:
+        """Test both orders: neither the records nor the other entry can be dropped."""
+        for entries in ((record(), other), (other, record())):
+            with pytest.raises(ValueError, match="both as records and otherwise"):
+                read_entries(container(*entries), FakeContext())
+
+
 class TestElementValues:
     """One value per element, from the node backing each."""
 

@@ -32,7 +32,7 @@ from access.config.tree_reader import EntryRef
 
 GRAMMAR = """
     start: line*
-    ?line: scalar | listed | blk | chained | empty_line
+    ?line: scalar | listed | blk | chained | record | empty_line
     scalar: ws* key ws* "=" ws* value line_end -> key_value
     listed: ws* key ws* "=" ws* value (ws* "," ws* value)+ line_end -> key_list
     blk: key "<" line_end block ">" line_end -> key_block
@@ -41,6 +41,9 @@ GRAMMAR = """
     chained: ws* key "%" link -> key_block
     link: component | chained
     component: key ws* "=" ws* value line_end -> key_value
+    // One record of a list, each written by an entry of its own: r: "name", "a=1".
+    record: ws* key colon ws* named_assignments line_end -> key_value
+    colon: ws* ":"
     ?value: integer | string
     empty_line: line_end
     line_end: ws* NEWLINE
@@ -48,6 +51,7 @@ GRAMMAR = """
     %import config.key
     %import config.integer
     %import config.string
+    %import config.named_assignments
     %import config.ws
     %import config.NEWLINE
 """
@@ -56,7 +60,7 @@ GRAMMAR = """
 @pytest.fixture(scope="module")
 def ctx() -> ParseContext:
     """Return a context over the grammar above, with a real reconstructor."""
-    return ParseContext(compile_grammar(GRAMMAR), True, {}, ("integer", "string"))
+    return ParseContext(compile_grammar(GRAMMAR), True, {}, ("integer", "string", "named_assignments"))
 
 
 @pytest.fixture(scope="module")
@@ -163,7 +167,7 @@ class TestAdd:
         node = entry_node("key_value", "z", value_node())
         ref = EntryRef("key_value", (node,), (node.children[1],))
 
-        def fake_insert(container, ctx, keys, raw_keys, value, style, index):
+        def fake_insert(container, ctx, keys, raw_keys, value, style, index, category):
             calls.append({"container": container, "keys": keys, "raw_keys": raw_keys, "value": value, "style": style})
             return ref
 
@@ -255,6 +259,88 @@ class TestAddingAChain:
         store.add_path(("N", "A"), ("n", "a"), 1)
 
         assert store.render() == "a%b = 1\nx = 3\nn%a = 1"
+
+
+def rec(a: int) -> dict:
+    """Return the record ``"f", "a=<a>"``."""
+    return {"value": "f", "a": a}
+
+
+class TestResizingRecords:
+    """A list of records, written one entry per record, growing and shrinking."""
+
+    @staticmethod
+    def store_of(ctx: ParseContext, text: str) -> ConfigStore:
+        """Return a store over *text*."""
+        tree = ctx.lark.parse(text, start="start")
+        AddParent().visit(tree)
+        return ConfigStore(tree, ctx)
+
+    def test_a_new_record_goes_after_the_one_before_it_as_a_copy(self, ctx) -> None:
+        """Test that the new line is spaced and punctuated like its neighbour."""
+        store = self.store_of(ctx, 'r:  "f","a=1"\nr:  "f","a=2"\nx = 1\n')
+
+        store.resize("r", [rec(1), rec(2), rec(3)], [0, 1, None])
+
+        assert store.render() == 'r:  "f","a=1"\nr:  "f","a=2"\nr:  "f","a=3"\nx = 1'
+        assert len(store.refs["r"].entry_nodes) == 3
+
+    def test_a_new_first_record_goes_before_the_old_first(self, ctx) -> None:
+        """Test a record put at the front of the list."""
+        store = self.store_of(ctx, 'x = 1\nr: "f", "a=1"\n')
+
+        store.resize("r", [rec(0), rec(1)], [None, 0])
+
+        assert store.render() == 'x = 1\nr: "f", "a=0"\nr: "f", "a=1"'
+
+    def test_the_records_that_go_are_removed_and_those_that_stay_written(self, ctx) -> None:
+        """Test a list shrinking to one record, which also changes."""
+        store = self.store_of(ctx, 'r: "f", "a=1"\nr: "f", "a=2"\nx = 1\n')
+
+        store.resize("r", [rec(5)], [1])
+
+        assert store.render() == 'r: "f", "a=5"\nx = 1'
+
+    @pytest.mark.parametrize(
+        ("values", "origins", "error"),
+        [
+            pytest.param([], [], ValueError, id="none-left"),
+            pytest.param([rec(1), 3], [0, None], TypeError, id="not-a-record"),
+        ],
+    )
+    def test_refuses_a_list_it_cannot_write_and_changes_nothing(self, ctx, values, origins, error) -> None:
+        """Test the checks made before anything is written."""
+        store = self.store_of(ctx, 'r: "f", "a=1"\n')
+
+        with pytest.raises(error):
+            store.resize("r", values, origins)
+
+        assert store.render() == 'r: "f", "a=1"'
+
+    def test_refuses_a_new_record_where_there_is_no_body(self, ctx) -> None:
+        """Test a block merged from several, which a record could only be written beside."""
+        store = self.store_of(ctx, 'r: "f", "a=1"\n')
+        store.addable = False
+
+        with pytest.raises(UnsupportedEntryError, match="no body"):
+            store.resize("r", [rec(1), rec(2)], [0, None])
+
+    def test_takes_back_the_records_it_wrote_when_one_cannot_be(self, ctx) -> None:
+        """Test that a list the file cannot take leaves it as it was."""
+        store = self.store_of(ctx, 'r: "f", "a=1"\nx = 1\n')
+        real = ConfigStore._insert_record
+        calls: list[int] = []
+
+        def second_fails(self, *args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise UnsupportedEntryError("refused")
+            return real(self, *args, **kwargs)
+
+        with patch.object(ConfigStore, "_insert_record", second_fails), pytest.raises(UnsupportedEntryError):
+            store.resize("r", [rec(1), rec(2), rec(3)], [0, None, None])
+
+        assert store.render() == 'r: "f", "a=1"\nx = 1'
 
 
 class TestUnaddableBlocks:

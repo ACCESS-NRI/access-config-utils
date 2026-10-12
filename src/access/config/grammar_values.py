@@ -186,6 +186,272 @@ def _is_text_line(value: Any) -> bool:
     )
 
 
+# --- Values typed by their spelling ---
+#
+# The FMS field manager gives a value no declared type: it reads one from the spelling, in
+# ``new_name`` of ``field_manager.F90``. A logical is ``t``, ``f``, ``.t.``, ``.f.``,
+# ``true``, ``false``, ``.true.`` or ``.false.`` in any case; a number starts with a digit,
+# a sign or a point and holds no letter but an exponent's, and is a real if it holds a
+# point or an exponent; text between single quotes is that text; anything else is a
+# string. A comma parts the elements of a list, and an equals sign a parameter from its
+# value, wherever either is written, so no value can hold one.
+
+_LOGICAL_SPELLINGS = {
+    "t": True,
+    "f": False,
+    ".t.": True,
+    ".f.": False,
+    "true": True,
+    "false": False,
+    ".true.": True,
+    ".false.": False,
+}
+"""The spellings of a logical, in lower case, and what each means."""
+
+_INFERRED_SEEDS: dict[type, str] = {bool: ".true.", int: "0", float: "0.0", str: "x"}
+"""A spelling of each type, standing in for the previous text of a brand-new value."""
+
+
+def _single_quoted(text: str) -> bool:
+    """Report whether *text* is wrapped in single quotes, which makes it a string."""
+    return len(text) > 1 and text[0] == text[-1] == "'"
+
+
+def _infer(text: str) -> bool | int | float | str:
+    """Return the value the FMS field manager reads *text* as, typed by its spelling.
+
+    Args:
+        text (str): One value, without the whitespace around it.
+
+    Returns:
+        bool | int | float | str: The value.
+    """
+    if _single_quoted(text):
+        return text[1:-1]
+    logical = _LOGICAL_SPELLINGS.get(text.lower())
+    if logical is not None:
+        return logical
+    if re.fullmatch(r"[+-]?[0-9]+", text):
+        return int(text)
+    if re.fullmatch(r"[0-9+.-][0-9+.eE-]*", text) and re.search("[.eE]", text):
+        try:
+            return float(text)
+        except ValueError:
+            pass
+    return text
+
+
+def _is_inferable(value: Any) -> bool:
+    """Report whether *value* has a spelling the field manager reads back as exactly it.
+
+    A logical, an integer, a finite real, or a string that is not empty, has no whitespace
+    at either end, and holds no double quote, comma, equals sign or line break.
+
+    Args:
+        value (Any): The value to check.
+
+    Returns:
+        bool: True if *value* can be written.
+    """
+    if type(value) in (bool, int):
+        return True
+    if type(value) is float:
+        return math.isfinite(value)
+    return (
+        type(value) is str
+        and value != ""
+        and value == value.strip()
+        and not any(character in value for character in '",=\r\n')
+    )
+
+
+def _inferred_to_str(value: bool | int | float | str, previous: str, *, bare: bool = False) -> str:
+    """Spell *value* so that it reads back as itself, in the notation of *previous*.
+
+    A logical keeps the spelling it replaces, and a real its exponent letter. A string is
+    written in single quotes where it would otherwise read back as something else -- ``'3'``
+    for the string "3" -- or where the text it replaces was quoted.
+
+    Args:
+        value (bool | int | float | str): The value, one ``_is_inferable`` accepts.
+        previous (str): The text the value replaces, without the whitespace around it.
+        bare (bool): Whether the text ends a line, where a closing ``/`` would end the
+            entry instead, so a string ending with one has to be quoted.
+
+    Returns:
+        str: The text.
+
+    Raises:
+        TypeError: If *previous* reads as a value of another type.
+    """
+    if type(value) is not type(_infer(previous)):
+        raise TypeError("Trying to change value type")
+    if type(value) is bool:
+        return _logical_to_str(value, previous)
+    if type(value) is float:
+        return _float_to_str(value, previous)
+    if type(value) is int:
+        return str(value)
+    assert isinstance(value, str)
+    reads_back = identical_values(_infer(value), value) and not value.startswith("'") and not value.endswith("'")
+    if _single_quoted(previous) or not reads_back or (bare and value.endswith("/")):
+        return f"'{value}'"
+    return value
+
+
+def _rewrite_padded(value: Any, text: str, *, bare: bool = False) -> str:
+    """Write *value* over *text*, keeping the whitespace around it."""
+    inner = text.strip()
+    start = text.index(inner) if inner else len(text)
+    return text[:start] + _inferred_to_str(value, inner, bare=bare) + text[start + len(inner) :]
+
+
+# --- Named assignments ---
+#
+# An FMS field table method can be written as three strings: the method, a name, and a
+# control of comma-separated parameters, as in ``"profile_type", "fixed",
+# "surface_value=3.e-6"``. The last two make one value, a record holding the name under
+# ``"value"`` -- the key the FMS YAML field table gives it -- and each parameter beside it.
+
+
+def _record_parts(token: str) -> tuple[str, str, str]:
+    """Split a record token into its name, the text between its strings, and its control."""
+    match = re.fullmatch(r'"([^"]*)"([ \t]*,[ \t]*)"([^"]*)"', token)
+    if match is None:
+        raise ValueError(f"Not a name and a control in double quotes: {token}")
+    return match.group(1), match.group(2), match.group(3)
+
+
+def _control_segments(control: str) -> list[tuple[str, list[str]]]:
+    """Return each parameter of a control with the texts of its values, padding and all.
+
+    A segment holding no equals sign continues the list of values of the parameter before
+    it, as the field manager reads it, so ``a=1,2`` is ``a`` holding two values.
+
+    Args:
+        control (str): The control, without its quotes.
+
+    Returns:
+        list[tuple[str, list[str]]]: The name of each parameter as written, and its values.
+
+    Raises:
+        ValueError: If a comma comes before the first equals sign, which the field manager
+            refuses, or a segment holds two equals signs.
+    """
+    segments: list[tuple[str, list[str]]] = []
+    for segment in control.split(",") if control else []:
+        if segment.count("=") > 1:
+            raise ValueError(f"A parameter with two equals signs: {segment!r}")
+        if "=" in segment:
+            name, _, text = segment.partition("=")
+            segments.append((name, [text]))
+        elif not segments:
+            raise ValueError(f"A comma before the first equals sign: {control!r}")
+        else:
+            segments[-1][1].append(segment)
+    return segments
+
+
+def _read_record(token: str) -> dict[str, Any]:
+    """Return the record a token writes: the name under ``"value"``, then each parameter.
+
+    Args:
+        token (str): The token, ``"name", "control"``.
+
+    Returns:
+        dict[str, Any]: The record. A parameter of several values holds a list of them.
+
+    Raises:
+        ValueError: If the control is malformed, names no parameter, names one twice or
+            names one ``value``, which is where the name goes.
+    """
+    name, _, control = _record_parts(token)
+    record: dict[str, Any] = {"value": name}
+    for raw, texts in _control_segments(control):
+        key = raw.strip()
+        if not key or key in record:
+            raise ValueError(f"A parameter with no name, or named twice or 'value': {raw!r}")
+        values = [_infer(text.strip()) for text in texts]
+        record[key] = values[0] if len(values) == 1 else values
+    return record
+
+
+def _is_record(value: Any) -> bool:
+    """Report whether *value* is a record a control can hold.
+
+    A ``dict`` with a string name under ``"value"`` and at least one parameter, each a
+    value ``_is_inferable`` accepts or a list of two or more of them, under a name holding
+    nothing a control parts on.
+
+    Args:
+        value (Any): The value to check.
+
+    Returns:
+        bool: True if *value* can be written as a name and a control.
+    """
+    if type(value) is not dict or len(value) < 2:
+        return False
+    name = value.get("value")
+    if type(name) is not str or name == "" or any(character in name for character in '"\r\n'):
+        return False
+    for key, item in value.items():
+        if key == "value":
+            continue
+        valid_key = type(key) is str and key != "" and key == key.strip()
+        if not valid_key or any(character in key for character in '",=\r\n'):
+            return False
+        items = item if type(item) is list else [item]
+        if (type(item) is list and len(item) < 2) or not all(_is_inferable(element) for element in items):
+            return False
+    return True
+
+
+def _write_record(value: dict[str, Any], token: str) -> str:
+    """Write a record over the token it replaces, changing only what changed.
+
+    A parameter left as it was keeps its text, padding and all. One whose value changed
+    keeps the padding and notation of each value it replaces, and one that is new is
+    written after the others, parted from them as the last one was. A parameter the record
+    no longer holds is left out.
+
+    Args:
+        value (dict[str, Any]): The record.
+        token (str): The token it replaces.
+
+    Returns:
+        str: The token text.
+    """
+    _, between, control = _record_parts(token)
+    parameters = _control_segments(control)
+    old = {raw.strip(): (raw, texts) for raw, texts in parameters}
+    # A new parameter is parted from the one before it as the file parts its last two.
+    gap = next((raw[: len(raw) - len(raw.lstrip())] for raw, _ in reversed(parameters[1:])), "")
+    segments: list[str] = []
+    for key, item in value.items():
+        if key == "value":
+            continue
+        raw, texts = old.get(key, (gap + key if segments else key, []))
+        items = item if type(item) is list else [item]
+        written = [
+            _parameter_text(element, texts[index] if index < len(texts) else None)
+            for index, element in enumerate(items)
+        ]
+        segments.append(raw + "=" + ",".join(written))
+    return f'"{value["value"]}"{between}"{",".join(segments)}"'
+
+
+def _parameter_text(value: Any, previous: str | None) -> str:
+    """Return the text of one value of a parameter, over the text it replaces if any."""
+    if previous is not None:
+        if identical_values(_infer(previous.strip()), value):
+            return previous
+        try:
+            return _rewrite_padded(value, previous)
+        except TypeError:
+            pass
+    return _inferred_to_str(value, _INFERRED_SEEDS[type(value)])
+
+
 @dataclass(frozen=True)
 class ValueTypeHandler:
     """Encapsulates all operations for a single value type.
@@ -213,12 +479,17 @@ class ValueTypeHandler:
             value that has none, i.e. one being written for a key that does not exist yet.
             It takes the value because the right stand-in can depend on it, as it does for
             a quoted string.
+        collects (bool): Whether an entry holding a value of this type is one record of
+            several the file writes under the same key, rather than the key's value. An
+            FMS field table writes a method that way, once per record, and the key reads
+            as the list of them.
     """
 
     type_check: Callable[[Any], bool]
     from_token: Callable[[str], Any]
     to_token: Callable[[Any, str], str]
     seed_token: Callable[[Any], str]
+    collects: bool = False
 
     def to_new_token(self, value: Any) -> str:
         """Convert a Python value into token text for a brand-new entry.
@@ -333,6 +604,27 @@ VALUE_TYPE_HANDLER_REGISTRY: dict[str, ValueTypeHandler] = {
         to_token=lambda value, token: str(value),
         seed_token=lambda value: "",
     ),
+    # A value typed by its spelling, as the FMS field manager types one, in double quotes.
+    "inferred_string": ValueTypeHandler(
+        type_check=_is_inferable,
+        from_token=lambda token: _infer(token[1:-1].strip()),
+        to_token=lambda value, token: '"' + _rewrite_padded(value, token[1:-1]) + '"',
+        seed_token=lambda value: '"' + _INFERRED_SEEDS[type(value)] + '"',
+    ),
+    # The same, bare, ending its line.
+    "inferred_text": ValueTypeHandler(
+        type_check=_is_inferable,
+        from_token=lambda token: _infer(str(token)),
+        to_token=lambda value, token: _inferred_to_str(value, token, bare=True),
+        seed_token=lambda value: _INFERRED_SEEDS[type(value)],
+    ),
+    "named_assignments": ValueTypeHandler(
+        type_check=_is_record,
+        from_token=_read_record,
+        to_token=_write_record,
+        seed_token=lambda value: '"", ""',
+        collects=True,
+    ),
 }
 """Registry mapping value-type rule names to their ``ValueTypeHandler``.
 
@@ -353,10 +645,13 @@ VALUE_RULE_PRIORITY: tuple[str, ...] = (
     "double_complex",
     "fortran_string",
     "string",
+    "inferred_string",
     "fortran_identifier",
     "identifier",
+    "inferred_text",
     "text_line",
     "path",
+    "named_assignments",
 )
 """Order in which value-type rules are tried when writing a value for a brand-new key.
 
@@ -369,6 +664,8 @@ rather than left to whichever grammar rule happens to match first:
   words are used only by grammars that have no ``string`` rule.
 - ``identifier`` before ``text_line``, so a whole line of free text is what a string becomes
   only in a format with nothing narrower to write it as.
+- ``inferred_string`` before ``inferred_text``, so a value goes in quotes where a format
+  allows it either way.
 
 Only rules the grammar actually admits are considered, so a format picks the first entry it
 supports: ``True`` becomes ``.true.`` where a grammar has ``logical``, ``True`` where it

@@ -53,12 +53,14 @@ def test_parser_declares_defaults(parser) -> None:
     """
     assert parser.entry_templates == {}
     assert parser.value_rule_priority is VALUE_RULE_PRIORITY
+    assert parser.key_case == "upper"
 
     # Whatever the subclass declares is what reaches the parsed configuration.
     ctx = parser.parse("a=1")._store.ctx
     assert ctx.case_sensitive_keys is True
     assert ctx.entry_templates == {}
     assert ctx.value_rule_priority == tuple(VALUE_RULE_PRIORITY)
+    assert ctx.key_case == "upper"
 
 
 def test_parser_appends_a_trailing_newline(parser) -> None:
@@ -1006,14 +1008,16 @@ class HeaderParser(ConfigParser):
     header: ws* "\\"" key "\\"" comma ws* name_body -> key_block
     name_body: name
     name: "\\"" key "\\"" block closer -> key_block
-    block: pair*
+    block: (pair | record)*
     pair: NEWLINE ws* "\\"" key "\\"" comma ws* string -> key_value
+    record: NEWLINE ws* "\\"" key "\\"" comma ws* named_assignments -> key_value
     closer: ws* "/" ws* NEWLINE
     comma: ws* ","
     blank_line: ws* NEWLINE
 
     %import config.key
     %import config.string
+    %import config.named_assignments
     %import config.ws
     %import config.NEWLINE
 """
@@ -1036,4 +1040,32 @@ def test_config_add_a_block_through_a_chain_of_keys() -> None:
     assert str(config) == text.replace('"diag"', added + '"diag"')
     assert held is config["tracer"]
     assert held["c"] == {"z": "3"}
+    assert dict(HeaderParser().parse(str(config))) == dict(config)
+
+
+def test_config_records_written_one_entry_each() -> None:
+    """Test a method an FMS field table writes one line per record, read as a list of them.
+
+    A record is edited in place, and a new one is written beside the one before it, as a
+    copy of it: tight commas here, like its neighbours. A record held by the caller follows
+    its place in the list.
+    """
+    text = '"tracer", "a"\n  "rayleigh","Str","i=1,j=9"\n  "rayleigh","Str","i=2,j=9" /\n'
+    config = HeaderParser().parse(text)
+    records = config["tracer"]["a"]["rayleigh"]
+    second = records[1]
+
+    records[0]["i"] = 5
+    records.insert(0, {"value": "Str", "i": 0, "j": 9})
+    second["j"] = 8
+
+    assert str(config) == (
+        '"tracer", "a"\n  "rayleigh","Str","i=0,j=9"\n  "rayleigh","Str","i=5,j=9"\n  "rayleigh","Str","i=2,j=8" /\n'
+    )
+    assert dict(HeaderParser().parse(str(config))) == dict(config)
+
+    config["tracer"]["a"]["profile"] = [{"value": "fixed", "v": 1.5}]
+    del config["tracer"]["a"]["rayleigh"]
+
+    assert str(config) == '"tracer", "a"\n  "profile","fixed","v=1.5" /\n'
     assert dict(HeaderParser().parse(str(config))) == dict(config)

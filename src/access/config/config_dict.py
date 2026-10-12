@@ -25,7 +25,7 @@ import copy
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any, NoReturn, SupportsIndex
 
-from access.config.grammar_contract import KEY_BLOCK, KEY_LIST
+from access.config.grammar_contract import KEY_BLOCK, KEY_LIST, KEY_VALUE
 from access.config.grammar_values import UnsupportedEntryError
 from access.config.tree_reader import entry_value
 
@@ -54,6 +54,10 @@ class ConfigList(list):
     are written with repeat counts, array qualifiers or in more than one assignment can be
     rewritten but not resized.
 
+    A list of records, which the file writes one entry per record, keeps at least one
+    instead, and hands each record out as a ``ConfigRecord``: a dict whose every write
+    reaches the file too.
+
     A copy is a plain list, which is what a copy of the data is.
 
     Args:
@@ -66,9 +70,14 @@ class ConfigList(list):
     _key: str  # The key the list is stored under in that store.
 
     def __init__(self, data: list[Any], store: ConfigStore, key: str) -> None:
-        super().__init__(data)
+        super().__init__()
         self._store = store
         self._key = key
+        list.extend(self, [self._element(value) for value in data])
+
+    def _element(self, value: Any) -> Any:
+        """Return what stands for *value* in the list: a record for a dict, else itself."""
+        return ConfigRecord(value, self) if isinstance(value, dict) else value
 
     def _write(self, values: list[Any], origins: list[int | None] | None = None) -> None:
         """Write *values* through the store, then hold them.
@@ -79,11 +88,38 @@ class ConfigList(list):
                 position of the old element each new one stands in for, ``None`` for a new
                 one. ``None`` for a list of the same length, written position by position.
         """
+        plain = [_plain(value) for value in values]
         if origins is None:
-            self._store.replace(self._key, values)
+            self._store.replace(self._key, plain)
         else:
-            self._store.resize(self._key, values, origins)
-        list.__setitem__(self, slice(None), values)
+            self._store.resize(self._key, plain, origins)
+        self._hold(plain, origins)
+
+    def _hold(self, values: list[Any], origins: Sequence[int | None] | None = None) -> None:
+        """Hold *values*, which the file already does, keeping each record that stays.
+
+        A record held by a caller goes on standing for the record it was read as, wherever
+        that now is in the list, so a write through it still reaches the file.
+
+        Args:
+            values (list[Any]): The new elements.
+            origins (Sequence[int | None] | None): The old position each stands in for, as
+                for ``_write``. ``None`` matches them position by position when the length
+                is the same, and not at all when it is not.
+        """
+        if origins is None:
+            origins = list(range(len(values))) if len(values) == len(self) else [None] * len(values)
+        old = list(self)
+        elements = []
+        for value, origin in zip(values, origins, strict=True):
+            record = old[origin] if origin is not None else None
+            if isinstance(record, ConfigRecord) and isinstance(value, dict):
+                dict.clear(record)
+                dict.update(record, value)
+                elements.append(record)
+            else:
+                elements.append(self._element(value))
+        list.__setitem__(self, slice(None), elements)
 
     def __setitem__(self, index: SupportsIndex | slice, value: Any) -> None:
         """Override to write the element or elements through the parse tree.
@@ -167,16 +203,117 @@ class ConfigList(list):
         return self
 
     def __copy__(self) -> list[Any]:
-        """Return a plain list holding the same elements."""
-        return list(self)
+        """Return a plain list holding the same elements, a record as a plain dict."""
+        return [_plain(value) for value in self]
 
     def __deepcopy__(self, memo: dict[int, Any]) -> list[Any]:
         """Return a plain list holding copies of the elements."""
-        return copy.deepcopy(list(self), memo)
+        return copy.deepcopy([_plain(value) for value in self], memo)
 
     def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[Any, ...]:
         """Pickle as a plain list: the parse tree is not part of the data."""
-        return list, (list(self),)
+        return list, ([_plain(value) for value in self],)
+
+
+class ConfigRecord(dict):
+    """One record of a list the file writes one entry per record, as a dict.
+
+    An FMS field table writes a method that way: ``"profile_type", "fixed",
+    "surface_value=1.e30"`` is the record ``{"value": "fixed", "surface_value": 1e30}``.
+    Every write to the dict is a write of the whole record to its place in the list, which
+    reaches the file first and changes the dict only once it has: a write the file cannot
+    take raises and leaves both as they were.
+
+    A copy is a plain dict, which is what a copy of the data is.
+
+    Args:
+        data (dict[str, Any]): The record.
+        owner (ConfigList): The list holding it.
+    """
+
+    _owner: ConfigList  # The list holding the record.
+
+    def __init__(self, data: dict[str, Any], owner: ConfigList) -> None:
+        super().__init__(data)
+        self._owner = owner
+
+    def _write(self, record: dict[str, Any]) -> None:
+        """Write *record* in place of this one, through the list holding it.
+
+        Args:
+            record (dict[str, Any]): The record as it is to be.
+
+        Raises:
+            ValueError: If the list no longer holds this record.
+        """
+        for index, element in enumerate(self._owner):
+            if element is self:
+                self._owner[index] = record
+                return
+        raise ValueError("This record is no longer in the list it was read from")
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        """Override to write the parameter through the parse tree."""
+        self._write({**self, key: value})
+
+    def __delitem__(self, key: str) -> None:
+        """Override to remove the parameter from the parse tree too."""
+        record = dict(self)
+        del record[key]
+        self._write(record)
+
+    def update(self, other: Any = (), /, **kwargs: Any) -> None:
+        """Override to write the parameters through the parse tree."""
+        record = dict(self)
+        record.update(other, **kwargs)
+        self._write(record)
+
+    def setdefault(self, key: str, default: Any = None) -> Any:
+        """Override to add a parameter only if absent, through the parse tree."""
+        if key not in self:
+            self[key] = default
+        return self[key]
+
+    def pop(self, key: str, /, *default: Any) -> Any:
+        """Override to remove a parameter through the parse tree."""
+        if key in self:
+            value = self[key]
+            del self[key]
+            return value
+        if default:
+            return default[0]
+        raise KeyError(key)
+
+    def popitem(self) -> tuple[str, Any]:
+        """Override to remove the last parameter through the parse tree."""
+        key = next(reversed(list(self)))
+        return key, self.pop(key)
+
+    def clear(self) -> None:
+        """Override to empty the record through the parse tree, which a record refuses."""
+        self._write({})
+
+    def __ior__(self, other: Any) -> ConfigRecord:  # type: ignore[override, misc]
+        """Override in-place merge, writing the parameters through the parse tree."""
+        self.update(other)
+        return self
+
+    def __copy__(self) -> dict[str, Any]:
+        """Return a plain dict holding the same parameters."""
+        return dict(self)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> dict[str, Any]:
+        """Return a plain dict holding copies of the parameters."""
+        return copy.deepcopy(dict(self), memo)
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[Any, ...]:
+        """Pickle as a plain dict: the parse tree is not part of the data."""
+        return dict, (dict(self),)
+
+
+def _plain(value: Any) -> Any:
+    """Return *value* as plain data: a record as a ``dict``, anything else as it is."""
+    return dict(value) if isinstance(value, ConfigRecord) else value
 
 
 class ConfigBlockList(list):
@@ -323,13 +460,15 @@ class Config(dict):
         elif isinstance(value, dict):
             raise SyntaxError("Trying to assign a new value to an entire block")
         else:
+            if isinstance(value, list):
+                value = [_plain(item) for item in value]
             self._store.replace(key, value)
             if isinstance(value, list):
                 # Update the list already stored rather than making a new one, so that a
                 # caller holding it sees what the file now holds.
                 stored = dict.get(self, key)
                 assert isinstance(stored, ConfigList)
-                list.__setitem__(stored, slice(None), value)
+                stored._hold(value)
             else:
                 stored = value
             super().__setitem__(key, stored)
@@ -352,22 +491,38 @@ class Config(dict):
         spaced until it has some. It is handed the style of its nearest sibling and then
         filled through this same path, one key at a time, so nesting to any depth works.
 
+        A list of dicts is a list of records, which the file writes one entry per record:
+        the first is written as the entry, and the others are added beside it, each a copy
+        of the one before. Should one of them be refused, the key goes again.
+
         Args:
             key (str): The normalised key, used for the dict entry.
             raw_key (str): The key as the caller wrote it, used for the file text.
             value (Any): The value to store.
         """
+        records = isinstance(value, list) and len(value) > 0 and all(isinstance(item, dict) for item in value)
         anchor, path = self._nearest_addable()
-        keys, ref, value, rest = anchor._write_path([*path, key], [*path, raw_key], value)
+        first = _plain(value[0]) if records else value
+        keys, ref, written, rest = anchor._write_path(
+            [*path, key], [*path, raw_key], first, KEY_VALUE if records else None
+        )
         if len(keys) == 1:
             dict.__setitem__(self, key, self._wrap(key, ref))
         else:
             anchor._refresh(keys)
 
-        if isinstance(value, dict):
+        if records:
+            if len(value) > 1:
+                try:
+                    anchor._at(keys)._write(list(value), [0, *[None] * (len(value) - 1)])
+                except (ValueError, TypeError):
+                    del anchor._at(keys[:-1])[keys[-1]]
+                    raise
+            return
+        if isinstance(written, dict):
             block = anchor._at(keys)
             block._store.fallback_style = anchor._store.created_block_style(ref.entry_nodes[0])
-            for block_key, block_value in value.items():
+            for block_key, block_value in written.items():
                 block[block_key] = block_value
         for depth, items in reversed(rest):
             owner = anchor._at(keys[:depth])
@@ -389,18 +544,20 @@ class Config(dict):
         return anchor, path[::-1]
 
     def _write_path(
-        self, keys: list[str], raw_keys: list[str], value: Any
+        self, keys: list[str], raw_keys: list[str], value: Any, category: str | None = None
     ) -> tuple[list[str], EntryRef, Any, _Leftovers]:
         """Write *value* at the key path *keys* below this configuration, deeper if need be.
 
         A non-empty ``dict`` the format refuses as a block is written as its first item one
         level down instead, and so on, until something is written or there is nothing left
-        to go down into.
+        to go down into. A record, written with a *category* of its own, never is.
 
         Args:
             keys (list[str]): The normalised key path.
             raw_keys (list[str]): The same keys as the caller wrote them.
             value (Any): The value to store.
+            category (str | None): The category of entry to write, where *value* does not
+                say: ``key_value`` for a record, which is a ``dict``.
 
         Returns:
             tuple[list[str], EntryRef, Any, _Leftovers]: The key path written, the new
@@ -415,10 +572,10 @@ class Config(dict):
         refusal = None
         while True:
             try:
-                return keys, self._store.add_path(keys, raw_keys, value), value, rest
+                return keys, self._store.add_path(keys, raw_keys, value, category), value, rest
             except UnsupportedEntryError as error:
                 refusal = refusal or error
-                if not isinstance(value, dict) or not value:
+                if category is not None or not isinstance(value, dict) or not value:
                     raise refusal from None
             (raw, inner), *others = value.items()
             rest.append((len(keys), others))
@@ -444,12 +601,12 @@ class Config(dict):
         else:
             dict.__setitem__(self, key, self._wrap(key, refs[key]))
 
-    def _at(self, path: Sequence[str]) -> Config:
-        """Return the nested configuration the keys of *path* lead to from this one."""
-        config = self
+    def _at(self, path: Sequence[str]) -> Any:
+        """Return what the keys of *path* lead to from this configuration."""
+        found: Any = self
         for key in path:
-            config = dict.__getitem__(config, key)
-        return config
+            found = dict.__getitem__(found, key)
+        return found
 
     def __delitem__(self, key: str) -> None:
         """Override method to del item from dict, keeping the parse tree in sync."""

@@ -61,6 +61,20 @@ class ConfigParser(ABC):
         """
 
     @property
+    def key_case(self) -> str:
+        """The case a key is stored in, for a format whose keys are not case-sensitive.
+
+        ``"upper"``, the default, is what a Fortran namelist uses. ``"lower"`` is for a
+        format whose own reader lowercases names, as the FMS field manager does, so that
+        the keys of the dict are the names the model sees. Ignored when
+        ``case_sensitive_keys`` is true.
+
+        Returns:
+            str: ``"upper"`` or ``"lower"``.
+        """
+        return "upper"
+
+    @property
     def entry_templates(self) -> Mapping[tuple[str, str], str]:
         """Optional hand-written templates for the text of a new entry.
 
@@ -153,6 +167,7 @@ class ConfigParser(ABC):
             tuple(self.value_rule_priority),
             tuple(self.block_rules),
             self.repeated_blocks,
+            self.key_case,
         )
 
         # Parse text. Here we add a newline character to simplify the writting of the

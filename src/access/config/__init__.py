@@ -7,7 +7,8 @@ __version__ = "unknown"
 with suppress(PackageNotFoundError):
     __version__ = version("access-config-utils")
 
-from access.config.config_dict import Config, ConfigList
+from access.config.config_dict import Config, ConfigList, ConfigRecord
+from access.config.field_table import FieldTableParser
 from access.config.fortran_nml import FortranNMLParser
 from access.config.grammar_values import UnsupportedEntryError
 from access.config.mom6_input import MOM6InputParser
@@ -20,6 +21,8 @@ __all__ = [
     "Config",
     "ConfigList",
     "ConfigParser",
+    "ConfigRecord",
+    "FieldTableParser",
     "FortranNMLParser",
     "MOM6InputParser",
     "UnsupportedEntryError",

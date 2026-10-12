@@ -76,6 +76,8 @@ class ParseContext:
         repeated_blocks (str): What a file writing the same block twice means, ``"merge"``
             or ``"separate"``. Applies only to the first of *block_rules*; see
             ``ConfigParser.repeated_blocks``.
+        key_case (str): The case keys are stored in when they are not case-sensitive,
+            ``"upper"`` or ``"lower"``; see ``ConfigParser.key_case``.
     """
 
     grammar: CompiledGrammar
@@ -84,6 +86,7 @@ class ParseContext:
     value_rule_priority: tuple[str, ...]
     block_rules: tuple[str, ...] = (BLOCK_RULE,)
     repeated_blocks: str = "merge"
+    key_case: str = "upper"
 
     @property
     def lark(self) -> Lark:
@@ -124,9 +127,9 @@ class ParseContext:
     def normalise_key(self, key: str) -> str:
         """Return the form of *key* used as the dict key.
 
-        A case-insensitive format stores its keys uppercased, so that two spellings of one
-        key are the same entry. The spelling the caller used is kept only for the file text
-        of a brand-new entry.
+        A case-insensitive format stores its keys in one case, upper unless the parser says
+        lower, so that two spellings of one key are the same entry. The spelling the caller
+        used is kept only for the file text of a brand-new entry.
 
         Args:
             key (str): The key as written.
@@ -134,7 +137,9 @@ class ParseContext:
         Returns:
             str: The normalised key.
         """
-        return key if self.case_sensitive_keys else key.upper()
+        if self.case_sensitive_keys:
+            return key
+        return key.lower() if self.key_case == "lower" else key.upper()
 
 
 _GRAMMAR_CACHE: dict[str, CompiledGrammar] = {}
