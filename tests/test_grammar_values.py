@@ -268,23 +268,23 @@ class TestBareExponent:
 
 
 class TestSelectValueRule:
-    """Choosing the rule to write a value with, among those the grammar admits."""
+    """Choosing the rule to write a value with, among those the format has."""
 
     def test_takes_the_first_admitted_rule_that_accepts_the_value(self) -> None:
         """Test that the priority order decides, filtered by what the grammar allows."""
         admitted = {"logical", "bool", "integer"}
 
-        assert select_value_rule(True, admitted) == "logical"
-        assert select_value_rule(1, admitted) == "integer"
+        assert select_value_rule(True, admitted, VALUE_RULE_PRIORITY) == "logical"
+        assert select_value_rule(1, admitted, VALUE_RULE_PRIORITY) == "integer"
 
     def test_a_format_without_the_preferred_rule_gets_the_next(self) -> None:
         """Test the effect that makes ``True`` a namelist ``.true.`` but a MOM6 ``True``."""
-        assert select_value_rule(True, {"bool", "integer"}) == "bool"
+        assert select_value_rule(True, {"bool", "integer"}, VALUE_RULE_PRIORITY) == "bool"
 
     def test_reports_nothing_when_no_admitted_rule_accepts_the_value(self) -> None:
         """Test the case that becomes ``UnsupportedEntryError`` further up."""
-        assert select_value_rule("text", {"integer", "float"}) is None
-        assert select_value_rule(object(), set(VALUE_TYPE_HANDLER_REGISTRY)) is None
+        assert select_value_rule("text", {"integer", "float"}, VALUE_RULE_PRIORITY) is None
+        assert select_value_rule(object(), set(VALUE_TYPE_HANDLER_REGISTRY), VALUE_RULE_PRIORITY) is None
 
     def test_an_admitted_name_that_is_not_a_value_rule_is_skipped(self) -> None:
         """Test that a name absent from the registry cannot be chosen."""
@@ -292,7 +292,7 @@ class TestSelectValueRule:
 
     def test_a_caller_may_reverse_the_order(self) -> None:
         """Test that the priority is an argument, which is how a parser overrides it."""
-        assert select_value_rule("word", {"identifier", "string"}) == "string"
+        assert select_value_rule("word", {"identifier", "string"}, VALUE_RULE_PRIORITY) == "string"
         assert select_value_rule("word", {"identifier", "string"}, ("identifier", "string")) == "identifier"
 
 

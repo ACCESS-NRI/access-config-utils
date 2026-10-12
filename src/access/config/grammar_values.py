@@ -636,15 +636,12 @@ A parser can override it through ``ConfigParser.value_rule_priority``.
 """
 
 
-def select_value_rule(
-    value: Any, admitted: Collection[str], priority: Sequence[str] = VALUE_RULE_PRIORITY
-) -> str | None:
+def select_value_rule(value: Any, admitted: Collection[str], priority: Sequence[str]) -> str | None:
     """Choose the value-type rule to use when writing *value* into a new entry.
 
     Args:
         value (Any): The Python value to be written.
-        admitted (Collection[str]): Names of the value-type rules the grammar allows in this
-            position.
+        admitted (Collection[str]): Names of the value-type rules the format has.
         priority (Sequence[str]): Order in which to consider rules.
 
     Returns:

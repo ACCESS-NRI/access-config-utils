@@ -50,6 +50,9 @@ where ESMF finds the first.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
+from access.config.grammar_contract import KEY_LIST, KEY_NULL, KEY_VALUE, START_RULE
 from access.config.parser import ConfigParser
 
 
@@ -59,6 +62,15 @@ class NUOPCRunSeqParser(ConfigParser):
     @property
     def case_sensitive_keys(self) -> bool:
         return True
+
+    @property
+    def entry_templates(self) -> Mapping[tuple[str, str], str]:
+        """Mapping[tuple[str, str], str]: The text of a new table, a line per element."""
+        return {
+            (START_RULE, KEY_VALUE): "{key}::\n{value}\n::\n",
+            (START_RULE, KEY_LIST): "{key}::\n{value}\n{value}\n::\n",
+            (START_RULE, KEY_NULL): "{key}::\n::\n",
+        }
 
     @property
     def grammar(self) -> str:

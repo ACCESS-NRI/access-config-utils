@@ -23,7 +23,6 @@ from lark.exceptions import UnexpectedInput
 
 from access.config.config_dict import ConfigRecord
 from access.config.field_table import FieldTableParser
-from access.config.grammar_compiled import compile_grammar
 from access.config.grammar_values import UnsupportedEntryError
 
 
@@ -577,10 +576,10 @@ def test_a_whole_table_edited(parser) -> None:
 @pytest.mark.parametrize(("container", "category", "expected"), canonical_rows("field_table"))
 def test_canonical_entry_text(parser, container, category, expected) -> None:
     """Test the text of a new method with no neighbour to copy, as the grammar ranks it."""
-    assert_canonical_entry(compile_grammar(parser.grammar), container, category, expected)
+    assert_canonical_entry(parser, container, category, expected)
 
 
 @pytest.mark.parametrize(("container", "category", "depth", "expected"), chain_rows("field_table"))
 def test_canonical_chain_entry_text(parser, container, category, depth, expected) -> None:
     """Test the text of a new header with no neighbour to copy."""
-    assert_canonical_entry(compile_grammar(parser.grammar), container, category, expected, keys=("A", "B", "C")[:depth])
+    assert_canonical_entry(parser, container, category, expected, keys=("A", "B", "C")[:depth])

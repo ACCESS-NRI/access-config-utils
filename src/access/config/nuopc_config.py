@@ -86,7 +86,7 @@ attribute unset.
 
 from collections.abc import Mapping
 
-from access.config.grammar_contract import BLOCK_RULE, KEY_LIST, KEY_NULL, KEY_VALUE
+from access.config.grammar_contract import BLOCK_RULE, KEY_BLOCK, KEY_LIST, KEY_NULL, KEY_VALUE, START_RULE
 from access.config.parser import ConfigParser
 
 
@@ -99,20 +99,22 @@ class NUOPCParser(ConfigParser):
 
     @property
     def entry_templates(self) -> Mapping[tuple[str, str], str]:
-        """Templates giving the body of a brand-new table its conventional indentation.
+        """The text of a new entry, at the top level and in a table.
 
         Nothing in the grammar requires a table entry to be indented -- ``block`` accepts
-        ``ws*`` -- so the text derived from the grammar alone puts the first entry of a new
-        table in column 0. Every table in the ESMF documentation and in a real
-        ``nuopc.runconfig`` indents its body, which is what these templates restore.
-
-        They apply only to a table that has no entry and no sibling table to copy from. Once
-        anything is there to imitate, its indentation wins over the single space here.
+        ``ws*`` -- yet every table in the ESMF documentation and in a real
+        ``nuopc.runconfig`` indents its body, so the first entry of a kind in a table is
+        written with a single space. Once anything is there to imitate, its indentation
+        wins over the single space here.
 
         Returns:
-            Mapping[tuple[str, str], str]: Templates for a table entry.
+            Mapping[tuple[str, str], str]: Templates for an entry.
         """
         return {
+            (START_RULE, KEY_VALUE): "{key}: {value}\n",
+            (START_RULE, KEY_LIST): "{key}: {value} {value}\n",
+            (START_RULE, KEY_BLOCK): "{key}::\n::\n",
+            (START_RULE, KEY_NULL): "{key}:\n",
             (BLOCK_RULE, KEY_VALUE): " {key} = {value}\n",
             (BLOCK_RULE, KEY_LIST): " {key} = {value}:{value}\n",
             (BLOCK_RULE, KEY_NULL): " {key} =\n",

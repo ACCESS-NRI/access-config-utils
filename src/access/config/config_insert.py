@@ -7,15 +7,15 @@ Editing an existing key means changing a token. Adding one means producing parse
 the parser never built, which is a different problem and gets a module of its own.
 
 Nothing here builds a node by hand. ``entry_render`` synthesises the *text* of the entry
-from the grammar, ``parse_entry_nodes`` hands that text back to Lark with the enclosing
-rule as the start symbol, and Lark therefore produces the nodes -- so rule inlining, ``->``
-aliases, filtered-out anonymous terminals and ``%import`` terminal renaming all take care
-of themselves.
+from a neighbouring entry or from the template the parser declares, ``parse_entry_nodes``
+hands that text back to Lark with the enclosing rule as the start symbol, and Lark
+therefore produces the nodes -- so rule inlining, ``->`` aliases, filtered-out anonymous
+terminals and ``%import`` terminal renaming all take care of themselves.
 
 Candidates are offered in order of how idiomatic they are, and **every one is validated in
 full before the tree is touched**: it must parse, and reading it back must give exactly the
 requested key and a value equal and identical in type to the one asked for. That is what
-makes ranking a matter of style rather than of correctness, and it is what stops a value
+makes the order a matter of style rather than of correctness, and it is what stops a value
 being written in a form the grammar reads back differently -- ``Path("foo")`` would be
 written as the bare word ``foo``, which a grammar with an ``identifier`` rule reads back as
 a ``str``.
@@ -29,7 +29,6 @@ from typing import TYPE_CHECKING, Any
 from lark import Tree
 from lark.exceptions import UnexpectedInput
 
-from access.config.entry_generate import admitted_value_rules
 from access.config.entry_render import iter_entry_snippets
 from access.config.grammar_contract import KEY_BLOCK, KEY_LIST, KEY_NULL, KEY_VALUE
 from access.config.grammar_values import UnsupportedEntryError, identical_values
@@ -65,8 +64,9 @@ def entry_matches(
 ) -> bool:
     """Report whether a candidate entry, read back from its text, holds what was asked for.
 
-    This is what makes candidate ranking a matter of style rather than of correctness: a
-    candidate that parses but means something else fails here and the next one is tried.
+    This is what makes the order of the candidates a matter of style rather than of
+    correctness: a candidate that parses but means something else fails here and the next
+    one is tried.
 
     Args:
         refs (Mapping[str, EntryRef]): The entries read back from the candidate.
@@ -162,13 +162,12 @@ def insert_entry(
         index = entry_insertion_index(container)
 
     for snippet in iter_entry_snippets(
-        ctx.info,
-        container_rule,
         category,
         raw_keys,
         value,
         style,
-        ctx.entry_templates,
+        ctx.entry_templates.get((container_rule, category)),
+        ctx.info.value_rules,
         ctx.value_rule_priority,
     ):
         # Read the candidate in a throwaway container, so one that parses but does not mean
@@ -185,11 +184,10 @@ def insert_entry(
         splice_entry_nodes(container, nodes, index)
         return refs[keys[0]]
 
-    admitted = sorted(admitted_value_rules(ctx.info, container_rule, category, len(keys)))
     raise UnsupportedEntryError(
         f"This format cannot store {value!r} as {_spelled(raw_keys)} here: there is no way to "
-        f"write a {category} in '{container_rule}' with this value"
-        + (f" (value types allowed here: {admitted})" if admitted else "")
+        f"write a {category} in '{container_rule}' with this value "
+        f"(value types this format writes: {sorted(ctx.info.value_rules)})"
     )
 
 

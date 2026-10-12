@@ -19,9 +19,9 @@ which ``HeaderParser`` adds.
 from pathlib import Path
 
 import pytest
-from conftest import TOY_GRAMMAR
+from conftest import CANONICAL, CHAIN_CANONICAL, PARSERS, TOY_GRAMMAR
 
-from access.config.grammar_values import VALUE_RULE_PRIORITY
+from access.config.grammar_values import VALUE_RULE_PRIORITY, UnsupportedEntryError
 from access.config.parser import ConfigParser
 
 
@@ -43,13 +43,24 @@ def test_parser_is_abstract() -> None:
         NoGrammar()
 
 
-def test_parser_declares_defaults(parser) -> None:
-    """Test the two properties a format only overrides when it has to.
+def test_parser_declares_defaults() -> None:
+    """Test the properties a format only overrides when it has to.
 
-    Both defaults are what makes a minimal parser possible: a subclass supplies a grammar
-    and a case-sensitivity flag and nothing else, and entry synthesis derives the rest from
-    the grammar.
+    A subclass supplies a grammar and a case-sensitivity flag and nothing else. It then
+    declares no template, so a new entry of a kind the file has none of is refused.
     """
+
+    class Minimal(ConfigParser):
+        @property
+        def case_sensitive_keys(self) -> bool:
+            return True
+
+        @property
+        def grammar(self) -> str:
+            return TOY_GRAMMAR
+
+    parser = Minimal()
+
     assert parser.entry_templates == {}
     assert parser.value_rule_priority is VALUE_RULE_PRIORITY
     assert parser.key_case == "upper"
@@ -60,6 +71,21 @@ def test_parser_declares_defaults(parser) -> None:
     assert ctx.entry_templates == {}
     assert ctx.value_rule_priority == tuple(VALUE_RULE_PRIORITY)
     assert ctx.key_case == "upper"
+
+
+@pytest.mark.parametrize("name", PARSERS)
+def test_a_shipped_parser_declares_a_template_for_every_entry_it_can_write(name) -> None:
+    """Test that the templates a shipped parser declares are those pinned in ``CANONICAL``.
+
+    A kind of entry the grammar can write but no template is declared for could only be
+    added by copying a neighbour, and one declared that the grammar cannot write is text
+    nothing reads. Nothing derives the missing ones, so the two tables have to agree.
+    """
+    declared = set(PARSERS[name]().entry_templates)
+    pinned = {(container, category) for (grammar, container, category) in CANONICAL if grammar == name}
+    pinned |= {(container, category) for (grammar, container, category, _) in CHAIN_CANONICAL if grammar == name}
+
+    assert declared == pinned
 
 
 def test_parser_appends_a_trailing_newline(parser) -> None:
@@ -848,9 +874,8 @@ def test_config_entry_template_override():
 def test_config_entry_template_used_without_a_donor():
     """Test that the declared template is compiled and used for an entry with no neighbour.
 
-    A template applies only where nothing nearby can supply a style, so an empty block is
-    the case that reaches it: the block holds no entry to copy from, and no sibling block
-    either.
+    A template applies where the file has no entry of the kind to copy, so an empty block
+    is the case that reaches it: the block holds no entry, and no sibling block either.
     """
     parser = TemplateParser()
 
@@ -881,22 +906,28 @@ def test_config_add_value_rule_fallback():
 
 
 class BrokenTemplateParser(TemplateParser):
-    """Parser whose override does not fit the grammar, to exercise the fall-back."""
+    """Parser whose template does not fit the grammar, to exercise the refusal."""
 
     @property
     def entry_templates(self):
         # Declared for the block, because that is the container an empty one gives us: a
-        # template is only ever tried where there is no neighbouring entry to copy from.
+        # template is only tried where there is no entry of the kind to copy.
         return {("block", "key_value"): "{key} <<>> {value}"}
 
 
-def test_config_entry_template_fallback():
-    """Test that an override no longer fitting the grammar falls back to the derived text"""
+def test_config_a_template_that_does_not_fit_the_grammar_writes_nothing():
+    """Test that nothing is derived from the grammar behind a template that is wrong.
+
+    The text is parsed before it is used, so a template the grammar refuses is an error
+    naming what could not be written, and the file is left as it was.
+    """
     parser = BrokenTemplateParser()
 
     config = parser.parse("a=1 blk<>")
-    config["blk"]["b"] = 3
-    _check_added(parser, config, "a=1 blk<b:3>")
+    with pytest.raises(UnsupportedEntryError, match="cannot store 3 as 'b'"):
+        config["blk"]["b"] = 3
+
+    _check_added(parser, config, "a=1 blk<>")
 
 
 class BlocklessParser(ConfigParser):
@@ -905,6 +936,10 @@ class BlocklessParser(ConfigParser):
     @property
     def case_sensitive_keys(self) -> bool:
         return True
+
+    @property
+    def entry_templates(self):
+        return {("start", "key_value"): "{key}={value}"}
 
     @property
     def grammar(self) -> str:
@@ -995,6 +1030,10 @@ class HeaderParser(ConfigParser):
     @property
     def block_rules(self) -> tuple[str, ...]:
         return ("block", "name_body")
+
+    @property
+    def entry_templates(self):
+        return {("block", "key_value"): '\n  "{key}", {value}', ("start", "key_block"): '"{keys:", "}"/\n'}
 
     @property
     def grammar(self) -> str:

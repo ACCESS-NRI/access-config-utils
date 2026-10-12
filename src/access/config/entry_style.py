@@ -10,15 +10,9 @@ already in the file. ``probe_entry_style`` reads them; ``EntryStyle`` carries wh
 It finds two things. The first is a whole entry to copy: ``donor_template`` turns the
 nearest entry of the kind wanted into a template of its own, so that a format with several
 ways of writing one entry -- quoted or bare, one delimiter or another -- gets the one the
-file uses rather than the one the grammar's ranking prefers. The second is whitespace, for a
-template the grammar derives when there is no such entry: ``canonical_ws`` and the slot
-classification decide where each recorded run goes, and what to write where nothing was
-recorded.
-
-Where a grammar admits no whitespace at the position a donated indent would occupy, the
-indent is dropped rather than written into a line that would not parse. That is what
-``style_matches`` is for: it lets ranking prefer a template that *can* reproduce the
-neighbouring style over one that cannot.
+file uses. The second is the indentation of the entry above, for the first entry of a kind,
+which has none to copy and is written from the template its parser declares: the file still
+shows how its entries are indented.
 """
 
 from __future__ import annotations
@@ -31,7 +25,7 @@ from typing import TYPE_CHECKING
 
 from lark import Token, Tree
 
-from access.config.entry_fragments import EntryTemplate, Fragment, neighbour_fragment
+from access.config.entry_fragments import EntryTemplate, Fragment
 from access.config.grammar_contract import (
     BLOCK_RULE,
     ELIDED_RULE,
@@ -41,7 +35,6 @@ from access.config.grammar_contract import (
     KEY_LIST,
     KEY_RULE,
     REPEAT_RULE,
-    TRANSPARENT_RULES,
     WS_RULE,
 )
 from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
@@ -64,29 +57,16 @@ class EntryStyle:
     """What a new entry copies from the existing ones, so that it matches its neighbours.
 
     Args:
-        indent (str): Whitespace before the key.
-        key_pads (tuple[str, ...] | None): Whitespace runs between the key and the first
-            value, in order, or ``None`` when no entry demonstrates it.
-        key_split (int): How many of *key_pads* fall before the assignment itself. A single
-            run is otherwise ambiguous -- ``x =1`` and ``x= 1`` both record one -- and the
-            new entry would take whichever side the chosen template's slot sits on.
-        element_pads (tuple[str, ...] | None): Whitespace runs between the first and second
-            values, in order, or ``None`` when no entry demonstrates it. That is the case
-            whenever no entry holds two values, so a scalar neighbour does not dictate how a
-            list is spaced.
-        has_donor (bool): Whether any entry was found to copy from. When false, rendering
-            falls back to a canonical layout.
+        indent (str | None): The whitespace the line of the last entry above starts with,
+            or ``None`` when there is no entry above to show one, as in a block that was
+            empty in the file.
         donors (tuple[tuple[DonorSignature, EntryTemplate], ...]): A template copied whole
             from the nearest entry of each kind, keyed by what it can write. A new entry of
-            that kind is written as a copy of it before any template the grammar derives
-            is tried.
+            that kind is written as a copy of it before the template its parser declares is
+            tried.
     """
 
-    indent: str = ""
-    key_pads: tuple[str, ...] | None = None
-    key_split: int = 0
-    element_pads: tuple[str, ...] | None = None
-    has_donor: bool = False
+    indent: str | None = None
     donors: tuple[tuple[DonorSignature, EntryTemplate], ...] = ()
 
     def donor(self, depth: int, category: str) -> EntryTemplate | None:
@@ -103,147 +83,32 @@ class EntryStyle:
         return next((template for signature, template in self.donors if signature == (depth, category)), None)
 
 
-# --- Whitespace policy ---
-
-
-def _is_punctuation(text: str) -> bool:
-    """Report whether *text* is non-empty and made only of punctuation."""
-    return text != "" and not any(character.isalnum() or character.isspace() for character in text)
-
-
-def canonical_ws(template: EntryTemplate, index: int) -> str:
-    """Return the whitespace to emit at *index* when there is no entry to copy from.
-
-    Empty at the start and the end of a line, before a separator that follows a value or
-    any comma, and between punctuation and a key, so a canonically rendered entry carries no
-    indentation, no trailing whitespace, and reads as ``a, b`` rather than ``a , b`` and
-    ``a%b`` rather than ``a% b``. A single space anywhere else, which is where a grammar
-    allows optional whitespace for readability, as in ``KEY = value``.
-
-    Args:
-        template (EntryTemplate): The template being rendered.
-        index (int): Index of the whitespace placeholder.
-
-    Returns:
-        str: The whitespace text.
-    """
-    before = neighbour_fragment(template, index, -1)
-    after = neighbour_fragment(template, index, 1)
-    if before is None or before.kind == "block" or (before.kind == "literal" and before.text.endswith("\n")):
-        return ""
-    if after is None or after.kind == "block" or (after.kind == "literal" and after.text.startswith("\n")):
-        return ""
-    if after.kind == "literal" and after.text.startswith(","):
-        return ""
-    if before.kind == "literal" and _is_punctuation(before.text) and after.kind == "key":
-        return ""
-    if before.kind == "value" and after.kind == "literal" and _is_punctuation(after.text):
-        return ""
-    return " "
-
-
-@dataclass(frozen=True)
-class _Slots:
-    """Indices of a template's whitespace placeholders, grouped by what they space out.
-
-    Args:
-        leading (tuple[int, ...]): Placeholders before the key, which carry the indentation.
-        key (tuple[int, ...]): Stylable placeholders between the key and the first value.
-        key_split (int): How many of *key* precede the assignment literal.
-        element (tuple[int, ...]): Stylable placeholders between the first two values.
-    """
-
-    leading: tuple[int, ...]
-    key: tuple[int, ...]
-    key_split: int
-    element: tuple[int, ...]
-
-
-def classify_slots(template: EntryTemplate) -> _Slots:
-    """Group the whitespace placeholders of *template* into regions.
-
-    Only placeholders that render as a space canonically are collected for the key and
-    element regions. The others are fixed by the line structure -- a line never starts or
-    ends with copied whitespace -- and must not consume the copied whitespace runs.
-
-    Args:
-        template (EntryTemplate): The template to classify.
-
-    Returns:
-        _Slots: The grouped indices.
-    """
-    keys = [index for index, fragment in enumerate(template) if fragment.kind == "key"]
-    values = [index for index, fragment in enumerate(template) if fragment.kind == "value"]
-    first_key = keys[0] if keys else len(template)
-    # With no value to stop at, everything after the key spaces out the key, as in "KEY =".
-    key_end = values[0] if values else len(template)
-    element_start, element_end = (values[0], values[1]) if len(values) > 1 else (len(template), len(template))
-
-    def stylable(start: int, stop: int) -> tuple[int, ...]:
-        return tuple(
-            index
-            for index in range(start, stop)
-            if template[index].kind == "ws" and canonical_ws(template, index) == " "
-        )
-
-    leading = tuple(index for index in range(first_key) if template[index].kind == "ws")
-    key_slots = stylable(first_key, key_end)
-    # The assignment is the first fixed text after the key, so the slots before it space out
-    # the key and the ones after it space out the value.
-    literals = [index for index in range(first_key, key_end) if template[index].kind == "literal"]
-    boundary = literals[0] if literals else key_end
-    key_split = sum(1 for index in key_slots if index < boundary)
-    return _Slots(leading, key_slots, key_split, stylable(element_start, element_end))
-
-
-def style_matches(template: EntryTemplate, style: EntryStyle) -> bool:
-    """Report whether *template* can reproduce the whitespace *style* was taken from."""
-    if not style.has_donor:
-        return True
-    slots = classify_slots(template)
-    if style.indent and not slots.leading:
-        return False
-    for indices, pads in ((slots.key, style.key_pads), (slots.element, style.element_pads)):
-        if pads is not None and len(indices) != len(pads):
-            return False
-    # The counts can agree while the runs sit on the wrong side of the assignment.
-    return style.key_pads is None or slots.key_split == style.key_split
-
-
 # --- Style probing ---
 
 
-def probe_entry_style(
-    container: Tree, reconstructor: Reconstructor | None = None, upto: int | None = None
-) -> EntryStyle:
+def probe_entry_style(container: Tree, reconstructor: Reconstructor, upto: int | None = None) -> EntryStyle:
     """Read how the entries in *container* are written, to match when adding a new one.
 
-    Each kind of whitespace is taken from the last entry that actually demonstrates it: the
-    indentation and the spacing around the assignment from the last entry with both a key
-    and a value, and the spacing around the element separator from the last entry with two
-    values. So a scalar neighbour does not dictate how a list is spaced, and a list
-    neighbour does not stop a scalar being spaced like the scalars around it.
+    The indentation is that of the last entry above the new one. The last entry of each
+    kind is also copied whole, as a template a new entry of the same kind is written with
+    first; see ``donor_template``. Only an entry on a line of its own is copied, since a
+    line holding several is laid out for all of them.
 
-    Given a reconstructor, the last entry of each kind is also copied whole, as a template a
-    new entry of the same kind is written with first; see ``donor_template``. Only an entry
-    on a line of its own is copied, since a line holding several is laid out for all of
-    them.
-
-    Falls back to a canonical layout when the container holds no entries at all, which is
-    the case for a block that was empty in the file. A block that was *just created* has
-    nothing to copy from either, but is not left canonical: see
+    Falls back to a style with no indentation when the container holds no entries at all,
+    which is the case for a block that was empty in the file. A block that was *just
+    created* has nothing to copy either, but is not left bare: see
     ``probe_sibling_block_style``.
 
     Args:
         container (Tree): The container rule node the new entry will be added to.
-        reconstructor (Reconstructor | None): Writes a parse tree out as text, to copy
-            whole entries with; ``None`` to read the whitespace alone.
+        reconstructor (Reconstructor): Writes a parse tree out as text, to copy whole
+            entries with.
         upto (int | None): Where the new entry is to go, as an index into the children of
             *container*: only the entries above it are read, so the nearest of them is the
             one written just before it. ``None`` reads them all.
 
     Returns:
-        EntryStyle: The layout to copy, or a style with ``has_donor`` false.
+        EntryStyle: The layout to copy, or a style with no indentation.
 
     An unusually spaced neighbour is matched rather than normalised: a key added beside
     ``A   =   1`` is written ``B   =   2``, since a minimal diff matters more than tidiness.
@@ -252,25 +117,11 @@ def probe_entry_style(
     entries = [entry for line in lines if isinstance(line, Tree) for entry in entry_nodes(line)]
     if not entries:
         return EntryStyle()
-
-    shapes = [_shape_of(entry) for entry in entries]
-    # A block entry shows the indentation but carries no assignment, so it says nothing
-    # about the spacing around one -- and taking its empty run would write "KEY=value". A
-    # valueless entry does show that spacing, just not how elements are set out.
-    with_value = [shape for shape in shapes if shape[3]]
-    with_assignment = [shape for entry, shape in zip(entries, shapes, strict=True) if entry.data != KEY_BLOCK]
-    assigning = with_value or with_assignment
-    with_elements = [shape for shape in shapes if len(shape[3]) > 1]
-    element_pads = with_elements[-1][3][1] if with_elements else None
-    key_pads, split = (assigning[-1][1], assigning[-1][2]) if assigning else (None, 0)
-    donors = _donors(lines, reconstructor) if reconstructor is not None else ()
-    return EntryStyle(shapes[-1][0], key_pads, split, element_pads, has_donor=True, donors=donors)
+    return EntryStyle(indent_of(entries[-1]), _donors(lines, reconstructor))
 
 
-def probe_sibling_block_style(
-    container: Tree, reconstructor: Reconstructor | None = None, upto: int | None = None
-) -> EntryStyle:
-    """Read the whitespace used inside the blocks of *container*, for a block just created.
+def probe_sibling_block_style(container: Tree, reconstructor: Reconstructor, upto: int | None = None) -> EntryStyle:
+    """Read the style used inside the blocks of *container*, for a block just created.
 
     A block created by an assignment starts empty, so ``probe_entry_style`` finds nothing in
     it to copy and its contents would be written with no indentation at all -- foreign to a
@@ -280,20 +131,20 @@ def probe_sibling_block_style(
     both cases the closest neighbour wins.
 
     Only the rule named ``BLOCK_RULE`` is looked at, and only as a direct child of the
-    entry, which is the same contract ``ConfigToDict.key_block`` relies on to find the body
+    entry, which is the same contract ``EntryReader.key_block`` relies on to find the body
     of a block. For an entry that chains others, such as an FMS field table's
     ``"tracer", "ocean_mod", "age"``, that entry is the innermost, ``age``.
 
     Args:
         container (Tree): The container rule node the new block was added to.
-        reconstructor (Reconstructor | None): Writes a parse tree out as text, to copy
-            whole entries with; ``None`` to read the whitespace alone.
+        reconstructor (Reconstructor): Writes a parse tree out as text, to copy whole
+            entries with.
         upto (int | None): The index of the child of *container* the new block is written
             in, so that the search starts at the block just above it. ``None`` searches
             them all, from the last.
 
     Returns:
-        EntryStyle: The layout to copy, or a style with ``has_donor`` false when no sibling
+        EntryStyle: The layout to copy, or a style with no indentation when no sibling
             block holds an entry -- including the new block itself, which is empty.
 
     A new block is laid out like the block next to it, not like a fresh file: if the block
@@ -307,74 +158,28 @@ def probe_sibling_block_style(
         for child in innermost.children:
             if isinstance(child, Tree) and child.data == BLOCK_RULE:
                 style = probe_entry_style(child, reconstructor)
-                if style.has_donor:
+                if style.indent is not None:
                     return style
     return EntryStyle()
 
 
-def _shape_of(entry: Tree) -> tuple[str, tuple[str, ...], int, list[tuple[str, ...]]]:
-    """Split the whitespace runs of an entry rule node into the parts a style is built from.
-
-    The runs between the key and the first value come with a count of how many of them fall
-    *before* the assignment itself. Without it a single run is ambiguous: ``x =1`` and
-    ``x= 1`` both record one run, and a template with one whitespace slot would reproduce
-    whichever side its slot happens to be on.
-
-    Args:
-        entry (Tree): An entry rule node.
-
-    Returns:
-        tuple[str, tuple[str, ...], int, list[tuple[str, ...]]]: The indentation, the runs
-            between the key and the first value, how many of those precede the assignment,
-            and the runs before each value in turn -- so the second element, when present,
-            is the element separator.
-    """
-    kinds: list[tuple[str, str]] = []
-    for child in (child for child in entry.children if isinstance(child, Tree)):
-        if child.data in TRANSPARENT_RULES:
-            # A transparent rule groups whitespace with the assignment literal. Its runs
-            # count as though written beside the key, and the marker records where the
-            # literal fell so the two sides stay apart.
-            for grandchild in child.children:
-                if isinstance(grandchild, Tree) and grandchild.data == WS_RULE:
-                    kinds.append(("ws", "".join(str(token) for token in grandchild.children)))
-            kinds.append(("assign", ""))
-        elif child.data == WS_RULE:
-            kinds.append(("ws", "".join(str(token) for token in child.children)))
-        elif child.data == KEY_RULE:
-            kinds.append((KEY_RULE, ""))
-        elif child.data in VALUE_TYPE_HANDLER_REGISTRY:
-            kinds.append(("value", ""))
-
-    def runs(start: int, stop: int) -> tuple[str, ...]:
-        return tuple(text for kind, text in kinds[start:stop] if kind == "ws")
-
-    keys = [index for index, (kind, _) in enumerate(kinds) if kind == KEY_RULE]
-    key_at = keys[0] if keys else len(kinds)
-    values = [index for index, (kind, _) in enumerate(kinds) if kind == "value"]
-    assigns = [index for index, (kind, _) in enumerate(kinds) if kind == "assign"]
-
-    # The run before each value, measured from the key for the first and from the previous
-    # value thereafter. With no value at all, everything after the key spaces out the key.
-    if values:
-        boundaries = [key_at, *values[:-1]]
-        gaps = [runs(previous, index) for previous, index in zip(boundaries, values, strict=True)]
-        key_pads = gaps[0]
-    else:
-        gaps = []
-        key_pads = runs(key_at, len(kinds))
-    # With no marker at all the grammar does not group whitespace with its assignment, so
-    # every run counts as preceding it and the split constrains nothing.
-    split = len(runs(key_at, assigns[0])) if assigns else len(key_pads)
-    return "".join(runs(0, key_at)), key_pads, split, gaps
+def indent_of(entry: Tree) -> str:
+    """Return the whitespace the line of an entry starts with: its ``ws`` before the key."""
+    indent = ""
+    for child in entry.children:
+        if isinstance(child, Tree):
+            if child.data == KEY_RULE:
+                break
+            if child.data == WS_RULE:
+                indent += "".join(str(token) for token in child.children)
+    return indent
 
 
 # --- Donor templates ---
 #
-# Copying an entry's whitespace into a template the grammar derives reproduces its spacing,
-# but not its punctuation: a format with several ways of writing one entry gets whichever
-# the ranking prefers. So the nearest entry of the kind wanted is also copied whole, as a
-# template of its own, with markers standing in for what a new entry writes differently.
+# A new entry of a kind the file already has is written as a copy of the nearest entry of
+# that kind, whole: its spacing and its punctuation both, as a template with markers
+# standing in for what a new entry writes differently.
 
 _KEY_MARKER = "\x00K{}\x00"
 _VALUE_MARKER = "\x00V\x00"

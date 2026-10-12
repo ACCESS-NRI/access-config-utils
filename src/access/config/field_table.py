@@ -60,7 +60,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from access.config.parser import BLOCK_RULE, ConfigParser
+from access.config.grammar_contract import BLOCK_RULE, KEY_BLOCK, KEY_LIST, KEY_VALUE, START_RULE
+from access.config.parser import ConfigParser
 
 
 class FieldTableParser(ConfigParser):
@@ -86,14 +87,17 @@ class FieldTableParser(ConfigParser):
 
     @property
     def entry_templates(self) -> Mapping[tuple[str, str], str]:
-        """Templates for the first method of an entry that has none to copy.
+        """Templates for a new entry, and for the first method of an entry that has none.
 
-        Indented, as a method is in most field tables. A method is otherwise written like
-        the one above it, or like those of the entry above.
+        An entry is a header naming a field type, a model and a field, closed on its own
+        line as an entry with no methods is. A method is indented, as it is in most field
+        tables, and otherwise written like the one above it, or like those of the entry
+        above.
         """
         return {
-            (BLOCK_RULE, "key_value"): '\n  "{key}", {value}',
-            (BLOCK_RULE, "key_list"): "\n  {key} = {value}, {value}",
+            (START_RULE, KEY_BLOCK): '"{keys:", "}"/\n',
+            (BLOCK_RULE, KEY_VALUE): '\n  "{key}", {value}',
+            (BLOCK_RULE, KEY_LIST): "\n  {key} = {value}, {value}",
         }
 
     @property

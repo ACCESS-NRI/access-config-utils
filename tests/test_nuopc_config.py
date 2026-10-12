@@ -21,7 +21,6 @@ import pytest
 from conftest import assert_canonical_entry, canonical_rows
 from lark.exceptions import UnexpectedInput
 
-from access.config.grammar_compiled import compile_grammar
 from access.config.nuopc_config import NUOPCParser
 
 
@@ -798,4 +797,4 @@ def test_canonical_entry_text(parser, container, category, expected) -> None:
     Byte-exact, and re-parsed in the container it was generated for. These rows are the
     statement of what this grammar can express and how it spells it.
     """
-    assert_canonical_entry(compile_grammar(parser.grammar), container, category, expected)
+    assert_canonical_entry(parser, container, category, expected)

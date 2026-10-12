@@ -23,14 +23,14 @@ from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
 import pytest
-from lark import Lark, Token, Tree
+from lark import Token, Tree
+from lark.exceptions import UnexpectedInput
 
 from access.config.entry_render import iter_entry_snippets
 from access.config.entry_style import EntryStyle
 from access.config.field_table import FieldTableParser
 from access.config.fortran_nml import FortranNMLParser
 from access.config.grammar_compiled import compile_grammar
-from access.config.grammar_info import GrammarInfo
 from access.config.grammar_values import UnsupportedEntryError
 from access.config.mom6_input import MOM6InputParser
 from access.config.nuopc_config import NUOPCParser
@@ -46,17 +46,17 @@ PARSERS = {
     "field_table": FieldTableParser,
 }
 
-# The entry text each grammar produces for each container and category it supports, with
-# no neighbouring entry to copy a style from. Every combination absent from this table is
-# one the grammar cannot express, and is asserted empty by test_unsupported_combinations.
+# The entry text each parser writes for each container and category it supports, with no
+# neighbouring entry to copy a style from: what it declares in ``entry_templates``. A
+# combination absent from this table is one the parser declares nothing for.
 CANONICAL = {
     ("nuopc_config", "start", "key_value"): "NEWKEY: 7\n",
     ("nuopc_config", "start", "key_list"): "NEWKEY: 1 2 3\n",
     ("nuopc_config", "start", "key_block"): "NEWKEY::\n::\n",
     ("nuopc_config", "start", "key_null"): "NEWKEY:\n",
-    ("nuopc_config", "block", "key_value"): "NEWKEY = 7\n",
-    ("nuopc_config", "block", "key_list"): "NEWKEY = 1:2:3\n",
-    ("nuopc_config", "block", "key_null"): "NEWKEY =\n",
+    ("nuopc_config", "block", "key_value"): " NEWKEY = 7\n",
+    ("nuopc_config", "block", "key_list"): " NEWKEY = 1:2:3\n",
+    ("nuopc_config", "block", "key_null"): " NEWKEY =\n",
     ("mom6_input", "start", "key_value"): "NEWKEY = 7\n",
     ("mom6_input", "start", "key_list"): "NEWKEY = 1, 2, 3\n",
     ("mom6_input", "start", "key_block"): "NEWKEY%\n%NEWKEY\n",
@@ -69,10 +69,9 @@ CANONICAL = {
     ("nuopc_runseq", "start", "key_value"): "NEWKEY::\nATM\n::\n",
     ("nuopc_runseq", "start", "key_list"): "NEWKEY::\n@3600\nATM\n@\n::\n",
     ("nuopc_runseq", "start", "key_null"): "NEWKEY::\n::\n",
-    # A method line starts with its line break, and the grammar's own preference is the
-    # bare assignment; the parser's template, indented in quotes, is not consulted here.
-    ("field_table", "block", "key_value"): "\nNEWKEY = 7",
-    ("field_table", "block", "key_list"): "\nNEWKEY = 1, 2, 3",
+    # A method line starts with its line break, and is indented.
+    ("field_table", "block", "key_value"): '\n  "NEWKEY", "7"',
+    ("field_table", "block", "key_list"): "\n  NEWKEY = 1, 2, 3",
 }
 
 # The same for a chain of keys, keyed by how many keys there are: the Fortran ``a%b = 1``
@@ -112,46 +111,49 @@ def chain_rows(grammar: str) -> list[tuple[str, str, int, str]]:
 
 
 def assert_canonical_entry(
-    compiled: Any,
+    parser: ConfigParser,
     container: str,
     category: str,
     expected: str,
     values: Mapping[str, Any] = VALUES,
     keys: Sequence[str] = ("NEWKEY",),
 ) -> None:
-    """Assert the entry text a grammar produces with no neighbour to copy a style from.
+    """Assert the entry text a parser writes for a kind of entry the file has none of.
 
-    The first candidate has to be both the expected text and valid in that container, so
-    this pins the whole generate-rank-render pipeline against a real grammar.
+    The first candidate that parses in that container has to be the expected text, which
+    pins the template the parser declares, the choice of a value type and the rendering
+    against a real grammar. A candidate that does not parse is passed over, as the caller
+    passes it over.
 
     Args:
-        compiled: The ``CompiledGrammar`` for the format.
-        container: Name of the container rule the entry is generated for.
+        parser: The parser, which declares the template and supplies the grammar.
+        container: Name of the container rule the entry is written in.
         category: The entry category, of the innermost entry for a chain.
         expected: The exact text expected.
         values: The value to write per category, for a format that cannot hold the usual.
         keys: The key path, one key per entry of the chain.
     """
-    snippets = iter_entry_snippets(compiled.info, container, category, keys, values[category], EntryStyle())
-    first = next(iter(snippets))
-    assert first == expected
-
-    # The text must parse in the container it was generated for, and yield that category.
-    parsed = compiled.lark.parse(first, start=container)
-    categories = {node.data for node in parsed.iter_subtrees()} | {parsed.data}
-    assert category in categories
-
-
-@pytest.fixture(scope="session")
-def larks() -> dict[str, Lark]:
-    """Fixture returning a compiled parser per shipped grammar."""
-    return {name: compile_grammar(cls().grammar).lark for name, cls in PARSERS.items()}
-
-
-@pytest.fixture(scope="session")
-def infos() -> dict[str, GrammarInfo]:
-    """Fixture returning the grammar views per shipped grammar."""
-    return {name: compile_grammar(cls().grammar).info for name, cls in PARSERS.items()}
+    compiled = compile_grammar(parser.grammar)
+    candidates = iter_entry_snippets(
+        category,
+        keys,
+        values[category],
+        EntryStyle(),
+        parser.entry_templates.get((container, category)),
+        compiled.info.value_rules,
+        tuple(parser.value_rule_priority),
+    )
+    for text in candidates:
+        try:
+            parsed = compiled.lark.parse(text, start=container)
+        except UnexpectedInput:
+            continue
+        # The text must yield that category.
+        categories = {node.data for node in parsed.iter_subtrees()} | {parsed.data}
+        assert category in categories
+        assert text == expected
+        return
+    pytest.fail("No candidate parses")
 
 
 TOY_GRAMMAR = """
@@ -208,12 +210,28 @@ TOY_GRAMMAR = """
 """
 
 
+# What the toy grammar writes for each kind of entry it has: whitespace is discarded, so
+# the entries are written tight.
+TOY_TEMPLATES = {
+    ("start", "key_null"): "{key}=",
+    ("start", "key_value"): "{key}={value}",
+    ("start", "key_list"): "{key}={value},{value}",
+    ("start", "key_block"): "{key}<>",
+    ("block", "key_value"): "{key}:{value}",
+    ("block", "key_list"): "{key}:{value}|{value}",
+}
+
+
 class Parser(ConfigParser):
     """Parser using the grammar defined above, with case sensitive keys."""
 
     @property
     def case_sensitive_keys(self) -> bool:
         return True
+
+    @property
+    def entry_templates(self) -> Mapping[tuple[str, str], str]:
+        return TOY_TEMPLATES
 
     @property
     def grammar(self) -> str:
@@ -232,6 +250,10 @@ class CaseParser(ConfigParser):
     @property
     def case_sensitive_keys(self) -> bool:
         return False
+
+    @property
+    def entry_templates(self) -> Mapping[tuple[str, str], str]:
+        return TOY_TEMPLATES
 
     @property
     def grammar(self) -> str:
@@ -288,8 +310,11 @@ class RepetitionInfo:
     """Stands in for ``GrammarInfo``, reporting every rule a plain repetition.
 
     That is what a namelist group's block is, so a deletion inside a fake nested
-    configuration stays there, as it does inside a real group.
+    configuration stays there, as it does inside a real group. It has no value type, unless
+    a test gives it some.
     """
+
+    value_rules: frozenset[str] = frozenset()
 
     def is_repetition_rule(self, name: str) -> bool:
         """Report that *name* is a plain repetition."""
@@ -394,7 +419,7 @@ class FakeStore:
     def created_block_style(self, entry: Tree | None = None) -> EntryStyle:
         """Return the style a block just created should inherit."""
         self.calls.append(("created_block_style", entry))
-        return EntryStyle(indent="  ", has_donor=True)
+        return EntryStyle(indent="  ")
 
     def remove(self, key: str) -> None:
         """Record the removal and forget the reference."""
