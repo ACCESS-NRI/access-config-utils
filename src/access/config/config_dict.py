@@ -51,7 +51,8 @@ class ConfigList(list):
     text, comments included, and a new element is written like its neighbours, on their
     line or on a line of its own. A list keeps at least two elements, and one whose values
     are written with repeat counts, array qualifiers or in more than one assignment can be
-    rewritten but not resized.
+    rewritten but not resized. The elements a repeat count stands for are rewritten only
+    together, all alike.
 
     A list of records, which the file writes one entry per record, keeps at least one
     instead, and hands each record out as a ``ConfigRecord``: a dict whose every write
