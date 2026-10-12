@@ -42,14 +42,7 @@ if TYPE_CHECKING:
 
 
 def entry_category(value: Any) -> str:
-    """Return the kind of entry needed to hold *value*.
-
-    Args:
-        value (Any): The value to be stored.
-
-    Returns:
-        str: One of the entry category names.
-    """
+    """Return the kind of entry needed to hold *value*, as an entry category name."""
     if isinstance(value, dict):
         return KEY_BLOCK
     if value is None:
@@ -64,23 +57,11 @@ def entry_matches(
 ) -> bool:
     """Report whether a candidate entry, read back from its text, holds what was asked for.
 
-    This is what makes the order of the candidates a matter of style rather than of
-    correctness: a candidate that parses but means something else fails here and the next
-    one is tried.
-
-    Args:
-        refs (Mapping[str, EntryRef]): The entries read back from the candidate.
-        keys (Sequence[str]): The normalised key path expected: one key for a plain entry,
-            and for a chain such as ``a%b = 1`` one per level, each a block holding the
-            next and nothing else.
-        value (Any): The value requested for the innermost key.
-        ctx (ParseContext): Reads the blocks of a chain.
-        category (str | None): The category of entry asked for, where *value* does not
-            say: ``key_value`` for a record, which is a ``dict``. A record reads back as
-            the list of the one record the entry writes.
-
-    Returns:
-        bool: True if the candidate is an exact match.
+    *refs* are the entries read back and *keys* the normalised key path expected: one key,
+    or for a chain such as ``a%b = 1`` one per level, each a block holding the next and
+    nothing else, with *value* under the innermost. *category* says what *value* does not:
+    ``key_value`` for a record, which is a ``dict`` and reads back as the list of the one
+    record the entry writes.
     """
     for level, key in enumerate(keys):
         if set(refs) != {key}:
@@ -122,24 +103,13 @@ def insert_entry(
 ) -> EntryRef:
     """Write a new entry into *container* and return where it landed.
 
-    Args:
-        container (Tree): The container rule node to add the entry to.
-        ctx (ParseContext): The compiled grammar and the per-parser settings.
-        raw_keys (Sequence[str]): The key path as it is spelled in the file text: one key,
-            or one per level of a chain such as ``a%b = 1``. The candidate has to read back
-            as the normalised form of each.
-        value (Any): The value to store under the innermost key. A ``dict`` creates an empty
-            block; its contents are added afterwards, by the caller, one key at a time.
-        style (EntryStyle): The layout to copy from the neighbouring entries.
-        index (int | None): Where among the children of *container* the entry goes, or
-            ``None`` for after the last entry, as ``entry_insertion_index`` finds it.
-        category (str | None): The category of entry to write, where *value* does not
-            say: ``key_value`` for a record, which is a ``dict`` and would otherwise make a
-            block.
-
-    Returns:
-        EntryRef: Where the new entry lives in the parse tree: for a chain, the reference to
-            its outermost key, read on its own.
+    *raw_keys* is the key path as the file text spells it: one key, or one per level of a
+    chain such as ``a%b = 1``, in which case the reference returned is to the outermost key,
+    read on its own. A candidate has to read back as the normalised form of each key. A
+    ``dict`` *value* creates an empty block, which the caller fills one key at a time
+    afterwards. *category* says what *value* does not: ``key_value`` makes a ``dict`` a
+    record, not a block. *index* is the position among the children of *container*, or
+    ``None`` for after the last entry, as ``entry_insertion_index`` finds it.
 
     Raises:
         ValueError: If a key is not a name the format's ``key`` rule reads back as itself,
