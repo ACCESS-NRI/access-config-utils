@@ -151,10 +151,11 @@ print(dict(config["tracer"]["atmos_mod"]["sphum"]))
 ```python
 {'longname': 'specific humidity', 'profile_type': [{'value': 'fixed', 'surface_value': 3e-06}]}
 ```
-A record is a dict like any other, and a new field is written as a whole entry, after the last of
-its type and model:
+A record is read only, and is changed by assigning a dict to its place in the list. A new field
+is written as a whole entry, after the last of its type and model:
 ```python
-config["tracer"]["atmos_mod"]["sphum"]["profile_type"][0]["surface_value"] = 1e-5
+profile = config["tracer"]["atmos_mod"]["sphum"]["profile_type"]
+profile[0] = {**profile[0], "surface_value": 1e-5}
 config["tracer"]["atmos_mod"]["liq_wat"] = {"longname": "cloud liquid specific humidity"}
 print(config)
 ```
