@@ -35,11 +35,10 @@ from access.config.grammar_contract import KEY_LIST, REPEAT_RULE
 from access.config.grammar_values import (
     VALUE_TYPE_HANDLER_REGISTRY,
     UnsupportedEntryError,
-    identical_values,
     select_value_rule,
 )
 from access.config.list_layout import VALUE_MARKER, ListText, layout_candidates
-from access.config.tree_edits import blank_comments, parse_entry_nodes, replace_entry_contents
+from access.config.tree_edits import blank_comments, parse_entry_nodes, replace_entry_contents, rewritten_text
 from access.config.tree_navigation import is_value_node, locate_entry, node_at
 from access.config.tree_reader import read_entries
 
@@ -174,7 +173,9 @@ def _value_texts(
     texts = []
     for index, (value, origin) in enumerate(zip(values, origins, strict=True)):
         if origin is not None:
-            texts.append(_rewritten_text(ref.value_nodes[origin], value))
+            node = ref.value_nodes[origin]
+            assert node is not None
+            texts.append(rewritten_text(node, value))
             continue
         neighbour = _nearest_old(origins, index)
         if neighbour is not None:
@@ -190,29 +191,6 @@ def _value_texts(
             raise UnsupportedEntryError(f"This format cannot store {value!r} in the list '{key}'")
         texts.append(VALUE_TYPE_HANDLER_REGISTRY[rule].to_new_token(value))
     return texts
-
-
-def _rewritten_text(node: Tree | None, value: Any) -> str:
-    """Return the token text for *value* written over the old element held by *node*.
-
-    Args:
-        node (Tree | None): The value node of the old element.
-        value (Any): The new value.
-
-    Returns:
-        str: The token text.
-
-    Raises:
-        TypeError: If *value* is not of the old element's type.
-    """
-    assert node is not None
-    handler = VALUE_TYPE_HANDLER_REGISTRY[str(node.data)]
-    token = str(node.children[0])
-    if identical_values(handler.from_token(token), value):
-        return token
-    if not handler.type_check(value):
-        raise TypeError("Trying to change value type")
-    return handler.to_token(value, token)
 
 
 def _nearest_old(origins: Sequence[int | None], index: int) -> int | None:

@@ -313,7 +313,6 @@ class TestCopiedTemplate:
             type_check=lambda value: isinstance(value, str),
             from_token=str,
             to_token=particular,
-            seed_token=lambda value: "",
         )
         offer(admitted=frozenset({"particular"}))
         style = copied((1, "key_value"), KEY, literal(": "), Fragment("value", notation=("particular", "old")))

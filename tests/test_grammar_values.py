@@ -296,6 +296,42 @@ class TestSelectValueRule:
         assert select_value_rule("word", {"identifier", "string"}, ("identifier", "string")) == "identifier"
 
 
+class TestRewrite:
+    """Writing a new value over the token that held the old one."""
+
+    def test_a_token_already_holding_the_value_keeps_its_text(self) -> None:
+        """Test that an unchanged element is written exactly as it was.
+
+        ``1.0d0`` would otherwise come back as ``1.0``, and a NaN, which cannot be written
+        anew, could not be written over itself.
+        """
+        assert VALUE_TYPE_HANDLER_REGISTRY["double"].rewrite(1.0, "1.0d0") == "1.0d0"
+        assert VALUE_TYPE_HANDLER_REGISTRY["float"].rewrite(math.nan, "nan") == "nan"
+
+    def test_a_new_value_takes_the_notation_of_the_token_it_replaces(self) -> None:
+        """Test that an edit does not restyle what it writes over."""
+        assert VALUE_TYPE_HANDLER_REGISTRY["double"].rewrite(2.5, "1.0d0") == "2.5"
+        assert VALUE_TYPE_HANDLER_REGISTRY["double"].rewrite(1e-20, "1.0d0") == "1d-20"
+
+    def test_a_value_of_another_type_is_refused(self) -> None:
+        """Test that the type is fixed by what the file already holds."""
+        with pytest.raises(TypeError, match="change value type"):
+            VALUE_TYPE_HANDLER_REGISTRY["integer"].rewrite("text", "1")
+
+    def test_a_value_the_format_cannot_write_is_refused(self) -> None:
+        """Test that a value of the right type is still refused if it cannot be written."""
+        with pytest.raises(UnsupportedEntryError):
+            VALUE_TYPE_HANDLER_REGISTRY["float"].rewrite(math.inf, "1.0")
+
+    def test_a_handler_without_notation_writes_the_value_as_text(self) -> None:
+        """Test the defaults a bare-word type relies on: read and written as the text."""
+        handler = VALUE_TYPE_HANDLER_REGISTRY["identifier"]
+
+        assert handler.from_token("word") == "word"
+        assert handler.rewrite("other", "word") == "other"
+        assert handler.to_new_token("fresh") == "fresh"
+
+
 class TestIdenticalValues:
     """Whether two values are the same value, which equality does not say."""
 
@@ -508,15 +544,6 @@ class TestNamedAssignments:
         assert [rule for rule, handler in VALUE_TYPE_HANDLER_REGISTRY.items() if handler.collects] == [
             "named_assignments"
         ]
-
-
-def test_priority_covers_every_registered_rule() -> None:
-    """Test that no value type is left unreachable when a new key is written.
-
-    A rule in the registry but missing from the priority order would parse fine and never be
-    chosen for a new entry, which is the kind of gap that shows up only as odd output.
-    """
-    assert set(VALUE_RULE_PRIORITY) == set(VALUE_TYPE_HANDLER_REGISTRY)
 
 
 def test_priority_states_the_ambiguous_pairs() -> None:

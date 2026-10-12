@@ -21,7 +21,7 @@ from lark import Token, Tree
 from lark.exceptions import UnexpectedInput
 
 from access.config.grammar_contract import COMMENT_RULES, KEY_LIST, KEY_VALUE, REPEAT_RULE
-from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY, identical_values
+from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
 from access.config.tree_navigation import (
     AddParent,
     contains_entry,
@@ -55,27 +55,26 @@ def update_node_value(rule_node: Tree, value: Any) -> None:
     Raises:
         TypeError: Raises an exception if the new and old value types do not match.
     """
-    text = _updated_text(rule_node, value)
-    if text is not None:
-        token = rule_node.children[0]
-        assert isinstance(token, Token)
-        rule_node.children[0] = token.update(value=text)
-
-
-def _updated_text(rule_node: Tree, value: Any) -> str | None:
-    """Return the token text that writes *value* over a node, or ``None`` if it holds it.
-
-    Raises ``TypeError`` for a value of another type, and whatever the handler refuses.
-    """
-    handler = VALUE_TYPE_HANDLER_REGISTRY.get(str(rule_node.data))
-    if handler is None or not handler.type_check(value):
-        raise TypeError("Trying to change value type")
+    text = rewritten_text(rule_node, value)
     # The Token storing the value is always the first child of a value-type rule node.
     token = rule_node.children[0]
     assert isinstance(token, Token)
-    if identical_values(handler.from_token(str(token)), value):
-        return None
-    return handler.to_token(value, str(token))
+    if text != token:
+        rule_node.children[0] = token.update(value=text)
+
+
+def rewritten_text(rule_node: Tree, value: Any) -> str:
+    """Return the token text that writes *value* over a value-type node.
+
+    The node's own text if it already holds *value*; see ``ValueTypeHandler.rewrite``.
+
+    Raises:
+        TypeError: If the node is not a value-type node, or holds another type.
+    """
+    handler = VALUE_TYPE_HANDLER_REGISTRY.get(str(rule_node.data))
+    if handler is None:
+        raise TypeError("Trying to change value type")
+    return handler.rewrite(value, str(rule_node.children[0]))
 
 
 def parse_entry_nodes(lark: Lark, container: str, snippet: str) -> list[Tree | Token]:
@@ -489,7 +488,7 @@ def _check_entry(entry: Tree, occurrences: list[tuple[int, Tree]], values: Seque
         _repeat_texts(nodes, occurrences, values)
     else:
         for position, node in occurrences:
-            _updated_text(node, values[position])
+            rewritten_text(node, values[position])
 
 
 def _write_entry(
