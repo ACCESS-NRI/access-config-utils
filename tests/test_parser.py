@@ -1050,18 +1050,16 @@ def test_config_add_a_block_through_a_chain_of_keys() -> None:
 def test_config_records_written_one_entry_each() -> None:
     """Test a method an FMS field table writes one line per record, read as a list of them.
 
-    A record is edited in place, and a new one is written beside the one before it, as a
-    copy of it: tight commas here, like its neighbours. A record held by the caller follows
-    its place in the list.
+    A record is replaced whole, and a new one is written beside the one before it, as a
+    copy of it: tight commas here, like its neighbours.
     """
     text = '"tracer", "a"\n  "rayleigh","Str","i=1,j=9"\n  "rayleigh","Str","i=2,j=9" /\n'
     config = HeaderParser().parse(text)
     records = config["tracer"]["a"]["rayleigh"]
-    second = records[1]
 
-    records[0]["i"] = 5
+    records[0] = {**records[0], "i": 5}
     records.insert(0, {"value": "Str", "i": 0, "j": 9})
-    second["j"] = 8
+    records[2] = {**records[2], "j": 8}
 
     assert str(config) == (
         '"tracer", "a"\n  "rayleigh","Str","i=0,j=9"\n  "rayleigh","Str","i=5,j=9"\n  "rayleigh","Str","i=2,j=8" /\n'

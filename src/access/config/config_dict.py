@@ -55,8 +55,8 @@ class ConfigList(list):
     together, all alike.
 
     A list of records, which the file writes one entry per record, keeps at least one
-    instead, and hands each record out as a ``ConfigRecord``: a dict whose every write
-    reaches the file too.
+    instead, and hands each record out as a ``ConfigRecord``: a dict that is read only,
+    changed by assigning a dict to its place in the list.
 
     A copy is a plain list, which is what a copy of the data is.
 
@@ -73,11 +73,7 @@ class ConfigList(list):
         super().__init__()
         self._store = store
         self._key = key
-        list.extend(self, [self._element(value) for value in data])
-
-    def _element(self, value: Any) -> Any:
-        """Return what stands for *value* in the list: a record for a dict, else itself."""
-        return ConfigRecord(value, self) if isinstance(value, dict) else value
+        list.extend(self, _held(data))
 
     def _write(self, values: list[Any], origins: list[int | None] | None = None) -> None:
         """Write *values* through the store, then hold them.
@@ -90,33 +86,11 @@ class ConfigList(list):
         """
         plain = [_plain(value) for value in values]
         self._store.replace(self._key, plain, origins)
-        self._hold(plain, origins)
+        self._hold(plain)
 
-    def _hold(self, values: list[Any], origins: Sequence[int | None] | None = None) -> None:
-        """Hold *values*, which the file already does, keeping each record that stays.
-
-        A record held by a caller goes on standing for the record it was read as, wherever
-        that now is in the list, so a write through it still reaches the file.
-
-        Args:
-            values (list[Any]): The new elements.
-            origins (Sequence[int | None] | None): The old position each stands in for, as
-                for ``_write``. ``None`` matches them position by position when the length
-                is the same, and not at all when it is not.
-        """
-        if origins is None:
-            origins = list(range(len(values))) if len(values) == len(self) else [None] * len(values)
-        old = list(self)
-        elements = []
-        for value, origin in zip(values, origins, strict=True):
-            record = old[origin] if origin is not None else None
-            if isinstance(record, ConfigRecord) and isinstance(value, dict):
-                dict.clear(record)
-                dict.update(record, value)
-                elements.append(record)
-            else:
-                elements.append(self._element(value))
-        list.__setitem__(self, slice(None), elements)
+    def _hold(self, values: list[Any]) -> None:
+        """Hold *values*, which the file already does, in place of what the list held."""
+        list.__setitem__(self, slice(None), _held(values))
 
     def __setitem__(self, index: SupportsIndex | slice, value: Any) -> None:
         """Override to write the element or elements through the parse tree.
@@ -204,83 +178,33 @@ class ConfigRecord(dict):
 
     An FMS field table writes a method that way: ``"profile_type", "fixed",
     "surface_value=1.e30"`` is the record ``{"value": "fixed", "surface_value": 1e30}``.
-    Every write to the dict is a write of the whole record to its place in the list, which
-    reaches the file first and changes the dict only once it has: a write the file cannot
-    take raises and leaves both as they were.
+    A record is read only, since changing one of its parameters is writing the whole entry:
+    it is replaced by assigning a dict to its place in the list, as in
+    ``methods[0] = {**methods[0], "surface_value": 2e30}``.
 
     A copy is a plain dict, which is what a copy of the data is.
-
-    Args:
-        data (dict[str, Any]): The record.
-        owner (ConfigList): The list holding it.
     """
 
-    _owner: ConfigList  # The list holding the record.
-
-    def __init__(self, data: dict[str, Any], owner: ConfigList) -> None:
-        super().__init__(data)
-        self._owner = owner
-
-    def _write(self, record: dict[str, Any]) -> None:
-        """Write *record* in place of this one, through the list holding it.
+    def _refuse(self, *args: Any, **kwargs: Any) -> NoReturn:
+        """Reject a write to the record.
 
         Args:
-            record (dict[str, Any]): The record as it is to be.
+            *args (Any): Ignored.
+            **kwargs (Any): Ignored.
 
         Raises:
-            ValueError: If the list no longer holds this record.
+            TypeError: Always.
         """
-        for index, element in enumerate(self._owner):
-            if element is self:
-                self._owner[index] = record
-                return
-        raise ValueError("This record is no longer in the list it was read from")
+        raise TypeError("A record is replaced whole: assign a dict to its place in the list")
 
-    def __setitem__(self, key: str, value: Any) -> None:
-        """Override to write the parameter through the parse tree."""
-        self._write({**self, key: value})
-
-    def __delitem__(self, key: str) -> None:
-        """Override to remove the parameter from the parse tree too."""
-        record = dict(self)
-        del record[key]
-        self._write(record)
-
-    def update(self, other: Any = (), /, **kwargs: Any) -> None:
-        """Override to write the parameters through the parse tree."""
-        record = dict(self)
-        record.update(other, **kwargs)
-        self._write(record)
-
-    def setdefault(self, key: str, default: Any = None) -> Any:
-        """Override to add a parameter only if absent, through the parse tree."""
-        if key not in self:
-            self[key] = default
-        return self[key]
-
-    def pop(self, key: str, /, *default: Any) -> Any:
-        """Override to remove a parameter through the parse tree."""
-        if key in self:
-            value = self[key]
-            del self[key]
-            return value
-        if default:
-            return default[0]
-        raise KeyError(key)
-
-    def popitem(self) -> tuple[str, Any]:
-        """Override to remove the last parameter through the parse tree."""
-        key = next(reversed(list(self)))
-        return key, self.pop(key)
-
-    def clear(self) -> None:
-        """Override to empty the record through the parse tree, which a record refuses."""
-        self._write({})
-
-    def __ior__(self, other: Any) -> ConfigRecord:  # type: ignore[override, misc]
-        """Override in-place merge, writing the parameters through the parse tree."""
-        self.update(other)
-        return self
+    __setitem__ = _refuse  # type: ignore[assignment]
+    __delitem__ = _refuse  # type: ignore[assignment]
+    __ior__ = _refuse  # type: ignore[assignment]
+    update = _refuse  # type: ignore[assignment]
+    setdefault = _refuse  # type: ignore[assignment]
+    pop = _refuse  # type: ignore[assignment]
+    popitem = _refuse  # type: ignore[assignment]
+    clear = _refuse  # type: ignore[assignment]
 
     def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[Any, ...]:
         """Copy and pickle as a plain dict: the parse tree is not data."""
@@ -290,6 +214,11 @@ class ConfigRecord(dict):
 def _plain(value: Any) -> Any:
     """Return *value* as plain data: a record as a ``dict``, anything else as it is."""
     return dict(value) if isinstance(value, ConfigRecord) else value
+
+
+def _held(values: Iterable[Any]) -> list[Any]:
+    """Return what stands for *values* in a list: a record for a dict, else the value."""
+    return [ConfigRecord(value) if isinstance(value, dict) else value for value in values]
 
 
 class ConfigBlockList(list):

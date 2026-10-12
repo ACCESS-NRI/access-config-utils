@@ -613,7 +613,7 @@ def records_ref(key: str = "r", *controls: str) -> EntryRef:
 
 
 class TestConfigRecord:
-    """A record of a list written one entry per record, as a dict writing through it."""
+    """A record of a list written one entry per record, as a dict that is read only."""
 
     FIRST, SECOND = {"value": "a", "x": 1}, {"value": "b", "x": 2}
 
@@ -631,42 +631,40 @@ class TestConfigRecord:
         assert listed == [self.FIRST, self.SECOND]
 
     @pytest.mark.parametrize(
-        ("write", "expected"),
+        "write",
         [
-            pytest.param(lambda r: r.__setitem__("x", 5), {"value": "a", "x": 5}, id="set"),
-            pytest.param(lambda r: r.__delitem__("x"), {"value": "a"}, id="del"),
-            pytest.param(lambda r: r.update({"y": 1}, z=2), {"value": "a", "x": 1, "y": 1, "z": 2}, id="update"),
-            pytest.param(lambda r: r.setdefault("y", 3), {"value": "a", "x": 1, "y": 3}, id="setdefault"),
-            pytest.param(lambda r: r.pop("x"), {"value": "a"}, id="pop"),
-            pytest.param(lambda r: r.popitem(), {"value": "a"}, id="popitem"),
-            pytest.param(lambda r: r.__ior__({"y": 1}), {"value": "a", "x": 1, "y": 1}, id="ior"),
-            pytest.param(lambda r: r.clear(), {}, id="clear"),
+            pytest.param(lambda r: r.__setitem__("x", 5), id="set"),
+            pytest.param(lambda r: r.__delitem__("x"), id="del"),
+            pytest.param(lambda r: r.update({"y": 1}, z=2), id="update"),
+            pytest.param(lambda r: r.setdefault("y", 3), id="setdefault"),
+            pytest.param(lambda r: r.pop("x"), id="pop"),
+            pytest.param(lambda r: r.popitem(), id="popitem"),
+            pytest.param(lambda r: r.__ior__({"y": 1}), id="ior"),
+            pytest.param(lambda r: r.clear(), id="clear"),
         ],
     )
-    def test_a_write_is_a_write_of_the_whole_record(self, records, write, expected) -> None:
-        """Test that every way of changing the dict reaches the file, record and all."""
+    def test_a_record_is_replaced_whole_and_never_written_into(self, records, write) -> None:
+        """Test that every way of writing to the dict is refused, and reaches nothing."""
         listed, store = records
-        record = listed[0]
 
-        write(record)
+        with pytest.raises(TypeError, match="replaced whole"):
+            write(listed[0])
 
-        assert record == expected
-        assert listed[0] is record
-        assert store.asked("replace") == [("r", [expected, self.SECOND])]
+        assert listed[0] == self.FIRST
+        assert store.calls == []
 
-    def test_reading_a_parameter_writes_nothing(self, records) -> None:
-        """Test the calls that leave the record as it is."""
+    def test_a_record_is_replaced_by_assigning_a_dict_to_its_place(self, records) -> None:
+        """Test the way to change one: the whole record, assigned to its place."""
         listed, store = records
-        record = listed[0]
 
-        assert record.setdefault("x", 9) == 1
-        assert record.pop("nope", "fallback") == "fallback"
-        with pytest.raises(KeyError):
-            record.pop("nope")
-        assert store.asked("replace") == []
+        listed[0] = {**listed[0], "x": 5}
 
-    def test_a_write_the_file_refuses_leaves_the_record_as_it_was(self, records) -> None:
-        """Test that the dict changes only once the file has."""
+        assert listed[0] == {"value": "a", "x": 5}
+        assert isinstance(listed[0], ConfigRecord)
+        assert store.asked("replace") == [("r", [{"value": "a", "x": 5}, self.SECOND])]
+
+    def test_a_replacement_the_file_refuses_leaves_the_record_as_it_was(self, records) -> None:
+        """Test that the list changes only once the file has."""
         listed, store = records
 
         def refuse(key, values, origins):
@@ -674,28 +672,18 @@ class TestConfigRecord:
 
         store.replace = refuse  # type: ignore[method-assign]
         with pytest.raises(TypeError, match="refused"):
-            listed[0]["x"] = 5
+            listed[0] = {**listed[0], "x": 5}
 
         assert listed[0] == self.FIRST
 
-    def test_a_record_stays_one_through_a_change_of_length(self, records) -> None:
-        """Test that a record held by a caller follows its place in the list."""
+    def test_a_change_of_length_leaves_every_element_a_record(self, records) -> None:
+        """Test that a record added to the list is one like those it holds."""
         listed, _ = records
-        second = listed[1]
 
         listed.insert(0, {"value": "c"})
 
-        assert listed[2] is second
-        assert isinstance(listed[0], ConfigRecord)
-
-    def test_a_record_the_list_no_longer_holds_refuses_a_write(self, records) -> None:
-        """Test that a removed record says so rather than writing somewhere else."""
-        listed, _ = records
-        first = listed[0]
-        listed.pop(0)
-
-        with pytest.raises(ValueError, match="no longer in the list"):
-            first["x"] = 5
+        assert all(isinstance(element, ConfigRecord) for element in listed)
+        assert listed == [{"value": "c"}, self.FIRST, self.SECOND]
 
     def test_a_copy_is_plain_data(self, records) -> None:
         """Test that copying a record, or a list of them, gives dicts, not views."""
@@ -747,16 +735,15 @@ class TestAddingRecords:
         assert store.asked("remove") == ["r"]
 
     def test_a_whole_list_of_records_assigned_over_one(self) -> None:
-        """Test that the records stay records, matched to the ones held by position."""
+        """Test that the records handed out afterwards are those of the new values."""
         store = FakeStore({"r": records_ref("r", "x=1")})
         config = Config(store)
-        held = config["r"][0]
 
         config["r"] = [{"value": "a", "x": 5}]
 
         assert store.asked("replace") == [("r", [{"value": "a", "x": 5}])]
-        assert config["r"][0] is held
-        assert held == {"value": "a", "x": 5}
+        assert config["r"] == [{"value": "a", "x": 5}]
+        assert isinstance(config["r"][0], ConfigRecord)
 
 
 class TestConfigBlockList:
