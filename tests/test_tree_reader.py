@@ -74,8 +74,7 @@ class TestReadEntries:
     def test_records_the_nodes_an_edit_will_need(self) -> None:
         """Test that a reference names both the whole entry and the values inside it.
 
-        The entry node is what deletion unlinks; the value nodes are what assignment writes
-        into.
+        Deletion unlinks the entry node; assignment writes into the value nodes.
         """
         value = value_node("integer", "1")
         entry = entry_node("key_value", "a", value)
@@ -96,8 +95,7 @@ class TestReadEntries:
     def test_does_not_descend_into_a_block(self) -> None:
         """Test that the entries of a block belong to it, read separately when opened.
 
-        Re-reading a whole tree would otherwise build a second set of references for every
-        nested entry, leaving any block handed out earlier detached from the dict.
+        Re-reading nested entries would detach any block handed out earlier from the dict.
         """
         inner = entry_node("key_value", "inner", value_node())
         outer = entry_node("key_block", "blk", Tree("block", [inner]))
@@ -118,8 +116,7 @@ class TestReadEntries:
     def test_but_every_entry_that_wrote_the_key_is_remembered(self) -> None:
         """Test that a key assigned twice records both entries, in the order written.
 
-        Only the last value reaches the configuration, but deleting the key has to take
-        both lines with it or the key returns the next time the file is read.
+        Only the last value reaches the configuration, but deletion must take both lines.
         """
         early = entry_node("key_value", "a", value_node("integer", "1"))
         late = entry_node("key_value", "a", value_node("integer", "2"))
@@ -131,8 +128,7 @@ class TestReadEntries:
     def test_entries_of_different_categories_accumulate_too(self) -> None:
         """Test that the record spans categories, since the last assignment sets the shape.
 
-        A file may write a key as a scalar and then as a list. The reference is the list --
-        that is what the configuration holds -- and both entries still have to go.
+        A scalar then a list reads as the list, and both entries still have to go.
         """
         scalar = entry_node("key_value", "a", value_node())
         listed = entry_node("key_list", "a", value_node(), value_node())
@@ -153,8 +149,7 @@ class TestBlocksWrittenMoreThanOnce:
     def test_two_blocks_under_one_key_are_merged(self) -> None:
         """Test that both contribute their entries rather than the last one winning.
 
-        The merged node is a view holding the real children in order. Nothing is copied: an
-        edit through it reaches the nodes Lark built, and the two blocks stay as they were.
+        The merged node views the real children: an edit through it reaches the tree.
         """
         first = Tree("block", [entry_node("key_value", "b", value_node())])
         second = Tree("block", [entry_node("key_value", "c", value_node())])
@@ -195,8 +190,7 @@ class TestElidedElements:
     def test_a_skipped_position_backs_no_node(self) -> None:
         """Test that an ``elided`` child becomes an absent node, and so a null value.
 
-        That is the same shape a position no indexed entry wrote already has, which is what
-        makes it read as ``None`` and refuse to be written through.
+        The shape a position no indexed entry wrote has: it reads as ``None``, unwritable.
         """
         first, second = value_node("integer", "1"), value_node("integer", "3")
         node = entry_node("key_list", "v", first, Tree("elided", []), second)
@@ -209,8 +203,7 @@ class TestElidedElements:
     def test_an_entry_of_nothing_but_skipped_positions_is_refused(self) -> None:
         """Test that a list has to hold at least one real value.
 
-        Every position absent means the entry says nothing at all, and there would be no
-        value node to read a type from.
+        With every position absent there is no value node to read a type from.
         """
         node = entry_node("key_list", "v", Tree("elided", []), Tree("elided", []))
 
@@ -241,8 +234,7 @@ class TestRepeatedBlocksKeptApart:
     def test_every_occurrence_stays_addable(self) -> None:
         """Test that a kept occurrence is a real node in the tree, so it has a body.
 
-        This is what a merged block cannot offer: its node is not in the parse tree, so
-        splicing an entry into it would change nothing that gets written out.
+        A merged block's node is not in the parse tree, so a splice into it changes nothing.
         """
         first = entry_node("key_block", "a", Tree("block", []))
         second = entry_node("key_block", "a", Tree("block", []))
@@ -252,8 +244,7 @@ class TestRepeatedBlocksKeptApart:
     def test_a_secondary_block_rule_merges_whatever_the_policy(self) -> None:
         """Test that only the primary block rule repeats as records.
 
-        Repeating one of the others means something else: a Fortran derived type spells one
-        component per line, so two of them are two writings of a single key.
+        A derived type spells a component per line: two are two writings of one key.
         """
         first = entry_node("key_block", "a", Tree("dtype_body", [entry_node("key_value", "b", value_node())]))
         second = entry_node("key_block", "a", Tree("dtype_body", [entry_node("key_value", "c", value_node())]))
@@ -268,8 +259,7 @@ class TestRepeatedBlocksKeptApart:
     def test_a_secondary_block_rule_cannot_be_added_to(self) -> None:
         """Test that only the format's primary block rule accepts a new entry.
 
-        It is the only Lark start symbol, so it is the only body a synthesised entry can be
-        parsed into. A Fortran derived type is held by the other kind.
+        Only it is a Lark start symbol, so only it can have a synthesised entry parsed in.
         """
         entry = entry_node("key_block", "a", Tree("dtype_body", []))
         ctx = FakeContext(block_rules=("block", "dtype_body"))
@@ -279,8 +269,7 @@ class TestRepeatedBlocksKeptApart:
     def test_a_key_both_assigned_and_used_as_a_block_is_refused(self) -> None:
         """Test that the two cannot be merged, since that would discard the value.
 
-        Building a block around a value node drops the value with no error, and deleting the
-        key afterwards leaves the configuration disagreeing with the file.
+        A block built around a value node drops the value with no error.
         """
         scalar = entry_node("key_value", "a", value_node())
         block = entry_node("key_block", "a", Tree("block", []))
@@ -454,8 +443,7 @@ class TestGatheringAnIndexedArray:
     def test_a_valueless_entry_read_first_becomes_position_one(self) -> None:
         """Test ``v =`` followed by ``v(2) = 3``, where the null is seeded into the array.
 
-        The valueless assignment was read as an ordinary entry, so its value has to take the
-        position it would have occupied before the indexed one can be placed beside it.
+        The valueless entry takes its position before the indexed one is placed beside it.
         """
         refs = read_entries(
             container(
@@ -470,8 +458,7 @@ class TestGatheringAnIndexedArray:
     def test_a_repeat_spread_across_positions_is_not_multiplied(self) -> None:
         """Test the case that makes a gathered array carry its own values.
 
-        The repeat backs positions 1 and 3 with something else at 2, so reading it at each
-        appearance would give five values instead of three.
+        A repeat backing positions 1 and 3, with another value at 2, would read as five.
         """
         run = repeat(2, value_node("integer", "1"))
         # One repeat child covering two elements, as "v(1:3:2) = 2*1" parses.
@@ -549,8 +536,7 @@ class TestKeyNormalisation:
 class TestRejectedShapes:
     """Trees a grammar can produce and the reader cannot use.
 
-    Each is an aliasing mistake in a grammar. Reporting them is what turns a silent
-    misreading -- a list stored as a scalar, an entry with no key -- into a failed parse.
+    Each is an aliasing mistake; reporting it turns a silent misreading into a failed parse.
     """
 
     def test_a_key_value_holding_more_than_one_value(self) -> None:
@@ -585,8 +571,7 @@ class TestRejectedShapes:
     def test_a_block_entry_whose_body_is_not_a_block_node(self) -> None:
         """Test that an unrecognised body is skipped rather than misread.
 
-        ``key_block`` scans its children for a rule named ``block`` and reports nothing if
-        there is none, which is how a grammar aliasing the body shows up as a missing key.
+        A grammar aliasing the body shows up as a missing key, since no ``block`` is found.
         """
         entry = entry_node("key_block", "blk", Tree("body", []))
 
@@ -595,8 +580,7 @@ class TestRejectedShapes:
     def test_the_first_key_rule_is_the_entry_own(self) -> None:
         """Test that an entry holding a nested key takes the outer one.
 
-        A ``key_block`` node has the keys of its contents below it, and the first in
-        order is always the block's own.
+        A ``key_block`` has its contents' keys below it; the first in order is its own.
         """
         inner = entry_node("key_value", "inner", value_node())
         entry = entry_node("key_block", "outer", Tree("block", [inner]))

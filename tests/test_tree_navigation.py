@@ -76,9 +76,7 @@ class TestAddParent:
     def test_refuses_a_node_parented_twice(self) -> None:
         """Test the assertion guarding against a tree node reused in two places.
 
-        A node object appearing under two parents makes ``.parent`` a lie, and the insertion
-        path relies on it to find the container an entry sits in. Re-visiting an annotated
-        tree is the way that happens by accident.
+        Two parents make ``.parent`` a lie; re-visiting an annotated tree does it.
         """
         root = Tree("start", [Tree("key_value", [])])
         AddParent().visit(root)
@@ -98,8 +96,7 @@ class TestFindingEntries:
     def test_entry_nodes_looks_through_a_line(self) -> None:
         """Test that an entry nested inside a line node is still found.
 
-        A Fortran namelist puts several assignments on one line, so the entry is not a
-        direct child of the container.
+        A namelist line holds several assignments, so an entry is not a direct child.
         """
         first, second = scalar("a"), scalar("b")
         assert entry_nodes(line(first, Token("COMMA", ","), second)) == [first, second]
@@ -161,8 +158,7 @@ class TestCommentLines:
     def test_an_entry_with_a_trailing_comment_is_not_one(self) -> None:
         """Test that a comment belonging to an entry does not make its line a comment.
 
-        MOM6 documents nearly every parameter with a comment starting on its own line, so
-        getting this wrong would make a new entry land in the middle of the documentation.
+        Getting this wrong lands a new MOM6 entry in the middle of a parameter's docs.
         """
         assert not is_comment_line(line(scalar(), Tree("comment", [Token("C", "# why")])))
 
@@ -185,16 +181,14 @@ class TestEntryInsertionIndex:
     def test_container_with_no_entry_but_a_leading_comment(self) -> None:
         """Test that a header comment is stepped over even with no entry to start from.
 
-        The scan starts at zero, so a file that is nothing but a comment block still has its
-        first entry placed after the block rather than above it.
+        A file of nothing but a comment block gets its first entry after the block.
         """
         assert entry_insertion_index(Tree("start", [comment_line(), comment_line()])) == 2
 
     def test_after_the_last_entry(self) -> None:
         """Test that a new entry follows the last one, before any trailing blank line.
 
-        Appending instead would put it after the blank line -- and, in a block, outside the
-        block altogether.
+        Appending would put it after the blank line, and in a block outside the block.
         """
         container = Tree("start", [scalar("a"), scalar("b"), line()])
         assert entry_insertion_index(container) == 2
@@ -202,8 +196,7 @@ class TestEntryInsertionIndex:
     def test_steps_over_a_trailing_comment_run(self) -> None:
         """Test that a comment run touching the insertion point is stepped over.
 
-        One past the entry is the second line of a comment that began on the entry's own
-        line, so the entry belongs after the whole run rather than inside it.
+        One past the entry is inside a comment begun on its line, so go after the run.
         """
         container = Tree("start", [scalar("a"), comment_line(), comment_line()])
         assert entry_insertion_index(container) == 3
@@ -314,8 +307,7 @@ class TestNodeAt:
 class TestReadingValues:
     """What a value node contributes to its entry.
 
-    One value for an ordinary node, and *n* for ``n*v`` -- which is why a node and a list
-    element are no longer one to one.
+    One value for an ordinary node, *n* for ``n*v``: nodes and elements are not one to one.
     """
 
     def test_a_plain_value_node_is_one_value(self) -> None:
@@ -389,10 +381,8 @@ class TestIndexPositions:
     def test_a_qualifier_it_does_not_model(self, spec) -> None:
         """Test the ones left alone, which keep their text in the key instead.
 
-        A multidimensional index addresses an array of arrays, which this flat model cannot
-        hold; a non-numeric bound names nothing it can place; a zero stride goes nowhere;
-        and an empty qualifier names no position at all. Reporting ``None`` is what stops
-        ``v(1,1)`` and ``v(3,3)`` reading as one key.
+        Multidimensional, non-numeric, zero-stride and empty qualifiers give ``None``, which
+        is what stops ``v(1,1)`` and ``v(3,3)`` reading as one key.
         """
         assert index_positions(index_node(spec), 2) is None
 
@@ -430,8 +420,7 @@ class TestPlacingAndFlattening:
     def test_flatten_fills_the_gaps_with_nulls(self) -> None:
         """Test that a position no entry wrote reads as null, backed by no node.
 
-        Having no node is what makes it unwritable: there is nowhere in the file to put a
-        value for it.
+        With no node there is nowhere in the file to put a value, so it is unwritable.
         """
         first, third = value_node(text="1"), value_node(text="3")
 

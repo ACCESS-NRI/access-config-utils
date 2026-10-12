@@ -36,8 +36,7 @@ from access.config.tree_navigation import AddParent, is_value_node
 class FakeInfo:
     """Stands in for ``GrammarInfo`` where only the merge test is consulted.
 
-    Args:
-        repetitions: Names of the rules to report as a plain repetition.
+    *repetitions* names the rules to report as a plain repetition.
     """
 
     def __init__(self, *repetitions: str) -> None:
@@ -70,8 +69,7 @@ class TestUpdateNodeValue:
     def test_leaves_the_token_object_intact(self) -> None:
         """Test that a fresh ``Token`` is put in place rather than the old one mutated.
 
-        ``Token`` is a ``str`` subclass and therefore immutable; the node's child list is
-        what changes.
+        ``Token`` is an immutable ``str`` subclass; the node's child list is what changes.
         """
         node = value_node("integer", "1")
         original = node.children[0]
@@ -200,8 +198,7 @@ class TestRemoveEntryNode:
     def test_repairs_the_runs_the_removal_left_adjacent(self) -> None:
         """Test the Fortran case: text either side of a namelist becomes one run.
 
-        The grammar requires entries and the text between them to alternate, so leaving two
-        text nodes side by side gives a tree the start rule cannot derive.
+        Entries and text must alternate, or the start rule cannot derive the tree.
         """
         before, after = Tree("random_text", [Token("T", "x")]), Tree("random_text", [Token("T", "y")])
         doomed = entry_node("key_block", "nml")
@@ -220,8 +217,7 @@ class TestPruneEmptyWrappers:
     def test_removes_a_wrapper_the_grammar_cannot_derive_empty(self) -> None:
         """Test the Fortran line rule: an assignment plus an optional comment and newline.
 
-        Once the assignment goes there is nothing the rule can derive, so the line goes with
-        it -- taking the trailing comment, which described the line that has gone.
+        Once the assignment goes the line goes too, with the comment that described it.
         """
         line = Tree("nml_line", [Tree("fortran_comment", [Token("C", "! note")])])
         container = Tree("block", [line, entry_node("key_value", "kept", value_node())])
@@ -245,8 +241,7 @@ class TestPruneEmptyWrappers:
     def test_never_prunes_a_repetition_rule(self) -> None:
         """Test that a container accepting any number of children is left alone.
 
-        Those hold the blank lines and free text that belong to the file rather than to any
-        one entry, so an empty one is not a shape the grammar rejects.
+        It holds the blank lines and free text of the file, so an empty one is derivable.
         """
         empty = Tree("block", [])
         container = Tree("start", [empty])
@@ -280,8 +275,7 @@ class TestMergeAdjacentRepetitions:
     def test_merges_two_and_reparents_what_moves(self) -> None:
         """Test that the surviving node owns the children it absorbs.
 
-        Exercised with rule nodes rather than tokens, since only a ``Tree`` carries the
-        ``.parent`` that has to be corrected.
+        Rule nodes, not tokens: only a ``Tree`` carries the ``.parent`` to be corrected.
         """
         left, right = Tree("block", [Tree("x", [])]), Tree("block", [Tree("y", [])])
         container = Tree("start", [left, right, Tree("equal", [])])
@@ -358,8 +352,7 @@ class TestParseEntryNodes:
     def test_produces_the_nodes_of_the_container_rule(self, lark) -> None:
         """Test that parsing with the container as the start symbol yields its children.
 
-        This is what makes hand-building nodes unnecessary: rule inlining, aliases and
-        terminal renaming all come out right because Lark did them.
+        Rule inlining, aliases and terminal renaming come out right because Lark did them.
         """
         [node] = [n for n in parse_entry_nodes(lark, "start", "a=1\n") if isinstance(n, Tree)]
 
@@ -374,9 +367,7 @@ class TestParseEntryNodes:
     def test_drops_a_node_that_matched_no_text(self, lark) -> None:
         """Test the filter, without which a second empty node joins the container's own.
 
-        A rule able to derive the empty string produces one of these. Splicing it would
-        give the container two, a shape the grammar cannot derive and the reconstructor
-        refuses to write out.
+        A rule that derives the empty string makes one; two would be underivable.
         """
         nodes = parse_entry_nodes(lark, "start", "a=1\n")
 
@@ -412,9 +403,8 @@ REPEAT_GRAMMAR = """
 class TestWritingValues:
     """Writing a list through the nodes behind it, a repeat only as a whole.
 
-    A repeat backs several list elements at once, so writing one of them cannot be an
-    in-place token update, and splitting the run is not done: the whole repeat is written,
-    or the write is refused.
+    A repeat backs several elements, so writing one cannot be an in-place token update:
+    the whole repeat is written, or the write is refused.
     """
 
     @pytest.fixture(scope="class")
@@ -478,8 +468,7 @@ class TestWritingValues:
     def test_part_of_a_repeat_cannot_be_written(self, lark) -> None:
         """Test that one element of a run is not given another value on its own.
 
-        The run would have to be split in two, which is not done in place: the caller is
-        told to delete the key and assign it again.
+        That would split the run: the caller is told to delete the key and assign again.
         """
         [node] = self._nodes(lark, "x = 6*9.0\n")
 
@@ -506,8 +495,7 @@ class TestWritingValues:
     def test_refuses_a_value_for_a_position_the_file_never_wrote(self, lark) -> None:
         """Test the hole in an array, which has no node to write through.
 
-        A position no entry mentioned is read as null and stays that way; giving it a value
-        would mean inventing a line to hold it.
+        A position no entry mentioned stays null; a value would mean inventing a line.
         """
         [node] = self._nodes(lark, "x = 1\n")
 
@@ -521,8 +509,7 @@ class TestWritingValues:
     def test_a_value_the_file_refuses_leaves_every_node_as_it_was(self, lark) -> None:
         """Test that a write is all or nothing.
 
-        The first element is fine and the second is not, and the first must not have been
-        written by the time that is found out.
+        The first element is fine and the second is not: the first must not be written.
         """
         nodes = self._nodes(lark, "x = 1, 2\n")
 
@@ -546,8 +533,7 @@ class TestWritingValues:
     def test_a_value_refused_in_a_repeat_leaves_the_elements_before_it_as_they_were(self, lark) -> None:
         """Test that a repeat is checked before anything is written, like a plain node.
 
-        The repeat comes second and is refused for its type; the plain element before it
-        must not have been written by then.
+        The repeat comes second and is refused for its type; the plain one stays unwritten.
         """
         [plain] = self._nodes(lark, "x = 1\n")
         [repeat] = self._nodes(lark, "y = 2*2\n")
