@@ -28,16 +28,16 @@ from access.config.parser import ConfigParser
 def test_parser_is_abstract() -> None:
     """Test that the base class cannot be instantiated without a grammar.
 
-    It declares two abstract properties, so a subclass that forgets either is refused at
-    construction rather than failing somewhere inside ``parse``.
+    It declares the grammar as an abstract property, so a subclass that forgets it is
+    refused at construction rather than failing somewhere inside ``parse``.
     """
     with pytest.raises(TypeError):
         ConfigParser()
 
     class NoGrammar(ConfigParser):
         @property
-        def case_sensitive_keys(self) -> bool:
-            return True
+        def key_case(self) -> str:
+            return "upper"
 
     with pytest.raises(TypeError):
         NoGrammar()
@@ -46,15 +46,11 @@ def test_parser_is_abstract() -> None:
 def test_parser_declares_defaults() -> None:
     """Test the properties a format only overrides when it has to.
 
-    A subclass supplies a grammar and a case-sensitivity flag and nothing else. It then
+    A subclass supplies a grammar and nothing else. Its keys are then case-sensitive, and it
     declares no template, so a new entry of a kind the file has none of is refused.
     """
 
     class Minimal(ConfigParser):
-        @property
-        def case_sensitive_keys(self) -> bool:
-            return True
-
         @property
         def grammar(self) -> str:
             return TOY_GRAMMAR
@@ -62,13 +58,12 @@ def test_parser_declares_defaults() -> None:
     parser = Minimal()
 
     assert parser.entry_templates == {}
-    assert parser.key_case == "upper"
+    assert parser.key_case == "keep"
 
     # Whatever the subclass declares is what reaches the parsed configuration.
     ctx = parser.parse("a=1")._store.ctx
-    assert ctx.case_sensitive_keys is True
     assert ctx.entry_templates == {}
-    assert ctx.key_case == "upper"
+    assert ctx.key_case == "keep"
 
 
 @pytest.mark.parametrize("name", PARSERS)
@@ -798,10 +793,6 @@ class WrongParser(ConfigParser):
     """Parser with an incorrect grammar where keys are not terminals."""
 
     @property
-    def case_sensitive_keys(self) -> bool:
-        return False
-
-    @property
     def grammar(self) -> str:
         return """
     start: key_value
@@ -833,10 +824,6 @@ def test_config_wrong_key_rule(wrong_parser):
 
 class TemplateParser(ConfigParser):
     """Parser overriding the text used for a new entry, to exercise the override path."""
-
-    @property
-    def case_sensitive_keys(self) -> bool:
-        return True
 
     @property
     def grammar(self) -> str:
@@ -925,10 +912,6 @@ class BlocklessParser(ConfigParser):
     """Parser for a grammar with no block rule, so it keeps a single start symbol."""
 
     @property
-    def case_sensitive_keys(self) -> bool:
-        return True
-
-    @property
     def entry_templates(self):
         return {("start", "key_value"): "{key}={value}"}
 
@@ -1013,10 +996,6 @@ class HeaderParser(ConfigParser):
     block, so the type's block has no body in the file and a new name has to be written as
     a whole header.
     """
-
-    @property
-    def case_sensitive_keys(self) -> bool:
-        return True
 
     @property
     def block_rules(self) -> tuple[str, ...]:

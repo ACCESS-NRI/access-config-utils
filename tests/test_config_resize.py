@@ -50,7 +50,7 @@ GRAMMAR = """
 @pytest.fixture(scope="module")
 def ctx() -> ParseContext:
     """Return a context over the grammar above, with a real reconstructor."""
-    return ParseContext(compile_grammar(GRAMMAR), True, {})
+    return ParseContext(compile_grammar(GRAMMAR), {})
 
 
 def store_of(ctx: ParseContext, text: str) -> ConfigStore:

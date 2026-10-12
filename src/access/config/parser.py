@@ -3,10 +3,10 @@
 
 """The base class a configuration parser is built by extending.
 
-One class, and the three properties a format has to declare: its grammar, whether its keys
-are case-sensitive, and -- rarely -- how a brand-new entry should be laid out. Everything
-that happens to the parsed result afterwards lives elsewhere; ``parse`` compiles the
-grammar, hands the text to Lark, and wraps the tree in a ``Config``.
+One class, and the one property a format has to declare: its grammar. How its keys are
+cased and how a brand-new entry should be laid out are declared where the defaults do not
+fit. Everything that happens to the parsed result afterwards lives elsewhere; ``parse``
+compiles the grammar, hands the text to Lark, and wraps the tree in a ``Config``.
 """
 
 from __future__ import annotations
@@ -28,7 +28,8 @@ class ConfigParser(ABC):
     dict: a series of key-value assignments, where a value is a scalar (``a=1``), a list
     (``a=1,2,3``) or a block of further assignments (``blk: b=1, c=2``).
 
-    Subclassing means supplying a Lark grammar and saying whether keys are case-sensitive.
+    Subclassing means supplying a Lark grammar, and saying how keys are cased where they are
+    not case-sensitive.
     The grammar has to be written against the naming contract stated in full in
     ``grammar_contract`` -- the rule names there are what lets one set of machinery read,
     edit and extend every format.
@@ -50,27 +51,18 @@ class ConfigParser(ABC):
         """
 
     @property
-    @abstractmethod
-    def case_sensitive_keys(self) -> bool:
-        """Property indicating if the configuration uses case-sensitive keys or not.
-
-        Returns:
-            bool: Are the keys case-sensitive?
-        """
-
-    @property
     def key_case(self) -> str:
-        """The case a key is stored in, for a format whose keys are not case-sensitive.
+        """The case a key is stored in.
 
-        ``"upper"``, the default, is what a Fortran namelist uses. ``"lower"`` is for a
-        format whose own reader lowercases names, as the FMS field manager does, so that
-        the keys of the dict are the names the model sees. Ignored when
-        ``case_sensitive_keys`` is true.
+        ``"keep"``, the default, is for a format whose keys are case-sensitive: two
+        spellings of a key are two entries. The others are for a format whose own reader
+        ignores case, so that two spellings are one entry, stored in the case the reader
+        sees: ``"upper"`` for a Fortran namelist, ``"lower"`` for the FMS field manager.
 
         Returns:
-            str: ``"upper"`` or ``"lower"``.
+            str: ``"keep"``, ``"upper"`` or ``"lower"``.
         """
-        return "upper"
+        return "keep"
 
     @property
     def entry_templates(self) -> Mapping[tuple[str, str], str]:
@@ -146,7 +138,6 @@ class ConfigParser(ABC):
         """
         ctx = ParseContext(
             compile_grammar(self.grammar),
-            self.case_sensitive_keys,
             self.entry_templates,
             tuple(self.block_rules),
             self.repeated_blocks,

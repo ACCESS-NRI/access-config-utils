@@ -225,10 +225,6 @@ class Parser(ConfigParser):
     """Parser using the grammar defined above, with case sensitive keys."""
 
     @property
-    def case_sensitive_keys(self) -> bool:
-        return True
-
-    @property
     def entry_templates(self) -> Mapping[tuple[str, str], str]:
         return TOY_TEMPLATES
 
@@ -247,8 +243,8 @@ class CaseParser(ConfigParser):
     """Parser using the grammar defined above, with case insensitive keys."""
 
     @property
-    def case_sensitive_keys(self) -> bool:
-        return False
+    def key_case(self) -> str:
+        return "upper"
 
     @property
     def entry_templates(self) -> Mapping[tuple[str, str], str]:
@@ -326,14 +322,12 @@ class FakeContext:
     def __init__(
         self,
         *,
-        case_sensitive: bool = True,
         info: Any = None,
         lark: Any = None,
         block_rules: tuple[str, ...] = ("block",),
         repeated_blocks: str = "merge",
-        key_case: str = "upper",
+        key_case: str = "keep",
     ) -> None:
-        self.case_sensitive_keys = case_sensitive
         self.key_case = key_case
         self.info = info if info is not None else RepetitionInfo()
         self.lark = lark
@@ -347,9 +341,7 @@ class FakeContext:
 
     def normalise_key(self, key: str) -> str:
         """Normalise as a real ``ParseContext`` would."""
-        if self.case_sensitive_keys:
-            return key
-        return key.lower() if self.key_case == "lower" else key.upper()
+        return {"keep": key, "upper": key.upper(), "lower": key.lower()}[self.key_case]
 
 
 class FakeStore:

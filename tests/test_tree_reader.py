@@ -531,7 +531,7 @@ class TestKeyNormalisation:
         """Test the namelist, where two spellings of a key have to be one entry."""
         entry = entry_node("key_value", "MixedCase", value_node())
 
-        assert list(read_entries(container(entry), FakeContext(case_sensitive=False))) == ["MIXEDCASE"]
+        assert list(read_entries(container(entry), FakeContext(key_case="upper"))) == ["MIXEDCASE"]
 
     def test_two_spellings_become_one_entry(self) -> None:
         """Test the consequence: a file naming a key twice in different case has it once."""
@@ -540,7 +540,7 @@ class TestKeyNormalisation:
                 entry_node("key_value", "dt", value_node("integer", "1")),
                 entry_node("key_value", "DT", value_node("integer", "2")),
             ),
-            FakeContext(case_sensitive=False),
+            FakeContext(key_case="upper"),
         )
 
         assert list(refs) == ["DT"]

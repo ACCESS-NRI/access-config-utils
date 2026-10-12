@@ -167,7 +167,7 @@ class TestValueTypes:
 
 
 class TestKeyCase:
-    """``case_sensitive_keys`` is True, so two spellings of a key are two entries."""
+    """Keys are case-sensitive, so two spellings of a key are two entries."""
 
     def test_two_spellings_of_a_key_are_two_entries(self, parser) -> None:
         """Test that case is significant, so ``A`` and ``a`` do not collide."""

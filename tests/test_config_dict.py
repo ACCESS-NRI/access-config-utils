@@ -145,7 +145,7 @@ class TestAddingAKey:
 
     def test_a_case_insensitive_format_normalises_the_dict_key_only(self) -> None:
         """Test the namelist: the entry is keyed uppercase, the file keeps the spelling."""
-        store = FakeStore({}, ctx=FakeContext(case_sensitive=False), added={"Z": ref("key_value", "Z")})
+        store = FakeStore({}, ctx=FakeContext(key_case="upper"), added={"Z": ref("key_value", "Z")})
         config = Config(store)
 
         config["z"] = 5
@@ -399,7 +399,7 @@ class TestKeyCase:
 
     def test_case_insensitive_reaches_the_same_entry_either_way(self) -> None:
         """Test the namelist, where the spelling used to look a key up does not matter."""
-        store = FakeStore({"A": ref("key_value", "A")}, ctx=FakeContext(case_sensitive=False))
+        store = FakeStore({"A": ref("key_value", "A")}, ctx=FakeContext(key_case="upper"))
         config = Config(store)
 
         assert config["a"] == config["A"] == 1

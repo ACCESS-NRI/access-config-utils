@@ -60,10 +60,6 @@ class NUOPCRunSeqParser(ConfigParser):
     """NUOPC run sequence parser."""
 
     @property
-    def case_sensitive_keys(self) -> bool:
-        return True
-
-    @property
     def entry_templates(self) -> Mapping[tuple[str, str], str]:
         """Mapping[tuple[str, str], str]: The text of a new table, a line per element."""
         return {
