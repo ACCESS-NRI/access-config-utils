@@ -61,25 +61,6 @@ def entry_category(value: Any) -> str:
     return KEY_VALUE
 
 
-def _same_value(stored: Any, requested: Any) -> bool:
-    """Report whether re-reading the written text gave back exactly the requested value.
-
-    The type is compared as well as the value, because several value types share a Python
-    type and a written value can be read back as the wrong one: ``Path("foo")`` writes as
-    ``foo``, which a grammar with a bare-word value type reads back as a plain ``str``. And
-    a NaN read back is the NaN requested, though the two compare unequal. A record is
-    compared whole, the type of every value in it included.
-
-    Args:
-        stored (Any): The value read back from the candidate text.
-        requested (Any): The value the caller asked to store.
-
-    Returns:
-        bool: True if the two match in both type and value.
-    """
-    return identical_values(stored, requested)
-
-
 def entry_matches(
     refs: Mapping[str, EntryRef], keys: Sequence[str], value: Any, ctx: ParseContext, category: str | None = None
 ) -> bool:
@@ -113,7 +94,8 @@ def entry_matches(
             refs = read_entries(ref.block_node, ctx)
     expected = category or entry_category(value)
     if ref.collected:
-        return expected == KEY_VALUE and _same_value(entry_value(ref), [value])
+        # A record is compared whole, the type of each of its values included.
+        return expected == KEY_VALUE and identical_values(entry_value(ref), [value])
     if ref.category != expected:
         return False
     if ref.category == KEY_BLOCK:
@@ -125,9 +107,9 @@ def entry_matches(
     stored = entry_value(ref)
     if ref.category == KEY_LIST:
         return len(stored) == len(value) and all(
-            _same_value(item, wanted) for item, wanted in zip(stored, value, strict=True)
+            identical_values(item, wanted) for item, wanted in zip(stored, value, strict=True)
         )
-    return _same_value(stored, value)
+    return identical_values(stored, value)
 
 
 def insert_entry(
