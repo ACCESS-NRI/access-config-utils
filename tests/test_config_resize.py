@@ -222,10 +222,20 @@ class TestCandidates:
 
     @pytest.mark.parametrize(
         "candidate",
-        [pytest.param("a = = 1\n", id="does-not-parse"), pytest.param("a = 1, 2, 4\n", id="other-values")],
+        [
+            pytest.param("a = = 1\n", id="does-not-parse"),
+            pytest.param("a = 1, 2, 4\n", id="other-values"),
+            pytest.param("a = 1, 2, 3  # new\n", id="changes-the-line-outside-the-entry"),
+        ],
     )
     def test_no_candidate_reads_back(self, ctx, candidate) -> None:
-        """Test that a list no layout can write is refused, leaving the file alone."""
+        """Test that a list no layout can write is refused, leaving the file alone.
+
+        The last candidate reads back as the list asked for, but its comment is in the line
+        ending, outside the entry. Putting the new entry into the old line would leave that
+        comment out, so the line would not be written as the candidate says: that is refused
+        rather than written differently.
+        """
         store = store_of(ctx, "a = 1, 2\n")
 
         with (
