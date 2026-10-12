@@ -11,16 +11,16 @@ maps each rule name to its handler. A rule name absent from the registry is not 
 position, which is how the rest of the package recognises one.
 
 Several handlers accept the same Python type, so writing a value for a key that does not
-exist yet also needs a rule to be *chosen*. ``VALUE_RULE_PRIORITY`` and
-``select_value_rule`` do that, and ``UnsupportedEntryError`` reports a value that no
-admitted rule can express.
+exist yet also needs a rule to be *chosen*. The order of the registry is the order of
+preference and ``select_value_rule`` applies it, and ``UnsupportedEntryError`` reports a
+value that no admitted rule can express.
 """
 
 from __future__ import annotations
 
 import math
 import re
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -628,28 +628,21 @@ knows how to check, parse, and serialise the corresponding Python type.
 """
 
 
-VALUE_RULE_PRIORITY: tuple[str, ...] = tuple(VALUE_TYPE_HANDLER_REGISTRY)
-"""Order in which value-type rules are tried when writing a value for a brand-new key.
-
-The order of ``VALUE_TYPE_HANDLER_REGISTRY``, whose comment says why it is the one it is.
-A parser can override it through ``ConfigParser.value_rule_priority``.
-"""
-
-
-def select_value_rule(value: Any, admitted: Collection[str], priority: Sequence[str]) -> str | None:
+def select_value_rule(value: Any, admitted: Collection[str]) -> str | None:
     """Choose the value-type rule to use when writing *value* into a new entry.
+
+    The first admitted rule that accepts the value, in the order of the registry, which is
+    the order of preference; the comment above it says why.
 
     Args:
         value (Any): The Python value to be written.
         admitted (Collection[str]): Names of the value-type rules the format has.
-        priority (Sequence[str]): Order in which to consider rules.
 
     Returns:
         str | None: The chosen rule name, or ``None`` if no admitted rule accepts *value*.
     """
-    for rule_name in priority:
-        handler = VALUE_TYPE_HANDLER_REGISTRY.get(rule_name)
-        if rule_name in admitted and handler is not None and handler.type_check(value):
+    for rule_name, handler in VALUE_TYPE_HANDLER_REGISTRY.items():
+        if rule_name in admitted and handler.type_check(value):
             return rule_name
     return None
 

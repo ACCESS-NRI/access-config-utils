@@ -25,7 +25,6 @@ from access.config.grammar_compiled import (
     ParseContext,
     compile_grammar,
 )
-from access.config.grammar_values import VALUE_RULE_PRIORITY
 
 WITH_BLOCK = """
     start: entry*
@@ -124,9 +123,7 @@ class TestParseContext:
     @pytest.fixture
     def ctx(self) -> ParseContext:
         """Return a context over a real compiled grammar."""
-        return ParseContext(
-            compile_grammar(WITHOUT_BLOCK), True, {("start", "key_value"): "{key}={value}"}, ("integer",)
-        )
+        return ParseContext(compile_grammar(WITHOUT_BLOCK), True, {("start", "key_value"): "{key}={value}"})
 
     def test_exposes_the_artefacts_of_its_grammar(self, ctx) -> None:
         """Test the three accessors, saving every caller a reach through ``.grammar``."""
@@ -138,7 +135,6 @@ class TestParseContext:
         """Test that the per-format settings travel with the grammar they apply to."""
         assert ctx.case_sensitive_keys is True
         assert ctx.entry_templates == {("start", "key_value"): "{key}={value}"}
-        assert ctx.value_rule_priority == ("integer",)
 
     @pytest.mark.parametrize(
         ("text", "accepted"),
@@ -166,14 +162,14 @@ class TestParseContext:
             %import common.WS
             %ignore WS
         """
-        ctx = ParseContext(compile_grammar(grammar), True, {}, VALUE_RULE_PRIORITY)
+        ctx = ParseContext(compile_grammar(grammar), True, {})
 
         assert ctx.accepts_key("horizontal-advection-scheme")
         assert ctx.accepts_key("ocean_age_tracer/global")
 
     def test_accepts_key_without_a_key_rule(self) -> None:
         """Test that a grammar with no ``key`` rule, and so no entries, accepts no name."""
-        ctx = ParseContext(compile_grammar("start: integer\n%import config.integer"), True, {}, VALUE_RULE_PRIORITY)
+        ctx = ParseContext(compile_grammar("start: integer\n%import config.integer"), True, {})
 
         assert not ctx.accepts_key("a")
 
@@ -186,14 +182,14 @@ class TestParseContext:
 
         The spelling the caller used is kept only for the file text of a brand-new entry.
         """
-        ctx = ParseContext(compile_grammar(WITHOUT_BLOCK), False, {}, VALUE_RULE_PRIORITY)
+        ctx = ParseContext(compile_grammar(WITHOUT_BLOCK), False, {})
 
         assert ctx.normalise_key("MixedCase") == "MIXEDCASE"
         assert ctx.normalise_key("MIXEDCASE") == "MIXEDCASE"
 
     def test_normalise_key_lowercases_when_the_parser_says_so(self) -> None:
         """Test the field table, whose reader lowercases names, as its dict does."""
-        ctx = ParseContext(compile_grammar(WITHOUT_BLOCK), False, {}, VALUE_RULE_PRIORITY, key_case="lower")
+        ctx = ParseContext(compile_grammar(WITHOUT_BLOCK), False, {}, key_case="lower")
 
         assert ctx.normalise_key("MixedCase") == "mixedcase"
         assert ctx.normalise_key("mixedcase") == "mixedcase"

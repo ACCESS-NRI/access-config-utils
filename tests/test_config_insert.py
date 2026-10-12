@@ -377,18 +377,10 @@ def test_insert_entry_passes_the_style_and_template_through(container) -> None:
     style = EntryStyle(indent="    ")
     ctx = FakeContext()
     ctx.entry_templates = {("start", "key_value"): "{key}={value}", ("block", "key_value"): "{key}:{value}"}
-    ctx.value_rule_priority = ("integer",)
     ctx.info.value_rules = frozenset({"integer"})
 
-    def record(category, keys, value, given_style, declared, admitted, priority):
-        seen.update(
-            category=category,
-            keys=keys,
-            style=given_style,
-            declared=declared,
-            admitted=admitted,
-            priority=priority,
-        )
+    def record(category, keys, value, given_style, declared, admitted):
+        seen.update(category=category, keys=keys, style=given_style, declared=declared, admitted=admitted)
         return iter(())
 
     patches = patch.multiple(config_insert, iter_entry_snippets=record, entry_insertion_index=lambda c: 0)
@@ -402,7 +394,6 @@ def test_insert_entry_passes_the_style_and_template_through(container) -> None:
         "style": style,
         "declared": "{key}={value}",
         "admitted": ctx.info.value_rules,
-        "priority": ctx.value_rule_priority,
     }
 
 

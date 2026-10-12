@@ -18,7 +18,6 @@ from access.config.config_dict import Config
 from access.config.config_store import ConfigStore
 from access.config.grammar_compiled import ParseContext, compile_grammar
 from access.config.grammar_contract import BLOCK_RULE, START_RULE
-from access.config.grammar_values import VALUE_RULE_PRIORITY
 from access.config.tree_navigation import AddParent
 
 
@@ -35,8 +34,7 @@ class ConfigParser(ABC):
     edit and extend every format.
 
     A new entry is written as a copy of the nearest entry of its kind. For the first entry
-    of a kind, which has none to copy, a parser declares the text in ``entry_templates``;
-    ``value_rule_priority`` says how a new value is spelled where several rules would do.
+    of a kind, which has none to copy, a parser declares the text in ``entry_templates``.
 
     This class is abstract to prevent instantiation, as it requires a grammar in order to
     work at all.
@@ -137,19 +135,6 @@ class ConfigParser(ABC):
         """
         return "merge"
 
-    @property
-    def value_rule_priority(self) -> Sequence[str]:
-        """Order in which value-type rules are tried when writing a value for a new key.
-
-        Several value types accept the same Python type, so the order decides how a value is
-        written: whether a ``bool`` becomes ``.true.`` or ``True``, or a ``float`` uses a
-        double-precision exponent. Only rules the grammar admits are considered.
-
-        Returns:
-            Sequence[str]: The rule names, most preferred first.
-        """
-        return VALUE_RULE_PRIORITY
-
     def parse(self, stream: str) -> Config:
         """Parse the given text.
 
@@ -163,7 +148,6 @@ class ConfigParser(ABC):
             compile_grammar(self.grammar),
             self.case_sensitive_keys,
             self.entry_templates,
-            tuple(self.value_rule_priority),
             tuple(self.block_rules),
             self.repeated_blocks,
             self.key_case,

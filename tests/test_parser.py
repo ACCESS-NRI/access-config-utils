@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 from conftest import CANONICAL, CHAIN_CANONICAL, PARSERS, TOY_GRAMMAR
 
-from access.config.grammar_values import VALUE_RULE_PRIORITY, UnsupportedEntryError
+from access.config.grammar_values import UnsupportedEntryError
 from access.config.parser import ConfigParser
 
 
@@ -62,14 +62,12 @@ def test_parser_declares_defaults() -> None:
     parser = Minimal()
 
     assert parser.entry_templates == {}
-    assert parser.value_rule_priority is VALUE_RULE_PRIORITY
     assert parser.key_case == "upper"
 
     # Whatever the subclass declares is what reaches the parsed configuration.
     ctx = parser.parse("a=1")._store.ctx
     assert ctx.case_sensitive_keys is True
     assert ctx.entry_templates == {}
-    assert ctx.value_rule_priority == tuple(VALUE_RULE_PRIORITY)
     assert ctx.key_case == "upper"
 
 
@@ -489,8 +487,9 @@ def test_config_add_key_value_types(parser):
     """Test the value type chosen for a new key, for every type the grammar admits.
 
     This grammar admits both members of every ambiguous pair, so these expectations are the
-    specification of ``VALUE_RULE_PRIORITY``: ``logical`` over ``bool``, ``float`` over
-    ``double``, ``complex`` over ``double_complex`` and ``string`` over ``identifier``.
+    specification of the order of ``VALUE_TYPE_HANDLER_REGISTRY``: ``logical`` over
+    ``bool``, ``float`` over ``double``, ``complex`` over ``double_complex`` and ``string``
+    over ``identifier``.
     """
     config = parser.parse("a=1")
     config["t1"] = True
@@ -851,20 +850,14 @@ class TemplateParser(ConfigParser):
         # against a real format, in test_nuopc_config.py.
         return {("start", "key_value"): "{key}={value}", ("block", "key_value"): "{key}:{value}"}
 
-    @property
-    def value_rule_priority(self):
-        # Prefer the bare identifier over the quoted string, reversing the default.
-        return ["identifier", "string", "logical", "bool", "integer", "float", "double"]
-
 
 def test_config_entry_template_override():
-    """Test that a parser-declared template and value priority are used"""
+    """Test that a parser-declared template is used"""
     parser = TemplateParser()
 
     config = parser.parse("a=1")
     config["z"] = "word"
-    # The overridden priority picks identifier, so the value is not quoted.
-    _check_added(parser, config, "a=1 z=word")
+    _check_added(parser, config, 'a=1 z="word"')
 
     config = parser.parse("blk<a:2>")
     config["blk"]["b"] = 3
@@ -884,13 +877,11 @@ def test_config_entry_template_used_without_a_donor():
     _check_added(parser, config, "a=1 blk<b:3>")
 
 
-def test_config_add_value_rule_fallback():
-    """Test that a value whose preferred rendering reads back as another type falls back.
+def test_config_add_string_that_reads_as_another_type():
+    """Test that a string the grammar would read as a boolean is written quoted.
 
-    With ``identifier`` preferred over ``string``, the string ``"True"`` would be written as
-    the bare word ``True``, which this grammar reads back as a boolean. That candidate is
-    rejected and the quoted form is used instead, so the priority order can never produce a
-    wrong value.
+    The bare word ``True`` reads back as a boolean in this grammar, so the string ``"True"``
+    has to go in quotes, or it would be stored as the wrong type.
     """
     parser = TemplateParser()
 

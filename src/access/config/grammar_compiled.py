@@ -13,8 +13,8 @@ once and answers both. It is held on an instance rather than in a module-level c
 that it dies with the compiled grammar it describes.
 
 ``ParseContext`` pairs those artefacts with the settings the parser class declares -- key
-case-sensitivity, hand-written entry templates, value-rule priority. It is what a parsed
-configuration carries around so that it can still edit itself long after ``parse`` returned.
+case-sensitivity, hand-written entry templates. It is what a parsed configuration carries
+around so that it can still edit itself long after ``parse`` returned.
 """
 
 from __future__ import annotations
@@ -142,8 +142,6 @@ class ParseContext:
         entry_templates (Mapping[tuple[str, str], str]): The text of a new entry, keyed by
             container rule name and entry category. Used where the file has no entry of the
             kind to copy.
-        value_rule_priority (tuple[str, ...]): Order in which value-type rules are tried for
-            a new value.
         block_rules (tuple[str, ...]): Names of the rules holding block contents, the one
             new entries are written into first.
         repeated_blocks (str): What a file writing the same block twice means, ``"merge"``
@@ -156,7 +154,6 @@ class ParseContext:
     grammar: CompiledGrammar
     case_sensitive_keys: bool
     entry_templates: Mapping[tuple[str, str], str]
-    value_rule_priority: tuple[str, ...]
     block_rules: tuple[str, ...] = (BLOCK_RULE,)
     repeated_blocks: str = "merge"
     key_case: str = "upper"

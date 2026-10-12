@@ -168,7 +168,6 @@ def insert_entry(
         style,
         ctx.entry_templates.get((container_rule, category)),
         ctx.info.value_rules,
-        ctx.value_rule_priority,
     ):
         # Read the candidate in a throwaway container, so one that parses but does not mean
         # the right thing leaves no trace. A candidate can fail to parse, or parse into a

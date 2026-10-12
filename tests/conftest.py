@@ -141,7 +141,6 @@ def assert_canonical_entry(
         EntryStyle(),
         parser.entry_templates.get((container, category)),
         compiled.info.value_rules,
-        tuple(parser.value_rule_priority),
     )
     for text in candidates:
         try:
@@ -339,7 +338,6 @@ class FakeContext:
         self.info = info if info is not None else RepetitionInfo()
         self.lark = lark
         self.entry_templates: dict[tuple[str, str], str] = {}
-        self.value_rule_priority: tuple[str, ...] = ()
         self.block_rules = block_rules
         self.repeated_blocks = repeated_blocks
 

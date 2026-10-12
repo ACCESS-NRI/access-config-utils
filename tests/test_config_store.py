@@ -60,13 +60,13 @@ GRAMMAR = """
 @pytest.fixture(scope="module")
 def ctx() -> ParseContext:
     """Return a context over the grammar above, with a real reconstructor."""
-    return ParseContext(compile_grammar(GRAMMAR), True, {}, ("integer", "string", "named_assignments"))
+    return ParseContext(compile_grammar(GRAMMAR), True, {})
 
 
 @pytest.fixture(scope="module")
 def chain_ctx() -> ParseContext:
     """Return a context reading ``link`` as a block too, with keys that ignore case."""
-    return ParseContext(compile_grammar(GRAMMAR), False, {}, ("integer", "string"), ("block", "link"))
+    return ParseContext(compile_grammar(GRAMMAR), False, {}, ("block", "link"))
 
 
 @pytest.fixture
