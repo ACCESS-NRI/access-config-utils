@@ -22,7 +22,6 @@ from access.config.tree_reader import (
     EntryRef,
     element_values,
     entry_value,
-    merge_blocks,
     read_entries,
 )
 
@@ -151,33 +150,24 @@ class TestReadEntries:
 class TestBlocksWrittenMoreThanOnce:
     """A key naming several blocks, as a derived type spread over lines does."""
 
-    def test_merge_blocks_holds_the_children_of_both(self) -> None:
-        """Test that the merged node is a view, holding the real children in order.
+    def test_two_blocks_under_one_key_are_merged(self) -> None:
+        """Test that both contribute their entries rather than the last one winning.
 
-        Nothing is copied: an edit through this node reaches the nodes Lark built, so the
-        file is written back with only the value that changed.
+        The merged node is a view holding the real children in order. Nothing is copied: an
+        edit through it reaches the nodes Lark built, and the two blocks stay as they were.
         """
         first = Tree("block", [entry_node("key_value", "b", value_node())])
         second = Tree("block", [entry_node("key_value", "c", value_node())])
+        entries = (entry_node("key_block", "a", first), entry_node("key_block", "a", second))
 
-        merged = merge_blocks(first, second)
-
-        assert merged.data == "block"
-        assert merged.children == [*first.children, *second.children]
-        # The sources are untouched, and the children are the same objects.
-        assert merged.children[0] is first.children[0]
-        assert len(first.children) == 1
-
-    def test_two_blocks_under_one_key_are_merged(self) -> None:
-        """Test that both contribute their entries rather than the last one winning."""
-        first = entry_node("key_block", "a", Tree("block", [entry_node("key_value", "b", value_node())]))
-        second = entry_node("key_block", "a", Tree("block", [entry_node("key_value", "c", value_node())]))
-
-        refs = read_entries(container(first, second), FakeContext())
+        refs = read_entries(container(*entries), FakeContext())
 
         assert list(refs) == ["a"]
-        assert len(refs["a"].block_node.children) == 2
-        assert refs["a"].entry_nodes == (first, second)
+        assert refs["a"].block_node.data == "block"
+        assert refs["a"].block_node.children == [*first.children, *second.children]
+        assert refs["a"].block_node.children[0] is first.children[0]
+        assert len(first.children) == 1
+        assert refs["a"].entry_nodes == entries
 
     def test_a_merged_block_cannot_be_added_to(self) -> None:
         """Test that a node the parse tree does not contain is marked unaddable.
