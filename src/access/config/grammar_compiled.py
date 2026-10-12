@@ -29,17 +29,16 @@ from lark.exceptions import ConfigurationError, UnexpectedInput
 from lark.grammar import Rule
 from lark.reconstruct import Reconstructor
 
-from access.config.grammar_contract import BLOCK_RULE, KEY_LIST, KEY_RULE, KEY_VALUE, START_RULE
+from access.config.grammar_contract import BLOCK_RULE, KEY_RULE, START_RULE
 from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
 
-OPTIONAL_START_RULES: tuple[str, ...] = (BLOCK_RULE, KEY_VALUE, KEY_LIST, KEY_RULE)
+OPTIONAL_START_RULES: tuple[str, ...] = (BLOCK_RULE, KEY_RULE)
 """Rules made start symbols as well, when the grammar defines them under those names.
 
 Text is handed back to Lark rather than turned into nodes by hand wherever nodes are needed,
-and the start symbol says what the text has to be valid as: a block for a new entry, an
-entry for the values written into one, a key for the name a new entry is written under. A
-rule reached only through an alias is not included, since Lark resolves start symbols
-against rule names.
+and the start symbol says what the text has to be valid as: a block for a new entry, a key
+for the name a new entry is written under. A rule reached only through an alias is not
+included, since Lark resolves start symbols against rule names.
 """
 
 GRAMMAR_DIR: Path = Path(__file__).parent

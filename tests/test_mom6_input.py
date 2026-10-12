@@ -22,10 +22,7 @@ import pytest
 from conftest import assert_canonical_entry, canonical_rows
 from lark.exceptions import UnexpectedInput
 
-from access.config.grammar_compiled import compile_grammar
 from access.config.mom6_input import MOM6InputParser
-from access.config.tree_edits import _parse_values
-from access.config.tree_navigation import is_value_node
 
 
 @pytest.fixture(scope="module")
@@ -411,19 +408,6 @@ class TestAddingAnEntry:
             config["B"]["N"] = {"Y": 1}
 
         assert str(config) == "B%\nX = 1\n%B\n"
-
-    def test_a_value_snippet_parses_for_a_line_ending_rule(self, parser) -> None:
-        """Test re-parsing values for a format whose entry rule ends with its line.
-
-        Rewriting an entry's values hands the text back to Lark with an entry rule as the
-        start symbol. This format's ``key_value`` ends with ``line_end``, so a snippet
-        without a trailing newline does not parse in it, while a grammar whose entry rule
-        stops short of the newline will not accept one *with*. Nothing reaches this
-        through the public API here, so it is pinned rather than left as a trap.
-        """
-        nodes = _parse_values(compile_grammar(parser.grammar).lark, ["1", "2"])
-
-        assert [node.data for node in nodes if is_value_node(node)] == ["integer", "integer"]
 
 
 class TestDeleting:

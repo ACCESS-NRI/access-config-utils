@@ -108,8 +108,9 @@ REPEAT_RULE: Final = "repeat"
 
 Unlike a value-type rule it is not in ``VALUE_TYPE_HANDLER_REGISTRY``: it holds a count
 token and, unless the repeat is of null values, the value-type rule node being repeated. One
-such node therefore backs several list elements, which is what ``write_values`` has to undo
-when one of them is written.
+such node therefore backs several list elements, and ``write_values`` writes them only
+together: giving them all one value rewrites the repeated token, and giving one of them
+another would split the run, which is refused.
 """
 
 KEY_VALUE: Final = "key_value"

@@ -926,7 +926,8 @@ class TestEditingAValue:
         [
             ("x = 1, 2", [5, "text"], TypeError),
             ("x = 1.0, 2.0", [5.0, float("nan")], UnsupportedEntryError),
-            ("x = 1, 3*2", [5, 2, 2, "text"], TypeError),
+            ("x = 1, 3*2", [5, "t", "t", "t"], TypeError),
+            ("x = 1, 3*2", [5, 2, 2, 7], ValueError),
         ],
     )
     def test_a_list_the_file_cannot_take_leaves_the_file_and_the_list_as_they_were(
@@ -963,48 +964,57 @@ class TestEditingAValue:
 
         assert str(config) == "&L\n  x = 5.0, nan, 2.0\n/\n"
 
-    def test_one_element_of_a_repeat_splits_the_run(self, parser) -> None:
-        """Test that the notation is kept rather than expanded, and the comment survives.
+    def test_one_element_of_a_repeat_is_not_written_on_its_own(self, parser) -> None:
+        """Test that a run is not split: "6*9.0" is six values written once.
 
-        The six values of "6*9.0" are backed by a single node, so writing one of them has to
-        rewrite the run. Neighbouring equal values are regrouped.
+        The caller is told to delete the key and assign it again, which is what a caller
+        that cannot do without the change does.
         """
         config = parser.parse("&L\n  X = 6*9.0, 4.0   ! keep me\n/\n")
 
-        config["L"]["X"][2] = 8.0
+        with pytest.raises(ValueError, match="delete it and assign it again"):
+            config["L"]["X"][2] = 8.0
 
-        assert config["L"]["X"] == [9.0, 9.0, 8.0, 9.0, 9.0, 9.0, 4.0]
-        assert str(config) == "&L\n  X = 2*9.0, 8.0, 3*9.0, 4.0   ! keep me\n/\n"
+        assert str(config) == "&L\n  X = 6*9.0, 4.0   ! keep me\n/\n"
+        assert config["L"]["X"] == [9.0] * 6 + [4.0]
+
+    def test_a_repeat_given_one_new_value_is_rewritten_in_place(self, parser) -> None:
+        """Test that setting a run alike keeps its count and the comment."""
+        config = parser.parse("&L\n  X = 6*9.0, 4.0   ! keep me\n/\n")
+
+        config["L"]["X"] = [9.5] * 6 + [4.0]
+
+        assert str(config) == "&L\n  X = 6*9.5, 4.0   ! keep me\n/\n"
         assert dict(parser.parse(str(config))) == dict(config)
 
-    def test_splitting_a_repeat_leaves_the_rest_of_the_entry_alone(self, parser) -> None:
-        """Test that only the node being split is replaced.
-
-        A comment or a line break between the entry's other values survives.
-        """
+    def test_rewriting_a_repeat_leaves_the_rest_of_the_entry_alone(self, parser) -> None:
+        """Test that a comment or a line break between the entry's other values survives."""
         config = parser.parse("&L\n  x = 2*9.0, ! keep me\n      1.0\n/\n")
 
-        config["L"]["X"][0] = 8.0
+        config["L"]["X"] = [8.0, 8.0, 1.0]
 
-        assert str(config) == "&L\n  x = 8.0, 9.0, ! keep me\n      1.0\n/\n"
+        assert str(config) == "&L\n  x = 2*8.0, ! keep me\n      1.0\n/\n"
         assert dict(parser.parse(str(config))) == dict(config)
 
-    @pytest.mark.parametrize(
-        ("values", "written"),
-        [([5, 5, 5], "3*5"), ([1, 2, 3], "1, 2, 3"), ([1, 1, 2], "2*1, 2")],
-    )
-    def test_a_whole_list_may_be_replaced(self, parser, values, written) -> None:
-        """Test that the entry rule itself changes with the values.
-
-        Holding a different number of values makes it a different kind of entry: one is
-        a scalar assignment and several are a list one.
-        """
+    @pytest.mark.parametrize(("values", "written"), [([5, 5, 5], "3*5"), ([1, 1, 1], "3*1")])
+    def test_a_whole_list_of_one_value_may_replace_a_repeat(self, parser, values, written) -> None:
+        """Test that a list all alike is written back as the run it replaces."""
         config = parser.parse("&L\n  X = 3*1\n/\n")
 
         config["L"]["X"] = values
 
         assert str(config) == f"&L\n  X = {written}\n/\n"
         assert dict(parser.parse(str(config))) == dict(config)
+
+    @pytest.mark.parametrize("values", [[1, 2, 3], [1, 1, 2]])
+    def test_a_list_that_is_not_all_alike_cannot_replace_a_repeat(self, parser, values) -> None:
+        """Test that a run cannot be split in place, however the whole list is given."""
+        config = parser.parse("&L\n  X = 3*1\n/\n")
+
+        with pytest.raises(ValueError, match="delete it and assign it again"):
+            config["L"]["X"] = values
+
+        assert str(config) == "&L\n  X = 3*1\n/\n"
 
     def test_a_repeat_is_as_strict_about_types_as_any_value(self, parser) -> None:
         """Test that a repeat of nulls names no type, so there is no notation to write."""
@@ -1014,7 +1024,7 @@ class TestEditingAValue:
 
         integers = parser.parse("&L\n  X = 3*1\n/\n")
         with pytest.raises(TypeError):
-            integers["L"]["X"][0] = "a"
+            integers["L"]["X"] = ["a", "a", "a"]
 
         assert str(integers) == "&L\n  X = 3*1\n/\n"
 
@@ -1044,21 +1054,6 @@ class TestEditingAValue:
 
         assert list(values) == [1.0, 8.0, 9.0, 4.0]
         assert str(config) == "&L\n  x = 1.0, 8.0, 9.0, 4.0\n/\n"
-        assert dict(parser.parse(str(config))) == dict(config)
-
-    def test_a_list_handed_out_earlier_still_writes_after_replacement(self, parser) -> None:
-        """Test that replacing a list does not strand the object the caller was holding.
-
-        Replacing a list written as a repeat replaces the nodes behind it, and the old list
-        went on writing through ones no longer in the tree.
-        """
-        config = parser.parse("&L\n  x = 3*1\n/\n")
-        values = config["L"]["X"]
-
-        config["L"]["X"] = [1, 2, 3]
-        values[0] = 99
-
-        assert str(config) == "&L\n  x = 99, 2, 3\n/\n"
         assert dict(parser.parse(str(config))) == dict(config)
 
     def test_an_array_spread_over_lines_is_edited_as_one_key(self, parser) -> None:
@@ -1097,31 +1092,32 @@ class TestEditingAValue:
         """Test writing an array whose entries alternate with each other.
 
         ``v(1:3:2)`` holds positions 1 and 3 and ``v(2)`` position 2, so the elements of
-        one entry are not next to each other in the list. Grouping them by where they sit
-        rather than by which entry wrote them rewrote the first entry twice, losing a value.
+        one entry are not next to each other in the list. A repeat is written as a whole, so
+        its two positions have to be given the same value.
         """
         config = parser.parse("&L\n  v(1:3:2) = 2*1\n  v(2) = 7\n/\n")
         assert config["L"]["V"] == [1, 7, 1]
 
-        config["L"]["V"] = [9, 8, 7]
+        config["L"]["V"] = [9, 8, 9]
 
-        assert str(config) == "&L\n  v(1:3:2) = 9, 7\n  v(2) = 8\n/\n"
+        assert str(config) == "&L\n  v(1:3:2) = 2*9\n  v(2) = 8\n/\n"
         assert dict(parser.parse(str(config))) == dict(config)
 
-    def test_entries_whose_positions_overlap_refuse_writes(self, parser) -> None:
-        """Test that a list whose positions are written twice is refused, not mangled.
+        with pytest.raises(ValueError, match="delete it and assign it again"):
+            config["L"]["V"] = [9, 8, 7]
 
-        Rewriting one entry means writing every value it holds, and an entry partly
-        overridden by a later one no longer appears in the list in full. Writing it would
-        silently shorten the line.
+    def test_entries_whose_positions_overlap_are_written_through_what_survives(self, parser) -> None:
+        """Test an entry partly overridden by a later one, of which the list holds the rest.
+
+        Only the nodes the list reads from are written, so the overridden position is left
+        as the file has it.
         """
         config = parser.parse("&L\n  a = 1, 3*7\n  a(1) = 0\n/\n")
         assert config["L"]["A"] == [0, 7, 7, 7]
 
-        with pytest.raises(ValueError):
-            config["L"]["A"] = [0, 7, 7, 7]
+        config["L"]["A"] = [5, 7, 7, 7]
 
-        assert str(config) == "&L\n  a = 1, 3*7\n  a(1) = 0\n/\n"
+        assert str(config) == "&L\n  a = 1, 3*7\n  a(1) = 5\n/\n"
 
     def test_a_merged_derived_type_is_editable_in_place(self, parser) -> None:
         """Test that writing through a merged block reaches the line that holds the value.
@@ -1455,21 +1451,6 @@ class TestResizingAList:
         with pytest.raises(ValueError, match=reason):
             config["L"]["X"].append(9)
         assert str(config) == source
-
-    def test_a_list_after_its_repeat_was_split(self, parser) -> None:
-        """Test that splitting a repeat through one element leaves the list writable.
-
-        The split replaces the node backing the run, and the references to it have to
-        follow, or assigning the whole list next writes through nodes no longer in the tree.
-        """
-        config = parser.parse("&L\n  x = 3*1\n/\n")
-
-        config["L"]["X"][1] = 2
-        assert str(config) == "&L\n  x = 1, 2, 1\n/\n"
-        config["L"]["X"] = [5, 5, 5]
-        config["L"]["X"].append(6)
-
-        assert str(config) == "&L\n  x = 5, 5, 5, 6\n/\n"
 
 
 class TestDeleting:

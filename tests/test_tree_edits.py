@@ -20,16 +20,12 @@ from lark.exceptions import UnexpectedInput
 from access.config.grammar_compiled import compile_grammar
 from access.config.grammar_values import UnsupportedEntryError
 from access.config.tree_edits import (
-    _runs_of,
-    _source_token,
-    _value_texts,
     blank_comments,
     merge_adjacent_repetitions,
     parse_entry_nodes,
     prune_empty_wrappers,
     remove_entry_node,
     replace_entry_contents,
-    replace_value_node,
     splice_entry_nodes,
     update_node_value,
     write_values,
@@ -413,11 +409,12 @@ REPEAT_GRAMMAR = """
 """
 
 
-class TestWritingRepeats:
-    """Splitting a repeat run when one of the elements it covers is written.
+class TestWritingValues:
+    """Writing a list through the nodes behind it, a repeat only as a whole.
 
     A repeat backs several list elements at once, so writing one of them cannot be an
-    in-place token update: the run has to be re-spelled and the node replaced.
+    in-place token update, and splitting the run is not done: the whole repeat is written,
+    or the write is refused.
     """
 
     @pytest.fixture(scope="class")
@@ -426,152 +423,100 @@ class TestWritingRepeats:
         return compile_grammar(REPEAT_GRAMMAR).lark
 
     @staticmethod
-    def _entry(lark, text: str) -> Tree:
-        """Parse one assignment and return its entry node, annotated."""
+    def _nodes(lark, text: str) -> list[Tree]:
+        """Parse one assignment and return the value nodes of its entry, annotated."""
         tree = lark.parse(text, start="start")
         AddParent().visit(tree)
-        return next(node for node in tree.iter_subtrees() if str(node.data) in ("key_value", "key_list"))
+        entry = next(node for node in tree.iter_subtrees() if str(node.data) in ("key_value", "key_list"))
+        return [child for child in entry.children if is_value_node(child)]
 
-    def test_runs_of_groups_equal_neighbours(self) -> None:
-        """Test the grouping that lets a constant run stay written as ``n*v``."""
-        assert _runs_of([9.0, 9.0, 8.0, 9.0, 9.0, 9.0]) == [(2, 9.0), (1, 8.0), (3, 9.0)]
-        assert _runs_of([1]) == [(1, 1)]
-        assert _runs_of([]) == []
-
-    def test_runs_of_separates_equal_values_of_different_types(self) -> None:
-        """Test that ``1`` and ``1.0`` are not one run, since they write differently."""
-        assert _runs_of([1, 1.0]) == [(1, 1), (1, 1.0)]
-
-    def test_source_token_reads_through_a_repeat(self, lark) -> None:
-        """Test that the notation comes from the repeated value, not the count."""
-        entry = self._entry(lark, "x = 3*1\n")
-        node = next(child for child in entry.children if is_value_node(child))
-
-        assert _source_token(node) == ("integer", "1")
-
-    def test_source_token_refuses_a_repeat_of_nulls(self, lark) -> None:
-        """Test that ``n*`` names no type, so there is no notation to write a value in."""
-        entry = self._entry(lark, "x = 2*\n")
-        node = next(child for child in entry.children if is_value_node(child))
-
-        with pytest.raises(TypeError, match="change value type"):
-            _source_token(node)
-
-    def test_value_texts_regroups_into_repeats(self, lark) -> None:
-        """Test that equal neighbours are written back as a count rather than expanded."""
-        entry = self._entry(lark, "x = 6*9.0\n")
-        node = next(child for child in entry.children if is_value_node(child))
-
-        assert _value_texts(node, [9.0, 9.0, 8.0, 9.0, 9.0, 9.0]) == ["2*9.0", "8.0", "3*9.0"]
-
-    def test_value_texts_writes_a_run_of_nulls_as_a_bare_count(self, lark) -> None:
-        """Test the one case needing no notation at all."""
-        entry = self._entry(lark, "x = 2*\n")
-        node = next(child for child in entry.children if is_value_node(child))
-
-        assert _value_texts(node, [None, None, None]) == ["3*"]
-
-    def test_value_texts_refuses_a_value_of_another_type(self, lark) -> None:
-        """Test that the type is fixed by what the file already holds."""
-        entry = self._entry(lark, "x = 3*1\n")
-        node = next(child for child in entry.children if is_value_node(child))
-
-        with pytest.raises(TypeError, match="change value type"):
-            _value_texts(node, [1, "text", 1])
-
-    def test_replace_value_node_splits_a_run_in_place(self, lark) -> None:
-        """Test that only the node being split is replaced.
-
-        Whatever the entry writes between its other values -- a comment, a line break -- is
-        left exactly as it was, because the surrounding children are untouched.
-        """
-        entry = self._entry(lark, "x = 6*9.0\n")
-        node = next(child for child in entry.children if is_value_node(child))
-
-        fresh = replace_value_node(entry, node, ["2*9.0", "8.0", "3*9.0"], lark)
-
-        assert len(fresh) == 3
-        assert all(new.parent is entry for new in fresh)
-        assert node not in entry.children
-
-    def test_write_values_updates_in_place_when_there_is_no_repeat(self, lark) -> None:
+    def test_updates_in_place_when_there_is_no_repeat(self, lark) -> None:
         """Test the ordinary path, where each node holds exactly one element."""
-        entry = self._entry(lark, "x = 1, 2\n")
-        nodes = [child for child in entry.children if is_value_node(child)]
+        nodes = self._nodes(lark, "x = 1, 2\n")
 
-        written = write_values(nodes, [7, 8], lark)
+        write_values(nodes, [7, 8])
 
-        assert written == nodes
         assert [str(node.children[0]) for node in nodes] == ["7", "8"]
 
-    def test_write_values_splits_the_run_it_has_to(self, lark) -> None:
-        """Test the whole path: six elements written once, one of them changed."""
-        entry = self._entry(lark, "x = 6*9.0\n")
-        node = next(child for child in entry.children if is_value_node(child))
-        # A repeat appears once per element it covers.
-        refs = [node] * 6
+    def test_leaves_an_element_that_did_not_change_as_written(self, lark) -> None:
+        """Test that an element that is not given a new value keeps the token it had."""
+        nodes = self._nodes(lark, "x = 1.0, 2.5\n")
+        untouched = nodes[1].children[0]
 
-        written = write_values(refs, [9.0, 9.0, 8.0, 9.0, 9.0, 9.0], lark)
+        write_values(nodes, [3.0, 2.5])
 
-        # Still one reference per element, but now backed by three nodes: 2*9.0, 8.0, 3*9.0.
-        assert len(written) == 6
-        assert len({id(node) for node in written}) == 3
+        assert nodes[1].children[0] is untouched
+        assert str(nodes[0].children[0]) == "3.0"
 
-    def test_write_values_leaves_a_list_entry_a_list(self, lark) -> None:
-        """Test splitting a repeat inside an entry that is already a list.
+    def test_a_repeat_given_one_new_value_is_rewritten_whole(self, lark) -> None:
+        """Test that ``6*9.0`` becomes ``6*9.5``: the count stays, the token changes."""
+        [node] = self._nodes(lark, "x = 6*9.0\n")
 
-        Nothing about the entry changes here -- only the node holding the run -- so the
-        cheaper path that replaces one node is taken rather than rewriting the whole entry.
+        write_values([node] * 6, [9.5] * 6)
+
+        assert str(node.children[0]) == "6*"
+        assert str(node.children[1].children[0]) == "9.5"
+
+    def test_a_repeat_in_a_list_is_written_beside_the_other_elements(self, lark) -> None:
+        """Test an entry mixing a plain element and a repeat: both are written."""
+        first, run = self._nodes(lark, "x = 1, 3*2\n")
+
+        write_values([first, run, run, run], [5, 7, 7, 7])
+
+        assert str(first.children[0]) == "5"
+        assert str(run.children[1].children[0]) == "7"
+
+    def test_a_repeat_left_alone_is_not_written(self, lark) -> None:
+        """Test that a repeat given the values it holds keeps its token as it is."""
+        [node] = self._nodes(lark, "x = 3*1\n")
+        token = node.children[1].children[0]
+
+        write_values([node] * 3, [1, 1, 1])
+
+        assert node.children[1].children[0] is token
+
+    def test_part_of_a_repeat_cannot_be_written(self, lark) -> None:
+        """Test that one element of a run is not given another value on its own.
+
+        The run would have to be split in two, which is not done in place: the caller is
+        told to delete the key and assign it again.
         """
-        entry = self._entry(lark, "x = 1, 3*2\n")
-        nodes = [child for child in entry.children if is_value_node(child)]
-        # The first node backs one element, the repeat backs three.
-        refs = [nodes[0], nodes[1], nodes[1], nodes[1]]
+        [node] = self._nodes(lark, "x = 6*9.0\n")
 
-        written = write_values(refs, [1, 2, 5, 2], lark)
+        with pytest.raises(ValueError, match=r"part of the repeat 6\*.*delete it and assign it again"):
+            write_values([node] * 6, [9.0, 9.0, 8.0, 9.0, 9.0, 9.0])
 
-        assert str(entry.data) == "key_list"
-        assert len(written) == 4
+        assert str(node.children[1].children[0]) == "9.0"
 
-    def test_write_values_recategorises_a_scalar_entry(self, lark) -> None:
-        """Test that an entry holding one repeat becomes a list entry once it is split.
+    def test_a_repeat_given_a_value_of_another_type_is_refused(self, lark) -> None:
+        """Test that the type is fixed by what the file already holds."""
+        [node] = self._nodes(lark, "x = 3*1\n")
 
-        One value is a scalar assignment and several are a list one, so splitting the repeat
-        changes what kind of entry the node is.
-        """
-        entry = self._entry(lark, "x = 3*1\n")
-        node = next(child for child in entry.children if is_value_node(child))
+        with pytest.raises(TypeError, match="change value type"):
+            write_values([node] * 3, ["text"] * 3)
 
-        write_values([node] * 3, [1, 2, 3], lark)
+    def test_a_repeat_of_nulls_holds_no_type_to_write_a_value_in(self, lark) -> None:
+        """Test that ``n*`` can be left alone but not given a value."""
+        [node] = self._nodes(lark, "x = 2*\n")
 
-        assert str(entry.data) == "key_list"
+        write_values([node, node], [None, None])
+        with pytest.raises(TypeError, match="change value type"):
+            write_values([node, node], [1, 1])
 
     def test_refuses_a_value_for_a_position_the_file_never_wrote(self, lark) -> None:
-        """Test the hole in a gathered array, which has no node to write through.
+        """Test the hole in an array, which has no node to write through.
 
-        A position no indexed entry mentioned is read as null and stays that way; giving it
-        a value would mean inventing a line to hold it.
+        A position no entry mentioned is read as null and stays that way; giving it a value
+        would mean inventing a line to hold it.
         """
-        entry = self._entry(lark, "x = 1\n")
-        node = next(child for child in entry.children if is_value_node(child))
+        [node] = self._nodes(lark, "x = 1\n")
 
         with pytest.raises(ValueError, match="leaves unset"):
-            write_values([node, None], [1, 2], lark)
+            write_values([node, None], [1, 2])
 
         # Leaving it unset is fine; nothing is being written there.
-        assert write_values([node, None], [1, None], lark) == [node, None]
-
-    def test_refuses_an_entry_whose_positions_another_overrode(self, lark) -> None:
-        """Test the array whose entries overlap, where one line cannot be rewritten alone.
-
-        The repeat holds three values but only two of its positions survive in the list, so
-        re-spelling that entry would change how many values it writes.
-        """
-        entry = self._entry(lark, "x = 3*1\n")
-        node = next(child for child in entry.children if is_value_node(child))
-
-        with pytest.raises(ValueError, match="assigns some of its positions twice"):
-            write_values([node, node], [1, 2], lark)
+        write_values([node, None], [3, None])
+        assert str(node.children[0]) == "3"
 
     def test_a_value_the_file_refuses_leaves_every_node_as_it_was(self, lark) -> None:
         """Test that a write is all or nothing.
@@ -579,11 +524,10 @@ class TestWritingRepeats:
         The first element is fine and the second is not, and the first must not have been
         written by the time that is found out.
         """
-        entry = self._entry(lark, "x = 1, 2\n")
-        nodes = [child for child in entry.children if is_value_node(child)]
+        nodes = self._nodes(lark, "x = 1, 2\n")
 
         with pytest.raises(TypeError, match="change value type"):
-            write_values(nodes, [5, "text"], lark)
+            write_values(nodes, [5, "text"])
 
         assert [str(node.children[0]) for node in nodes] == ["1", "2"]
 
@@ -592,41 +536,23 @@ class TestWritingRepeats:
 
         A NaN has the right type, so it passes the check on that, but no format writes one.
         """
-        entry = self._entry(lark, "x = 1.0, 2.0\n")
-        nodes = [child for child in entry.children if is_value_node(child)]
+        nodes = self._nodes(lark, "x = 1.0, 2.0\n")
 
         with pytest.raises(UnsupportedEntryError):
-            write_values(nodes, [5.0, float("nan")], lark)
+            write_values(nodes, [5.0, float("nan")])
 
         assert [str(node.children[0]) for node in nodes] == ["1.0", "2.0"]
 
-    def test_a_value_refused_in_a_later_entry_leaves_the_earlier_entry_as_it_was(self, lark) -> None:
-        """Test that an array spread over several entries is written whole or not at all.
+    def test_a_value_refused_in_a_repeat_leaves_the_elements_before_it_as_they_were(self, lark) -> None:
+        """Test that a repeat is checked before anything is written, like a plain node.
 
-        The second entry holds a repeat, which is checked by another route than a node.
+        The repeat comes second and is refused for its type; the plain element before it
+        must not have been written by then.
         """
-        first = self._entry(lark, "x = 1\n")
-        second = self._entry(lark, "y = 2*2\n")
-        plain = next(child for child in first.children if is_value_node(child))
-        repeat = next(child for child in second.children if is_value_node(child))
+        [plain] = self._nodes(lark, "x = 1\n")
+        [repeat] = self._nodes(lark, "y = 2*2\n")
 
         with pytest.raises(TypeError, match="change value type"):
-            write_values([plain, repeat, repeat], [7, "a", "b"], lark)
+            write_values([plain, repeat, repeat], [7, "a", "a"])
 
         assert str(plain.children[0]) == "1"
-
-    def test_groups_interleaved_entries_by_the_entry_that_wrote_them(self, lark) -> None:
-        """Test that an entry is rewritten once with everything it holds.
-
-        An array written with indices can have its entries interleaved, so grouping by
-        adjacency would rewrite the first entry twice and lose a value each time.
-        """
-        first = self._entry(lark, "x = 1, 3\n")
-        second = self._entry(lark, "y = 2\n")
-        outer = [child for child in first.children if is_value_node(child)]
-        inner = next(child for child in second.children if is_value_node(child))
-
-        # Positions 0 and 2 come from one entry, position 1 from another.
-        written = write_values([outer[0], inner, outer[1]], [7, 8, 9], lark)
-
-        assert [str(node.children[0]) for node in written] == ["7", "8", "9"]

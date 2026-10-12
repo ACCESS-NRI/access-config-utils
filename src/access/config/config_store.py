@@ -20,7 +20,6 @@ whitespace is handed down. That is the only reason a store knows about its neigh
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from lark import Tree
@@ -111,9 +110,8 @@ class ConfigStore:
                 raise TypeError(f"Trying to change the type of variable '{key}'")
             if len(ref.value_nodes) != len(value):
                 return self.resize(key, value, align_values(entry_value(ref), value))
-            written = tuple(write_values(ref.value_nodes, value, self.ctx.lark))
-            self.refs[key] = replace(ref, value_nodes=written)
-            return written
+            write_values(ref.value_nodes, value)
+            return ref.value_nodes
         else:
             if ref.category != KEY_VALUE:
                 raise TypeError(f"Trying to change the type of variable '{key}'")

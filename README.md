@@ -122,7 +122,9 @@ A few caveats on the dict and list behaviour:
   become a list or the other way round.
 - A list written with repeat counts (`3*1.0`), array qualifiers (`x(2) = …`) or skipped
   positions, or assigned more than once, can have its elements changed but not its length:
-  delete the key and assign it again instead.
+  delete the key and assign it again instead. The elements a repeat count stands for can only
+  be changed together, all to the same value (`6*9.0` to `6*9.5`): to change one of them,
+  delete the key and assign it again.
 - Replacing an existing block wholesale raises `SyntaxError` — a block can be created and edited,
   but not swapped out.
 
