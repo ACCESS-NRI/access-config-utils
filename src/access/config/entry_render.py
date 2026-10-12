@@ -34,33 +34,14 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 
 from access.config.entry_fragments import EntryTemplate, Fragment, compile_template, expand_value_slots
-from access.config.entry_style import EntryStyle, canonical_ws, classify_slots
+from access.config.entry_style import EntryStyle
 from access.config.grammar_contract import KEY_LIST, KEY_VALUE
 from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY, select_value_rule
 
 # --- Rendering ---
 
 
-def _ws_texts(template: EntryTemplate, style: EntryStyle) -> dict[int, str]:
-    """Return the text for every whitespace placeholder of *template*."""
-    texts = {index: canonical_ws(template, index) for index, fragment in enumerate(template) if fragment.kind == "ws"}
-    if not style.has_donor:
-        return texts
-
-    slots = classify_slots(template)
-    if style.indent and slots.leading:
-        # The indentation sits immediately before the key.
-        texts[slots.leading[-1]] = style.indent
-    # Only reproduce the key runs where the template puts them on the side they came from.
-    matched = style.key_pads is not None and slots.key_split == style.key_split
-    for indices, pads in ((slots.key if matched else (), style.key_pads), (slots.element, style.element_pads)):
-        if pads is not None and len(indices) == len(pads):
-            for index, pad in zip(indices, pads, strict=True):
-                texts[index] = pad
-    return texts
-
-
-def render(template: EntryTemplate, keys: Sequence[str], value_texts: Sequence[str], style: EntryStyle) -> str:
+def render(template: EntryTemplate, keys: Sequence[str], value_texts: Sequence[str]) -> str:
     """Render a template into the text of an entry.
 
     Args:
@@ -68,42 +49,25 @@ def render(template: EntryTemplate, keys: Sequence[str], value_texts: Sequence[s
         keys (Sequence[str]): The key names, outermost first, written as given. One for a
             plain entry; a chain such as ``a%b = 1`` takes one per level.
         value_texts (Sequence[str]): Token text for each value, in order.
-        style (EntryStyle): Whitespace to copy from a neighbouring entry.
 
     Returns:
         str: The entry text.
 
     Examples:
-        With no entry to copy from, the whitespace placeholders take a canonical layout: one
-        space where the grammar allows it for readability, none at either end of the line.
-
         >>> from access.config.entry_fragments import Fragment
-        >>> template = (Fragment("key"), Fragment("ws"), Fragment("literal", "="),
-        ...             Fragment("ws"), Fragment("value"), Fragment("literal", "\\n"))
-        >>> render(template, ["A"], ["1"], EntryStyle())
+        >>> template = (Fragment("key"), Fragment("literal", " = "), Fragment("value"),
+        ...             Fragment("literal", "\\n"))
+        >>> render(template, ["A"], ["1"])
         'A = 1\\n'
-
-        Given a donor style, the runs it recorded are reproduced instead. One pad per
-        stylable slot: this template has two between the key and the value, either side of
-        the ``=``, and a style offering a different number is ignored rather than guessed
-        at. ``key_split`` says how many of them fall before the ``=``, since a run recorded
-        on the wrong side of it would move the whitespace rather than reproduce it.
-
-        >>> style = EntryStyle(key_pads=("  ", "  "), key_split=1, has_donor=True)
-        >>> render(template, ["A"], ["1"], style)
-        'A  =  1\\n'
     """
-    ws_texts = _ws_texts(template, style)
     values = iter(value_texts)
     pieces = []
-    for index, fragment in enumerate(template):
+    for fragment in template:
         if fragment.kind == "literal":
             pieces.append(fragment.text)
-        elif fragment.kind == "ws":
-            pieces.append(ws_texts[index])
         elif fragment.kind == "key":
             pieces.append(keys[fragment.level])
-        elif fragment.kind == "value":
+        else:
             pieces.append(next(values))
     return "".join(pieces)
 
@@ -151,10 +115,9 @@ def iter_entry_snippets(
     depth = len(keys)
     templates = [style.donor(depth, category)]
     if declared is not None:
-        shown = style.indent if style.has_donor else None
-        templates += [compile_template(declared, category, depth, indent) for indent in (shown, None)]
+        templates += [compile_template(declared, category, depth, indent) for indent in (style.indent, None)]
     for template in dict.fromkeys(template for template in templates if template is not None):
-        yield from _render_candidates(template, keys, value, style, category, admitted, priority)
+        yield from _render_candidates(template, keys, value, category, admitted, priority)
 
 
 def _values_for(category: str, value: object) -> list[object]:
@@ -200,7 +163,6 @@ def _render_candidates(
     template: EntryTemplate,
     keys: Sequence[str],
     value: object,
-    style: EntryStyle,
     category: str,
     admitted: frozenset[str],
     priority: Sequence[str],
@@ -211,11 +173,11 @@ def _render_candidates(
         template = expand_value_slots(template, len(values))
     slots = [fragment for fragment in template if fragment.kind == "value"]
     if not slots:
-        yield render(template, keys, [], style)
+        yield render(template, keys, [])
     else:
         for rule_names in _rule_choices(values, admitted, priority):
             texts = [_value_text(*choice) for choice in zip(rule_names, values, slots, strict=True)]
-            yield render(template, keys, texts, style)
+            yield render(template, keys, texts)
 
 
 def _value_text(rule: str, value: object, slot: Fragment) -> str:

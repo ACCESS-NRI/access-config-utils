@@ -3,15 +3,15 @@
 
 """The shape of one written entry, as a sequence of fragments.
 
-A ``Fragment`` is one piece of the text of an entry: fixed text, or a placeholder for the
-key, a value, some whitespace, or the contents of a new block. An ``EntryTemplate`` is a
-tuple of them in the order they are written, and is the currency of entry synthesis --
-``entry_style.donor_template`` copies one from a neighbouring entry, ``compile_template``
-makes one of the text a parser declares, and ``entry_render`` turns one into text.
+A ``Fragment`` is one piece of the text of an entry: fixed text, or a placeholder for a key
+or a value. An ``EntryTemplate`` is a tuple of them in the order they are written, and is
+the currency of entry synthesis -- ``entry_style.donor_template`` copies one from a
+neighbouring entry, ``compile_template`` makes one of the text a parser declares, and
+``entry_render`` turns one into text.
 
 This module holds the type itself and what can be done with a template without knowing
-anything else: finding what sits either side of a position, growing a list template to
-any length, and compiling the text a parser declares.
+anything else: growing a list template to any length, and compiling the text a parser
+declares.
 
 Fragment kinds deliberately echo the grammar's own vocabulary, but they are a separate
 namespace: a kind describes a slot in a piece of text, not a rule. Rule names always come
@@ -22,10 +22,10 @@ Examples:
     A template is a flat sequence of fragments, in the order they are written::
 
     >>> from access.config.entry_fragments import Fragment
-    >>> template = (Fragment("key"), Fragment("ws"), Fragment("literal", "="),
-    ...             Fragment("ws"), Fragment("value"), Fragment("literal", "\\n"))
+    >>> template = (Fragment("key"), Fragment("literal", " = "), Fragment("value"),
+    ...             Fragment("literal", "\\n"))
     >>> [fragment.kind for fragment in template]
-    ['key', 'ws', 'literal', 'ws', 'value', 'literal']
+    ['key', 'literal', 'value', 'literal']
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from typing import Literal
 
 from access.config.grammar_contract import VALUE_SLOT_COUNTS
 
-FragmentKind = Literal["literal", "ws", "key", "value", "block"]
+FragmentKind = Literal["literal", "key", "value"]
 
 
 @dataclass(frozen=True)
@@ -49,9 +49,8 @@ class Fragment:
     fragment kind and never a rule name.
 
     Args:
-        kind (FragmentKind): ``"literal"`` for fixed text, or a placeholder: ``"ws"`` for
-            optional whitespace, ``"key"`` for the key name, ``"value"`` for a value,
-            ``"block"`` for the contents of a new (and therefore empty) block.
+        kind (FragmentKind): ``"literal"`` for fixed text, or a placeholder: ``"key"`` for
+            the key name, ``"value"`` for a value.
         text (str): The text, for a ``"literal"`` fragment.
         level (int): Which key of a chain this is, for a ``"key"`` fragment: 0 for the
             outermost, as in the ``a`` of ``a%b = 1``, and 1 for the ``b``.
@@ -70,25 +69,6 @@ EntryTemplate = tuple[Fragment, ...]
 """One way of writing an entry, as an ordered sequence of fragments."""
 
 
-def neighbour_fragment(template: EntryTemplate, index: int, step: int) -> Fragment | None:
-    """Return the nearest fragment on one side of *index* that is not a whitespace slot.
-
-    Args:
-        template (EntryTemplate): The template to inspect.
-        index (int): Index to search out from, which may be one past the end.
-        step (int): ``-1`` to look backwards, ``1`` to look forwards.
-
-    Returns:
-        Fragment | None: The neighbour, or ``None`` if there is none on that side.
-    """
-    position = index + step
-    while 0 <= position < len(template):
-        if template[position].kind != "ws":
-            return template[position]
-        position += step
-    return None
-
-
 def expand_value_slots(template: EntryTemplate, count: int) -> EntryTemplate:
     """Grow a two-value list template so that it holds *count* values.
 
@@ -104,13 +84,11 @@ def expand_value_slots(template: EntryTemplate, count: int) -> EntryTemplate:
         EntryTemplate: The grown template.
 
     Examples:
-        >>> template = (Fragment("key"), Fragment("ws"), Fragment("literal", "="),
-        ...             Fragment("ws"), Fragment("value"), Fragment("literal", ","),
-        ...             Fragment("ws"), Fragment("value"), Fragment("literal", "\\n"))
+        >>> template = (Fragment("key"), Fragment("literal", " = "), Fragment("value"),
+        ...             Fragment("literal", ", "), Fragment("value"))
         >>> grown = expand_value_slots(template, 3)
-        >>> [f.kind for f in grown]  # doctest: +NORMALIZE_WHITESPACE
-        ['key', 'ws', 'literal', 'ws', 'value', 'literal', 'ws', 'value',
-         'literal', 'ws', 'value', 'literal']
+        >>> "".join(f.text or "x" for f in grown)
+        'x = x, x, x'
     """
     values = [index for index, fragment in enumerate(template) if fragment.kind == "value"]
     first, second = values[0], values[1]

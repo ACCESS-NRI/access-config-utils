@@ -10,9 +10,9 @@ operation be tested on exactly the shape it is about.
 
 import pytest
 
-from access.config.entry_fragments import Fragment, compile_template, expand_value_slots, neighbour_fragment
+from access.config.entry_fragments import Fragment, compile_template, expand_value_slots
 
-KEY, WS, VALUE = Fragment("key"), Fragment("ws"), Fragment("value")
+KEY, VALUE = Fragment("key"), Fragment("value")
 
 
 def literal(text: str) -> Fragment:
@@ -20,45 +20,28 @@ def literal(text: str) -> Fragment:
     return Fragment("literal", text)
 
 
-# ``KEY = value`` followed by a newline: the shape most grammars derive for a scalar entry.
-LINE = (KEY, WS, literal("="), WS, VALUE, literal("\n"))
-
-
-class TestNeighbourFragment:
-    """Looking out from a position for the nearest fragment that is not whitespace."""
-
-    def test_skips_whitespace_in_both_directions(self) -> None:
-        """Test that whitespace placeholders are passed over: they may render empty."""
-        assert neighbour_fragment(LINE, 2, -1) is KEY
-        assert neighbour_fragment(LINE, 2, 1) is VALUE
-
-    def test_reports_nothing_past_either_end(self) -> None:
-        """Test the ends: this is how a placeholder starting a line is recognised."""
-        assert neighbour_fragment(LINE, 0, -1) is None
-        assert neighbour_fragment((WS, WS), 0, 1) is None
-
-    def test_accepts_an_index_one_past_the_end(self) -> None:
-        """Test the call that finds the last fragment of a template."""
-        assert neighbour_fragment(LINE, len(LINE), -1) == literal("\n")
-
-
 class TestExpandValueSlots:
     """Growing a two-value list template to hold as many values as were asked for."""
 
     def test_repeats_the_separator_between_the_placeholders(self) -> None:
-        """Test that the grammar's own separator is what gets repeated."""
-        template = (KEY, literal("="), VALUE, literal(","), WS, VALUE, literal("\n"))
+        """Test that the declared separator is what gets repeated."""
+        template = (KEY, literal(" = "), VALUE, literal(", "), VALUE, literal("\n"))
 
         grown = expand_value_slots(template, 4)
 
         assert [f.kind for f in grown] == [
-            "key", "literal",
-            "value", "literal", "ws",
-            "value", "literal", "ws",
-            "value", "literal", "ws",
-            "value", "literal",
-        ]  # fmt: skip
-        assert [f.kind for f in grown].count("value") == 4
+            "key",
+            "literal",
+            "value",
+            "literal",
+            "value",
+            "literal",
+            "value",
+            "literal",
+            "value",
+            "literal",
+        ]
+        assert "".join(f.text for f in grown) == " = , , , \n"
 
     def test_two_values_is_the_template_unchanged(self) -> None:
         """Test the shortest list a format can express, where nothing needs repeating."""

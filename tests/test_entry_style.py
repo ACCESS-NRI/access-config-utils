@@ -3,50 +3,31 @@
 
 """Unit tests for how a new entry should be written so that it looks like its neighbours.
 
-Nothing is faked: ``entry_style`` reads templates and parse trees, and both are built here
-directly. That is what makes the cases separable -- a container whose only entry has no
-value, a scalar and a list disagreeing about spacing, a template with an indent slot and one
-without. A grammar gives you the shapes it happens to derive, not the one under test.
-
-The exception is copying a whole entry, which writes a parse tree out and so needs a
-grammar's reconstructor. Those trees are parsed from text by the Fortran namelist grammar,
-which has every shape a copy has to deal with: a line wrapping its entry or not, a chain,
-an array qualifier, a repeat count, a skipped position and a block. The MOM6 grammar adds
-an entry holding its own comment.
+Nothing is faked. Copying a whole entry writes a parse tree out and so needs a grammar's
+reconstructor, and the indentation of an entry and the style of a block are read off the
+same trees, so they are all parsed from text. The Fortran namelist grammar has every shape
+a copy has to deal with: a line wrapping its entry or not, a chain, an array qualifier, a
+repeat count, a skipped position and a block. The MOM6 grammar adds an entry holding its own
+comment, and the FMS field table an entry that is a chain of three keys.
 """
 
 import pytest
 from conftest import entry_node, value_node, ws_node
 from lark import Token, Tree
 
-from access.config.entry_fragments import EntryTemplate, Fragment
+from access.config.entry_fragments import EntryTemplate
 from access.config.entry_style import (
     EntryStyle,
-    canonical_ws,
-    classify_slots,
     donor_template,
+    indent_of,
     probe_entry_style,
     probe_sibling_block_style,
-    style_matches,
 )
+from access.config.field_table import FieldTableParser
 from access.config.fortran_nml import FortranNMLParser
 from access.config.grammar_compiled import CompiledGrammar, compile_grammar
 from access.config.mom6_input import MOM6InputParser
 from access.config.tree_navigation import entries_of
-
-KEY, WS, VALUE, BLOCK = Fragment("key"), Fragment("ws"), Fragment("value"), Fragment("block")
-
-
-def literal(text: str) -> Fragment:
-    """Return a fragment of fixed text."""
-    return Fragment("literal", text)
-
-
-# ``  KEY = value\n``: an indent slot, two around the assignment, one before the newline.
-LINE = (WS, KEY, WS, literal("="), WS, VALUE, WS, literal("\n"))
-
-# ``  KEY = a, b\n``: the same, with an element separator between two values.
-LIST_LINE = (WS, KEY, WS, literal("="), WS, VALUE, literal(","), WS, VALUE, WS, literal("\n"))
 
 
 @pytest.fixture(scope="module")
@@ -59,6 +40,12 @@ def fortran() -> CompiledGrammar:
 def mom6() -> CompiledGrammar:
     """Return the compiled MOM6 parameter file grammar."""
     return compile_grammar(MOM6InputParser().grammar)
+
+
+@pytest.fixture(scope="module")
+def field_table() -> CompiledGrammar:
+    """Return the compiled FMS field table grammar."""
+    return compile_grammar(FieldTableParser().grammar)
 
 
 def group_body(compiled: CompiledGrammar, text: str) -> Tree:
@@ -78,306 +65,107 @@ def shown(template: EntryTemplate | None) -> str | None:
     )
 
 
-def styled_entry(indent: str = "", *pads: str, key: str = "a", values: int = 1) -> Tree:
-    """Return an entry node whose whitespace runs are *indent* then *pads*, in order.
+class TestIndentOf:
+    """The whitespace the line of an entry starts with."""
 
-    Args:
-        indent: Whitespace before the key.
-        *pads: One run before each value, in order.
-        key: The key name.
-        values: How many values the entry holds.
-    """
-    children: list[Tree] = [ws_node(indent)] if indent else []
-    children.append(Tree("key", [Token("CNAME", key)]))
-    for index in range(values):
-        if index < len(pads):
-            children.append(ws_node(pads[index]))
-        children.append(value_node())
-    return Tree("key_value" if values == 1 else "key_list", children)
+    def test_is_the_whitespace_before_the_key(self) -> None:
+        """Test the ordinary case, one run of whitespace in front of the key."""
+        entry = Tree("key_value", [ws_node("  "), Tree("key", [Token("CNAME", "a")]), value_node()])
 
+        assert indent_of(entry) == "  "
 
-class TestCanonicalWs:
-    """What a whitespace placeholder renders as when there is no entry to copy from."""
+    def test_is_empty_for_an_entry_with_none(self) -> None:
+        """Test that no indentation is the empty string, which is not ``None``."""
+        assert indent_of(entry_node("key_value", "a", value_node())) == ""
 
-    @pytest.mark.parametrize("index", [0, 6])
-    def test_empty_at_either_end_of_the_line(self, index) -> None:
-        """Test that a canonical entry carries no indentation and no trailing whitespace."""
-        assert canonical_ws(LINE, index) == ""
+    def test_joins_every_run_before_the_key(self) -> None:
+        """Test a grammar that writes the whitespace before a key as several nodes."""
+        entry = Tree("key_value", [ws_node(" "), ws_node("  "), Tree("key", [Token("CNAME", "a")])])
 
-    @pytest.mark.parametrize("index", [2, 4])
-    def test_a_single_space_where_the_grammar_allows_one(self, index) -> None:
-        """Test the readable default, which is what makes a new entry ``KEY = value``."""
-        assert canonical_ws(LINE, index) == " "
+        assert indent_of(entry) == "   "
 
-    @pytest.mark.parametrize("separator", [",", ":"])
-    def test_empty_before_a_separator_following_a_value(self, separator) -> None:
-        """Test that a list reads as ``a, b`` rather than ``a , b``, any separator alike."""
-        template = (VALUE, WS, literal(separator), WS, VALUE)
-        assert canonical_ws(template, 1) == ""
-        # The slot after the separator is ordinary readable whitespace.
-        assert canonical_ws(template, 3) == " "
+    def test_stops_at_the_key(self) -> None:
+        """Test that whitespace after the key, around the assignment, is not indentation."""
+        entry = Tree("key_value", [ws_node("  "), Tree("key", [Token("CNAME", "a")]), ws_node(" "), value_node()])
 
-    def test_empty_either_side_of_a_block(self) -> None:
-        """Test that the body of a block is not padded, since it starts on its own line."""
-        assert canonical_ws((KEY, WS, BLOCK, WS, literal("\n")), 1) == ""
-        assert canonical_ws((KEY, WS, BLOCK, WS, literal("\n")), 3) == ""
+        assert indent_of(entry) == "  "
 
-    def test_a_separator_that_is_not_punctuation_keeps_its_space(self) -> None:
-        """Test that a word-like separator is spaced, as ``1 and 2`` would need to be."""
-        assert canonical_ws((VALUE, WS, literal("and"), WS, VALUE), 1) == " "
+    def test_ignores_children_that_are_tokens(self) -> None:
+        """Test that punctuation kept as a bare terminal is not whitespace."""
+        entry = Tree("key_value", [ws_node(" "), Token("AMP", "&"), Tree("key", [Token("CNAME", "a")])])
 
-    def test_empty_before_any_comma(self) -> None:
-        """Test that a comma is not spaced off whatever it follows: ``"k", "v"``."""
-        assert canonical_ws((literal('"'), WS, literal(","), WS, literal('"')), 1) == ""
-
-    def test_empty_between_punctuation_and_a_key(self) -> None:
-        """Test that a chain of keys reads as ``a%b`` rather than ``a% b``."""
-        assert canonical_ws((KEY, literal("%"), WS, KEY), 2) == ""
-
-
-class TestClassifySlots:
-    """Grouping the whitespace placeholders by what each one spaces out."""
-
-    def test_splits_a_scalar_line_into_its_regions(self) -> None:
-        """Test that indent, assignment padding and the trailing slot are told apart."""
-        slots = classify_slots(LINE)
-
-        assert slots.leading == (0,)
-        assert slots.key == (2, 4)
-        # The "=" is the first fixed text after the key, so one slot falls before it.
-        assert slots.key_split == 1
-        # A scalar has no second value, so nothing spaces out an element separator.
-        assert slots.element == ()
-
-    def test_finds_the_element_region_of_a_list(self) -> None:
-        """Test that only slots between the first two values are element spacing."""
-        slots = classify_slots(LIST_LINE)
-
-        assert slots.key == (2, 4)
-        assert slots.element == (7,)
-
-    def test_excludes_slots_fixed_by_the_line_structure(self) -> None:
-        """Test that a slot rendering empty canonically is not offered a copied run.
-
-        The trailing slot before the newline is at index 6, and it is absent from every
-        region: a line never ends with copied whitespace, however the donor was spaced.
-        """
-        slots = classify_slots(LINE)
-        assert 6 not in slots.key + slots.element + slots.leading
-
-    def test_an_entry_with_no_value_spaces_out_its_key(self) -> None:
-        """Test the ``KEY =`` case, where everything after the key is key padding."""
-        slots = classify_slots((KEY, WS, literal("="), WS, literal("\n")))
-
-        assert slots.key == (1,)
-        assert slots.element == ()
-
-    def test_a_template_with_no_fixed_text_after_the_key(self) -> None:
-        """Test that with no assignment to split on, every key slot precedes it."""
-        slots = classify_slots((KEY, WS, VALUE))
-
-        assert slots.key == (1,)
-        assert slots.key_split == 1
-
-    def test_a_template_with_no_key(self) -> None:
-        """Test that a template holding no key has no leading region to indent."""
-        assert classify_slots((WS, VALUE, literal("\n"))).leading == (0,)
-
-
-class TestStyleMatches:
-    """Whether a template can reproduce the runs a donor demonstrated."""
-
-    def test_anything_matches_when_there_is_no_donor(self) -> None:
-        """Test the short circuit: with nothing to copy, no template can fail to match."""
-        assert style_matches(LINE, EntryStyle())
-        assert style_matches((KEY,), EntryStyle())
-
-    def test_matches_when_the_slot_counts_line_up(self) -> None:
-        """Test the ordinary case, one recorded run per stylable slot."""
-        style = EntryStyle(indent="  ", key_pads=(" ", " "), key_split=1, has_donor=True)
-        assert style_matches(LINE, style)
-
-    def test_rejects_runs_that_fall_on_the_wrong_side_of_the_assignment(self) -> None:
-        """Test that agreeing counts are not enough; the split has to agree too.
-
-        ``LINE`` puts one slot before the ``=`` and one after. A donor recording both runs
-        before it wrote something else, and reproducing them here would move them.
-        """
-        assert not style_matches(LINE, EntryStyle(key_pads=(" ", " "), key_split=2, has_donor=True))
-
-    def test_a_style_with_no_key_runs_recorded_matches_anything(self) -> None:
-        """Test that the split constrains nothing when there is no run to place."""
-        assert style_matches(LINE, EntryStyle(indent="  ", key_split=2, has_donor=True))
-
-    def test_rejects_a_template_with_nowhere_to_put_the_indent(self) -> None:
-        """Test what a MOM6 assignment presents: no leading slot, so no indent."""
-        style = EntryStyle(indent="    ", has_donor=True)
-
-        assert not style_matches((KEY, WS, literal("="), WS, VALUE, literal("\n")), style)
-        # With no indent recorded, the same template is fine.
-        assert style_matches((KEY, WS, literal("="), WS, VALUE, literal("\n")), EntryStyle(has_donor=True))
-
-    def test_rejects_a_mismatched_number_of_runs(self) -> None:
-        """Test that a donor spaced differently from the template is not guessed at."""
-        assert not style_matches(LINE, EntryStyle(key_pads=(" ",), has_donor=True))
-        assert not style_matches(LIST_LINE, EntryStyle(element_pads=(" ", " "), has_donor=True))
+        assert indent_of(entry) == " "
 
 
 class TestProbeEntryStyle:
-    """Reading the runs back off the entries a container already holds."""
+    """Reading the indentation off the entries a container already holds."""
 
-    def test_reports_no_donor_for_an_empty_container(self) -> None:
-        """Test the block that was empty in the file, which is left canonical."""
-        assert probe_entry_style(Tree("block", [])) == EntryStyle()
+    def test_reports_no_indent_for_an_empty_container(self, fortran) -> None:
+        """Test the block that was empty in the file: nothing above shows an indentation."""
+        assert probe_entry_style(Tree("block", []), fortran.reconstructor) == EntryStyle()
 
-    def test_reads_the_indent_and_the_assignment_padding(self) -> None:
-        """Test the runs taken from a single well-formed neighbour."""
-        style = probe_entry_style(Tree("block", [styled_entry("  ", " ")]))
+    def test_reads_the_indent_of_the_last_entry(self, fortran) -> None:
+        """Test that the entry just above is the one copied, whatever the ones before."""
+        style = probe_entry_style(group_body(fortran, "&g\n  a = 1\n    b = 2\n/\n"), fortran.reconstructor)
 
-        assert style.has_donor
-        assert style.indent == "  "
-        assert style.key_pads == (" ",)
+        assert style.indent == "    "
 
-    def test_takes_the_last_entry_that_demonstrates_each_kind(self) -> None:
-        """Test that a scalar neighbour does not dictate how a list is spaced, or vice
-        versa.
+    def test_an_unindented_entry_shows_an_empty_indent(self, fortran) -> None:
+        """Test that an unindented file is told apart from a container with no entry."""
+        style = probe_entry_style(group_body(fortran, "&g\na = 1\n/\n"), fortran.reconstructor)
 
-        The list here is spaced and comes first; the scalar after it is written tight.
-        Element spacing has to come from the list and assignment spacing from the scalar,
-        or a new entry of either kind comes out looking like the other.
-        """
-        spaced_list = styled_entry("", " ", " ", key="lst", values=2)
-        tight_scalar = Tree("key_value", [Tree("key", [Token("CNAME", "v")]), value_node()])
+        assert style.indent == ""
 
-        style = probe_entry_style(Tree("start", [spaced_list, tight_scalar]))
-
-        assert style.key_pads == ()
-        assert style.element_pads == (" ",)
-
-    def test_falls_back_to_the_last_entry_when_none_has_a_value(self) -> None:
-        """Test a container whose only entry is valueless, as ``KEY =`` is.
-
-        With no value to measure against, everything after the key counts as key padding and
-        nothing says how elements are separated.
-        """
-        valueless = Tree("key_null", [ws_node("  "), Tree("key", [Token("CNAME", "a")]), ws_node(" ")])
-
-        style = probe_entry_style(Tree("block", [valueless]))
-
-        assert style.has_donor
-        assert style.indent == "  "
-        assert style.key_pads == (" ",)
-        assert style.element_pads is None
-
-    def test_reads_through_a_transparent_assignment_rule(self) -> None:
-        """Test the ``eq`` rule, which binds the run before ``=`` to the literal.
-
-        Left as a bare ``ws*`` beside the one after ``=``, a single run is ambiguous about
-        which side it fell on and the reconstructor moves it. The runs inside the rule count
-        as though written beside the key, and the rule marks where the literal fell.
-        """
-        # "a =1": one run before the "=", none after.
-        entry = Tree(
-            "key_value",
-            [Tree("key", [Token("CNAME", "a")]), Tree("eq", [ws_node(" ")]), value_node()],
-        )
-
-        style = probe_entry_style(Tree("start", [entry]))
-
-        assert style.key_pads == (" ",)
-        assert style.key_split == 1
-
-    def test_a_run_after_the_assignment_is_counted_on_the_other_side(self) -> None:
-        """Test the mirror case ``a= 1``: the same one run, split the other way."""
-        entry = Tree(
-            "key_value",
-            [Tree("key", [Token("CNAME", "a")]), Tree("eq", []), ws_node(" "), value_node()],
-        )
-
-        style = probe_entry_style(Tree("start", [entry]))
-
-        assert style.key_pads == (" ",)
-        assert style.key_split == 0
-
-    def test_a_block_entry_does_not_donate_assignment_spacing(self) -> None:
-        """Test that a block is passed over as a donor for the spacing around an assignment.
-
-        It shows the indentation but carries no assignment, so taking its empty run would
-        write ``KEY=value`` into a file that spaces its assignments.
-        """
-        assignment = Tree(
-            "key_value",
-            [Tree("key", [Token("CNAME", "a")]), Tree("eq", [ws_node(" ")]), ws_node(" "), value_node()],
-        )
-        block = entry_node("key_block", "blk", Tree("block", []))
-
-        style = probe_entry_style(Tree("start", [assignment, block]))
-
-        assert style.key_pads == (" ", " ")
-
-    def test_reads_only_the_entries_above_where_the_new_one_goes(self) -> None:
+    def test_reads_only_the_entries_above_where_the_new_one_goes(self, fortran) -> None:
         """Test an entry written among others, copying the one above, not the last."""
-        container = Tree("block", [styled_entry("  ", " "), styled_entry("    ", " ", key="b")])
+        body = group_body(fortran, "&g\n  a = 1\n    b = 2\n/\n")
 
-        assert probe_entry_style(container, upto=1).indent == "  "
-        assert probe_entry_style(container, upto=0) == EntryStyle()
-
-    def test_ignores_children_that_are_tokens(self) -> None:
-        """Test that punctuation kept as a bare terminal is not a whitespace run."""
-        entry = Tree("key_value", [Tree("key", [Token("CNAME", "a")]), Token("EQ", "="), value_node()])
-
-        assert probe_entry_style(Tree("start", [entry])).key_pads == ()
+        assert probe_entry_style(body, fortran.reconstructor, upto=1).indent == "  "
+        assert probe_entry_style(body, fortran.reconstructor, upto=0) == EntryStyle()
 
 
 class TestProbeSiblingBlockStyle:
     """The style a block created this session inherits from the blocks around it."""
 
-    def test_takes_it_from_a_sibling_block(self) -> None:
+    def test_takes_it_from_a_sibling_block(self, fortran) -> None:
         """Test that a new block is laid out like the block next to it."""
-        sibling = entry_node("key_block", "old", Tree("block", [styled_entry("  ", " ")]))
+        tree = fortran.lark.parse("&old\n  a = 1\n/\n&new\n/\n", start="start")
 
-        style = probe_sibling_block_style(Tree("start", [sibling]))
+        style = probe_sibling_block_style(tree, fortran.reconstructor)
 
-        assert style.has_donor
         assert style.indent == "  "
 
-    def test_takes_the_nearest_block_able_to_donate(self) -> None:
+    def test_takes_the_nearest_block_able_to_donate(self, fortran) -> None:
         """Test that the last block with entries wins, an empty one being passed over."""
-        far = entry_node("key_block", "far", Tree("block", [styled_entry("    ", " ", key="x")]))
-        near = entry_node("key_block", "near", Tree("block", [styled_entry("  ", " ", key="y")]))
-        empty = entry_node("key_block", "new", Tree("block", []))
+        tree = fortran.lark.parse("&far\n    a = 1\n/\n&near\n  b = 1\n/\n&new\n/\n", start="start")
 
-        assert probe_sibling_block_style(Tree("start", [far, near, empty])).indent == "  "
+        assert probe_sibling_block_style(tree, fortran.reconstructor).indent == "  "
 
-    def test_reports_no_donor_without_a_usable_block(self) -> None:
+    def test_reports_no_indent_without_a_usable_block(self, fortran) -> None:
         """Test both ways there is nothing to copy: no block at all, and an empty one."""
-        entries_only = Tree("start", [styled_entry("", " ")])
-        empty_block = Tree("start", [entry_node("key_block", "blk", Tree("block", []))])
+        empty_block = fortran.lark.parse("&new\n/\n", start="start")
 
-        assert probe_sibling_block_style(entries_only) == EntryStyle()
-        assert probe_sibling_block_style(empty_block) == EntryStyle()
+        assert probe_sibling_block_style(Tree("start", []), fortran.reconstructor) == EntryStyle()
+        assert probe_sibling_block_style(empty_block, fortran.reconstructor) == EntryStyle()
 
-    def test_takes_the_block_at_the_end_of_a_chain(self) -> None:
+    def test_takes_the_block_at_the_end_of_a_chain(self, field_table) -> None:
         """Test an FMS field table entry: a name block in a model in a type."""
-        name = entry_node("key_block", "age", Tree("block", [styled_entry("  ", " ")]))
-        model = entry_node("key_block", "ocean_mod", Tree("name_body", [name]))
-        kind = entry_node("key_block", "tracer", Tree("model_body", [model]))
+        tree = field_table.lark.parse('"tracer", "ocean_mod", "age"\n  "longname", "x" /\n', start="start")
 
-        assert probe_sibling_block_style(Tree("start", [kind])).indent == "  "
+        assert probe_sibling_block_style(tree, field_table.reconstructor).indent == "  "
 
-    def test_searches_upwards_from_the_block_created(self) -> None:
+    def test_searches_upwards_from_the_block_created(self, fortran) -> None:
         """Test that the block above a new one wins over a later one."""
-        above = entry_node("key_block", "above", Tree("block", [styled_entry("    ", " ", key="x")]))
-        new = entry_node("key_block", "new", Tree("block", []))
-        below = entry_node("key_block", "below", Tree("block", [styled_entry("  ", " ", key="y")]))
+        tree = fortran.lark.parse("&above\n    a = 1\n/\n&new\n/\n&below\n  b = 1\n/\n", start="start")
+        new = tree.children.index(entries_of(tree)[1])
 
-        assert probe_sibling_block_style(Tree("start", [above, new, below]), upto=1).indent == "    "
+        assert probe_sibling_block_style(tree, fortran.reconstructor, upto=new).indent == "    "
 
-    def test_ignores_a_block_entry_whose_body_is_not_a_block_node(self) -> None:
+    def test_ignores_a_block_entry_whose_body_is_not_a_block_node(self, fortran) -> None:
         """Test the contract: the body must be a rule *named* ``block``, not just nested."""
-        odd = entry_node("key_block", "blk", Tree("body", [styled_entry("  ", " ")]))
+        odd = entry_node("key_block", "blk", Tree("body", [entry_node("key_value", "a", value_node())]))
 
-        assert probe_sibling_block_style(Tree("start", [odd])) == EntryStyle()
+        assert probe_sibling_block_style(Tree("start", [odd]), fortran.reconstructor) == EntryStyle()
 
 
 class TestDonorTemplate:
@@ -497,13 +285,6 @@ class TestProbingDonors:
         body = group_body(fortran, "&g\n  a = 1, 2\n  b = 1, , 3\n/\n")
 
         assert shown(probe_entry_style(body, fortran.reconstructor).donor(1, "key_list")) == "  {K0} = {V}, {V}\n"
-
-    def test_copies_nothing_without_a_reconstructor(self, fortran) -> None:
-        """Test that the whitespace can still be read on its own."""
-        style = probe_entry_style(group_body(fortran, "&g\n  a = 1\n/\n"))
-
-        assert style.has_donor
-        assert style.donors == ()
 
     def test_a_created_block_copies_the_entries_of_its_sibling(self, fortran) -> None:
         """Test that the first entry of a new group is written like those of the last."""

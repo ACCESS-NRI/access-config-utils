@@ -189,14 +189,15 @@ class TestAdd:
         assert calls[0]["container"] is store.tree
         assert (calls[0]["keys"], calls[0]["raw_keys"]) == (("Z",), ["z"])
 
-    def test_offers_the_style_of_the_entries_already_there(self, store, spy) -> None:
-        """Test that a container with entries dictates how the new one is spaced."""
+    def test_offers_the_indent_of_the_entries_already_there(self, ctx, spy) -> None:
+        """Test that a container with entries dictates how the new one is indented."""
         calls, _ = spy
-        store.add_path(("z",), ("z",), 3)
+        tree = ctx.lark.parse("  a = 1\n    b = 2\n", start="start")
+        AddParent().visit(tree)
 
-        assert calls[0]["style"].has_donor
-        # One run per whitespace slot the neighbour used: either side of the "=".
-        assert calls[0]["style"].key_pads == (" ", " ")
+        ConfigStore(tree, ctx).add_path(("z",), ("z",), 3)
+
+        assert calls[0]["style"].indent == "    "
 
     def test_offers_a_copy_of_the_entries_already_there(self, store, spy) -> None:
         """Test that the store passes its reconstructor on, so whole entries are copied."""
@@ -216,7 +217,7 @@ class TestAdd:
         AddParent().visit(tree)
         store = ConfigStore(tree, ctx)
         block = store.child(store.refs["blk"])
-        block.fallback_style = EntryStyle(indent="    ", has_donor=True)
+        block.fallback_style = EntryStyle(indent="    ")
 
         block.add_path(("z",), ("z",), 3)
 
@@ -396,7 +397,7 @@ class TestCreatedBlockStyle:
         tree = ctx.lark.parse("blk<\n>\n", start="start")
         AddParent().visit(tree)
         store = ConfigStore(tree, ctx)
-        store.fallback_style = EntryStyle(indent="\t", has_donor=True)
+        store.fallback_style = EntryStyle(indent="\t")
 
         assert store.created_block_style().indent == "\t"
 

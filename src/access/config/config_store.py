@@ -28,7 +28,13 @@ from lark.exceptions import UnexpectedInput
 
 from access.config.config_insert import insert_entry
 from access.config.config_resize import resize_entry
-from access.config.entry_style import EntryStyle, donor_template, probe_entry_style, probe_sibling_block_style
+from access.config.entry_style import (
+    EntryStyle,
+    donor_template,
+    indent_of,
+    probe_entry_style,
+    probe_sibling_block_style,
+)
 from access.config.grammar_contract import KEY_LIST, KEY_VALUE
 from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY, UnsupportedEntryError
 from access.config.list_layout import align_values
@@ -54,7 +60,7 @@ class ConfigStore:
     tree: Tree  # The container rule node this store owns.
     ctx: ParseContext  # Compiled grammar and per-parser settings.
     refs: dict[str, EntryRef]  # Where each key's entry lives, keyed by normalised key.
-    # Whitespace for a new entry when this container holds none to copy from. Set on a block
+    # The style for a new entry when this container holds no entry to copy. Set on a block
     # created by an assignment, which is empty and so has no style of its own yet.
     fallback_style: EntryStyle
     addable: bool  # Whether a new entry can be spliced into this container
@@ -255,7 +261,7 @@ class ConfigStore:
         line = line_index(self.tree, neighbour)
         index = entry_insertion_index(self.tree, line) if after else line
         template = donor_template(self.tree.children[line], neighbour, self.ctx.reconstructor)
-        style = EntryStyle(has_donor=True, donors=(((1, KEY_VALUE), template),)) if template else EntryStyle()
+        style = EntryStyle(indent_of(neighbour), (((1, KEY_VALUE), template),)) if template else EntryStyle()
         spelled = [str(key_token(neighbour))]
         ref = insert_entry(self.tree, self.ctx, [key], spelled, value, style, index, KEY_VALUE)
         return ref.entry_nodes[0]
@@ -299,7 +305,7 @@ class ConfigStore:
             )
         index, spelled = self._insertion_point(keys)
         style = probe_entry_style(self.tree, self.ctx.reconstructor, upto=index)
-        if not style.has_donor:
+        if style.indent is None:
             style = self.fallback_style
         ref = insert_entry(
             self.tree, self.ctx, keys, [*spelled, *raw_keys[len(spelled) :]], value, style, index, category
@@ -343,7 +349,7 @@ class ConfigStore:
         A new block is empty, so nothing in it can say how its contents should be laid out.
         The nearest sibling block above it answers instead, falling back to this container's
         own style so that a block nested in a new block inherits it too rather than dropping
-        back to the canonical layout.
+        back to the template's own indentation.
 
         Args:
             entry (Tree | None): The entry just written, whose block is new; ``None`` to
@@ -354,7 +360,7 @@ class ConfigStore:
         """
         upto = None if entry is None else line_index(self.tree, entry)
         sibling = probe_sibling_block_style(self.tree, self.ctx.reconstructor, upto)
-        return sibling if sibling.has_donor else self.fallback_style
+        return sibling if sibling.indent is not None else self.fallback_style
 
     def remove(self, key: str) -> None:
         """Unlink every entry that wrote a key, and forget its reference.

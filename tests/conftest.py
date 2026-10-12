@@ -432,7 +432,7 @@ class FakeStore:
     def created_block_style(self, entry: Tree | None = None) -> EntryStyle:
         """Return the style a block just created should inherit."""
         self.calls.append(("created_block_style", entry))
-        return EntryStyle(indent="  ", has_donor=True)
+        return EntryStyle(indent="  ")
 
     def remove(self, key: str) -> None:
         """Record the removal and forget the reference."""

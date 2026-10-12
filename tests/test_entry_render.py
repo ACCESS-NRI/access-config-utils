@@ -17,7 +17,7 @@ from access.config.entry_render import iter_entry_snippets, render
 from access.config.entry_style import EntryStyle
 from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY, ValueTypeHandler
 
-KEY, WS, BLOCK = Fragment("key"), Fragment("ws"), Fragment("block")
+KEY = Fragment("key")
 NUMERIC = frozenset({"integer", "float", "string", "logical", "identifier"})
 PRIORITY = ("logical", "integer", "float", "string", "identifier")
 
@@ -34,53 +34,35 @@ def snippets(category, keys, value, style, declared=None, admitted=NUMERIC, prio
 
 def copied(signature: tuple[int, str], *fragments: Fragment) -> EntryStyle:
     """Return a style carrying *fragments* as the template copied for *signature*."""
-    return EntryStyle(has_donor=True, donors=((signature, tuple(fragments)),))
+    return EntryStyle(indent="", donors=((signature, tuple(fragments)),))
 
 
-# ``KEY = value\n``, the shape most grammars derive for a scalar entry.
-LINE = (KEY, WS, literal("="), WS, Fragment("value"), literal("\n"))
+# ``KEY = value\n``, the shape most formats write for a scalar entry.
+LINE = (KEY, literal(" = "), Fragment("value"), literal("\n"))
 
 
 class TestRender:
-    """Substituting the key, the values and the whitespace into a template."""
+    """Substituting the key and the values into a template."""
 
-    def test_canonical_layout_without_a_donor(self) -> None:
-        """Test the default spacing: one space where allowed, none at either end."""
-        assert render(LINE, ["A"], ["1"], EntryStyle()) == "A = 1\n"
+    def test_writes_the_text_around_the_placeholders(self) -> None:
+        """Test that fixed text stays where it is and the placeholders take their texts."""
+        assert render(LINE, ["A"], ["1"]) == "A = 1\n"
 
-    def test_reproduces_a_donor_run_per_slot(self) -> None:
-        """Test that the recorded runs are used, one per stylable slot."""
-        style = EntryStyle(indent="", key_pads=("  ", "  "), key_split=1, has_donor=True)
-        assert render(LINE, ["A"], ["1"], style) == "A  =  1\n"
+    def test_writes_each_value_in_turn(self) -> None:
+        """Test a list, whose values are taken in the order they were given."""
+        template = (KEY, literal(" = "), Fragment("value"), literal(", "), Fragment("value"))
 
-    def test_a_style_whose_runs_fall_the_other_side_is_ignored(self) -> None:
-        """Test that runs are dropped rather than moved across the assignment.
-
-        The donor put both runs before its ``=``; this template has one either side.
-        Writing them here would space the entry unlike the neighbour it was copied from, so
-        the canonical layout is used instead.
-        """
-        style = EntryStyle(key_pads=("  ", "  "), key_split=2, has_donor=True)
-        assert render(LINE, ["A"], ["1"], style) == "A = 1\n"
-
-    def test_a_style_offering_the_wrong_number_of_runs_is_ignored(self) -> None:
-        """Test that a mismatch falls back to the canonical layout rather than guessing."""
-        style = EntryStyle(key_pads=(" ", " ", " "), has_donor=True)
-        assert render(LINE, ["A"], ["1"], style) == "A = 1\n"
-
-    def test_places_the_indent_immediately_before_the_key(self) -> None:
-        """Test that of several leading slots, the last one carries the indentation."""
-        template = (WS, WS, KEY, literal("=\n"))
-        assert render(template, ["A"], [], EntryStyle(indent="  ", has_donor=True)) == "  A=\n"
-
-    def test_ignores_a_block_placeholder(self) -> None:
-        """Test that the contents of a new block render as nothing; they are added after."""
-        assert render((KEY, literal("<"), BLOCK, literal(">")), ["K"], [], EntryStyle()) == "K<>"
+        assert render(template, ["A"], ["1", "2"]) == "A = 1, 2"
 
     def test_writes_each_key_of_a_chain_where_its_level_says(self) -> None:
         """Test a derived-type component, whose keys are written one after the other."""
         template = (KEY, literal("%"), Fragment("key", level=1), literal(" = 1\n"))
-        assert render(template, ["A", "B"], [], EntryStyle()) == "A%B = 1\n"
+        assert render(template, ["A", "B"], []) == "A%B = 1\n"
+
+    def test_writes_a_key_more_than_once(self) -> None:
+        """Test a block that is closed by the key that opened it."""
+        template = (KEY, literal("%\n%"), KEY, literal("\n"))
+        assert render(template, ["K"], []) == "K%\n%K\n"
 
 
 class TestValueChoice:
@@ -141,13 +123,13 @@ class TestDeclaredTemplate:
         A grammar that allows no indentation there refuses the first, and the second is the
         one that parses.
         """
-        style = EntryStyle(indent="    ", has_donor=True)
+        style = EntryStyle(indent="    ")
 
         assert snippets("key_value", ("K",), 1, style, self.DECLARED) == ["    K: 1\n", " K: 1\n"]
 
     def test_an_entry_above_with_no_indent_removes_the_default(self) -> None:
         """Test that an unindented file gets an unindented entry, the default after it."""
-        assert snippets("key_value", ("K",), 1, EntryStyle(has_donor=True), self.DECLARED) == ["K: 1\n", " K: 1\n"]
+        assert snippets("key_value", ("K",), 1, EntryStyle(indent=""), self.DECLARED) == ["K: 1\n", " K: 1\n"]
 
     def test_writes_every_key_of_a_chain(self) -> None:
         """Test that ``{keys:SEP}`` serves a key path of any depth."""

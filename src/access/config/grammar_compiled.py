@@ -67,9 +67,9 @@ class ParseContext:
     Args:
         grammar (CompiledGrammar): The compiled grammar and its derived artefacts.
         case_sensitive_keys (bool): Are the dict keys case-sensitive?
-        entry_templates (Mapping[tuple[str, str], str]): Per-parser overrides for the
-            text of a new entry, keyed by container rule name and entry category. Used
-            only where no neighbouring entry can supply a style.
+        entry_templates (Mapping[tuple[str, str], str]): The text of a new entry, keyed by
+            container rule name and entry category. Used where the file has no entry of the
+            kind to copy.
         value_rule_priority (tuple[str, ...]): Order in which value-type rules are tried for
             a new value.
         block_rules (tuple[str, ...]): Names of the rules holding block contents, the one

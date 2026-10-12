@@ -374,7 +374,7 @@ def test_insert_entry_passes_the_style_and_template_through(container) -> None:
     can write.
     """
     seen: dict[str, object] = {}
-    style = EntryStyle(indent="    ", has_donor=True)
+    style = EntryStyle(indent="    ")
     ctx = FakeContext()
     ctx.entry_templates = {("start", "key_value"): "{key}={value}", ("block", "key_value"): "{key}:{value}"}
     ctx.value_rule_priority = ("integer",)
