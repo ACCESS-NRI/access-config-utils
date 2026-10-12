@@ -106,10 +106,9 @@ class TestReplace:
     """Writing a new value into an entry that already exists."""
 
     def test_a_scalar(self, store) -> None:
-        """Test the ordinary edit, and that the node holding the value is handed back."""
-        nodes = store.replace("a", 42)
+        """Test the ordinary edit."""
+        store.replace("a", 42)
 
-        assert nodes == store.refs["a"].value_nodes
         assert store.render() == "a = 42\nb = 2"
 
     def test_a_whole_list(self, ctx) -> None:
@@ -145,16 +144,15 @@ class TestReplace:
         AddParent().visit(tree)
         store = ConfigStore(tree, ctx)
 
-        nodes = store.replace("a", value)
+        store.replace("a", value)
 
         assert store.render() == written
-        assert nodes == store.refs["a"].value_nodes
-        assert len(nodes) == len(value)
+        assert len(store.refs["a"].value_nodes) == len(value)
 
     def test_resizing_an_entry_that_is_not_a_list(self, store) -> None:
         """Test that only a list has a length to change."""
         with pytest.raises(TypeError, match="change the type"):
-            store.resize("a", [1, 2], [0, None])
+            store.replace("a", [1, 2], [0, None])
 
 
 class TestAdd:
@@ -281,7 +279,7 @@ class TestResizingRecords:
         """Test that the new line is spaced and punctuated like its neighbour."""
         store = self.store_of(ctx, 'r:  "f","a=1"\nr:  "f","a=2"\nx = 1\n')
 
-        store.resize("r", [rec(1), rec(2), rec(3)], [0, 1, None])
+        store.replace("r", [rec(1), rec(2), rec(3)], [0, 1, None])
 
         assert store.render() == 'r:  "f","a=1"\nr:  "f","a=2"\nr:  "f","a=3"\nx = 1'
         assert len(store.refs["r"].entry_nodes) == 3
@@ -290,7 +288,7 @@ class TestResizingRecords:
         """Test a record put at the front of the list."""
         store = self.store_of(ctx, 'x = 1\nr: "f", "a=1"\n')
 
-        store.resize("r", [rec(0), rec(1)], [None, 0])
+        store.replace("r", [rec(0), rec(1)], [None, 0])
 
         assert store.render() == 'x = 1\nr: "f", "a=0"\nr: "f", "a=1"'
 
@@ -298,7 +296,7 @@ class TestResizingRecords:
         """Test a list shrinking to one record, which also changes."""
         store = self.store_of(ctx, 'r: "f", "a=1"\nr: "f", "a=2"\nx = 1\n')
 
-        store.resize("r", [rec(5)], [1])
+        store.replace("r", [rec(5)], [1])
 
         assert store.render() == 'r: "f", "a=5"\nx = 1'
 
@@ -314,7 +312,7 @@ class TestResizingRecords:
         store = self.store_of(ctx, 'r: "f", "a=1"\n')
 
         with pytest.raises(error):
-            store.resize("r", values, origins)
+            store.replace("r", values, origins)
 
         assert store.render() == 'r: "f", "a=1"'
 
@@ -324,7 +322,7 @@ class TestResizingRecords:
         store.addable = False
 
         with pytest.raises(UnsupportedEntryError, match="no body"):
-            store.resize("r", [rec(1), rec(2)], [0, None])
+            store.replace("r", [rec(1), rec(2)], [0, None])
 
     def test_takes_back_the_records_it_wrote_when_one_cannot_be(self, ctx) -> None:
         """Test that a list the file cannot take leaves it as it was."""
@@ -339,7 +337,7 @@ class TestResizingRecords:
             return real(self, *args, **kwargs)
 
         with patch.object(ConfigStore, "_insert_record", second_fails), pytest.raises(UnsupportedEntryError):
-            store.resize("r", [rec(1), rec(2), rec(3)], [0, None, None])
+            store.replace("r", [rec(1), rec(2), rec(3)], [0, None, None])
 
         assert store.render() == 'r: "f", "a=1"\nx = 1'
 

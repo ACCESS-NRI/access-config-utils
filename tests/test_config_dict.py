@@ -540,7 +540,6 @@ class TestConfigList:
 
         assert listed == expected
         assert list_store.asked("replace") == [("a", expected)]
-        assert list_store.asked("resize") == []
 
     @pytest.mark.parametrize(
         ("change", "expected", "origins"),
@@ -565,12 +564,14 @@ class TestConfigList:
             pytest.param(lambda values: values.clear(), [], [], id="clear"),
         ],
     )
-    def test_a_change_of_length_is_a_resize(self, listed, list_store, change, expected, origins) -> None:
-        """Test that the store is told which old element each new one stands in for."""
+    def test_a_change_of_length_says_which_old_element_each_new_one_stands_in_for(
+        self, listed, list_store, change, expected, origins
+    ) -> None:
+        """Test that the store is told the origins, so that what stays keeps its place."""
         change(listed)
 
         assert listed == expected
-        assert list_store.asked("resize") == [("a", expected, origins)]
+        assert list_store.asked("replace") == [("a", expected, origins)]
 
     def test_pop_hands_back_the_element(self, listed) -> None:
         """Test that ``pop`` still returns what it removed."""
@@ -591,7 +592,7 @@ class TestConfigList:
         def refuse(key, values, origins):
             raise ValueError("refused")
 
-        list_store.resize = refuse  # type: ignore[method-assign]
+        list_store.replace = refuse  # type: ignore[method-assign]
         with pytest.raises(ValueError, match="refused"):
             listed.append(3)
 
@@ -667,7 +668,7 @@ class TestConfigRecord:
         """Test that the dict changes only once the file has."""
         listed, store = records
 
-        def refuse(key, values):
+        def refuse(key, values, origins):
             raise TypeError("refused")
 
         store.replace = refuse  # type: ignore[method-assign]
@@ -725,7 +726,7 @@ class TestAddingRecords:
 
         config["r"] = [{"value": "a", "x": 1}, {"value": "b", "x": 2}]
 
-        assert store.asked("resize") == [("r", [{"value": "a", "x": 1}, {"value": "b", "x": 2}], [0, None])]
+        assert store.asked("replace") == [("r", [{"value": "a", "x": 1}, {"value": "b", "x": 2}], [0, None])]
         assert config["r"] == [{"value": "a", "x": 1}, {"value": "b", "x": 2}]
 
     def test_the_key_goes_again_if_a_record_is_refused(self) -> None:
@@ -735,7 +736,7 @@ class TestAddingRecords:
         def refuse(key, values, origins):
             raise TypeError("refused")
 
-        store.resize = refuse  # type: ignore[method-assign]
+        store.replace = refuse  # type: ignore[method-assign]
         config = Config(store)
 
         with pytest.raises(TypeError, match="refused"):

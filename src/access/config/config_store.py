@@ -85,73 +85,47 @@ class ConfigStore:
         """
         return ConfigStore(ref.block_nodes[index], self.ctx, addable=ref.addable)
 
-    def replace(self, key: str, value: Any) -> tuple[Tree | None, ...]:
-        """Write a new value into the nodes of an entry that already exists.
+    def replace(self, key: str, value: Any, origins: Sequence[int | None] | None = None) -> None:
+        """Write a new value into an entry that already exists.
 
-        A list of a different length is laid out afresh by ``resize``, with each new value
-        matched to the old one it stands in for, so that what stays keeps its place.
+        A scalar, or a list of the length it has, is written in place, node by node. A list
+        of a different length is laid out afresh, with each new value matched to the old one
+        it stands in for, so that what stays keeps its place. A list of records, which the
+        file writes one entry per record, changes length by gaining and losing entries; see
+        ``_resize_records``.
 
         Args:
             key (str): The normalised key.
             value (Any): The new value: a scalar, or a whole list.
-
-        Returns:
-            tuple[Tree | None, ...]: The value-type rule nodes now holding the value.
-                ``None`` where an array position no entry wrote has no node to hold one,
-                as in ``EntryRef.value_nodes``.
-
-        Raises:
-            TypeError: If the new value's type does not match what the entry holds.
-            ValueError: If a list of a different length cannot be written; see ``resize``.
-        """
-        ref = self.refs[key]
-        if isinstance(value, list):
-            if ref.category != KEY_LIST:
-                raise TypeError(f"Trying to change the type of variable '{key}'")
-            if len(ref.value_nodes) != len(value):
-                return self.resize(key, value, align_values(entry_value(ref), value))
-            write_values(ref.value_nodes, value)
-            return ref.value_nodes
-        else:
-            if ref.category != KEY_VALUE:
-                raise TypeError(f"Trying to change the type of variable '{key}'")
-            node = ref.value_nodes[0]
-            # A None node means an array position the file never wrote, which only a
-            # key_list entry can have; a key_value always has the one node it names.
-            assert node is not None
-            update_node_value(node, value)
-        return ref.value_nodes
-
-    def resize(self, key: str, values: Sequence[Any], origins: Sequence[int | None]) -> tuple[Tree | None, ...]:
-        """Write a list of a different length into an entry that already exists.
-
-        A list of records, which the file writes one entry per record, changes length by
-        gaining and losing entries; see ``_resize_records``.
-
-        Args:
-            key (str): The normalised key.
-            values (Sequence[Any]): The values the list is to hold.
-            origins (Sequence[int | None]): For each value, the position of the old element
-                it stands in for, or ``None`` for a new one.
-
-        Returns:
-            tuple[Tree | None, ...]: The value-type rule nodes now holding the list.
+            origins (Sequence[int | None] | None): For a list of a different length, the
+                position of the old element each new value stands in for, or ``None`` for
+                a new one; worked out by aligning the two lists where the caller does not
+                know.
 
         Raises:
-            TypeError: If the entry is not a list, or a value standing in for an old element
-                is of another type.
+            TypeError: If the new value's type does not match what the entry holds, or a
+                value standing in for an old element is of another type.
             ValueError: If fewer than two values are asked for, or the entry's values are
                 not written one per node in a single entry.
             UnsupportedEntryError: If the format cannot write the list asked for.
         """
         ref = self.refs[key]
-        if ref.category != KEY_LIST:
+        if ref.category != (KEY_LIST if isinstance(value, list) else KEY_VALUE):
             raise TypeError(f"Trying to change the type of variable '{key}'")
-        if ref.collected:
-            self._resize_records(key, values, origins)
+        if not isinstance(value, list):
+            node = ref.value_nodes[0]
+            # A None node means an array position the file never wrote, which only a
+            # key_list entry can have; a key_value always has the one node it names.
+            assert node is not None
+            update_node_value(node, value)
+        elif len(ref.value_nodes) == len(value):
+            write_values(ref.value_nodes, value)
         else:
-            self.refs[key] = resize_entry(ref, self.ctx, key, values, origins)
-        return self.refs[key].value_nodes
+            origins = align_values(entry_value(ref), value) if origins is None else origins
+            if ref.collected:
+                self._resize_records(key, value, origins)
+            else:
+                self.refs[key] = resize_entry(ref, self.ctx, key, value, origins)
 
     def _resize_records(self, key: str, values: Sequence[Any], origins: Sequence[int | None]) -> None:
         """Change how many records a key holds, an entry per record.

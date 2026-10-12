@@ -394,15 +394,10 @@ class FakeStore:
         self.calls.append(("child", (ref, index) if index else ref))
         return FakeStore(ctx=self.ctx)
 
-    def replace(self, key: str, value: Any) -> tuple[Tree, ...]:
-        """Record the replacement and return the entry's value nodes."""
-        self.calls.append(("replace", (key, value)))
-        return self.refs[key].value_nodes
-
-    def resize(self, key: str, values: Any, origins: Any) -> tuple[Tree, ...]:
-        """Record the resize, with the mapping from new elements to old ones."""
-        self.calls.append(("resize", (key, list(values), list(origins))))
-        return ()
+    def replace(self, key: str, value: Any, origins: Any = None) -> None:
+        """Record the replacement, and the old element each new value stands in for."""
+        call = (key, value)
+        self.calls.append(("replace", call if origins is None else (*call, list(origins))))
 
     def add_path(self, keys: Sequence[str], raw_keys: Sequence[str], value: Any, category: Any = None) -> EntryRef:
         """Record the addition and return the reference declared for it, or refuse it.

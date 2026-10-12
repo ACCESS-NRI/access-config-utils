@@ -89,10 +89,7 @@ class ConfigList(list):
                 one. ``None`` for a list of the same length, written position by position.
         """
         plain = [_plain(value) for value in values]
-        if origins is None:
-            self._store.replace(self._key, plain)
-        else:
-            self._store.resize(self._key, plain, origins)
+        self._store.replace(self._key, plain, origins)
         self._hold(plain, origins)
 
     def _hold(self, values: list[Any], origins: Sequence[int | None] | None = None) -> None:
