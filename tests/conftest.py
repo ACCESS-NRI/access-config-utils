@@ -46,17 +46,17 @@ PARSERS = {
     "field_table": FieldTableParser,
 }
 
-# The entry text each grammar produces for each container and category it supports, with
-# no neighbouring entry to copy a style from. Every combination absent from this table is
-# one the grammar cannot express, and is asserted empty by test_unsupported_combinations.
+# The entry text each parser writes for each container and category it supports, with no
+# neighbouring entry to copy a style from: what it declares in ``entry_templates``. A
+# combination absent from this table is one the parser declares nothing for.
 CANONICAL = {
     ("nuopc_config", "start", "key_value"): "NEWKEY: 7\n",
     ("nuopc_config", "start", "key_list"): "NEWKEY: 1 2 3\n",
     ("nuopc_config", "start", "key_block"): "NEWKEY::\n::\n",
     ("nuopc_config", "start", "key_null"): "NEWKEY:\n",
-    ("nuopc_config", "block", "key_value"): "NEWKEY = 7\n",
-    ("nuopc_config", "block", "key_list"): "NEWKEY = 1:2:3\n",
-    ("nuopc_config", "block", "key_null"): "NEWKEY =\n",
+    ("nuopc_config", "block", "key_value"): " NEWKEY = 7\n",
+    ("nuopc_config", "block", "key_list"): " NEWKEY = 1:2:3\n",
+    ("nuopc_config", "block", "key_null"): " NEWKEY =\n",
     ("mom6_input", "start", "key_value"): "NEWKEY = 7\n",
     ("mom6_input", "start", "key_list"): "NEWKEY = 1, 2, 3\n",
     ("mom6_input", "start", "key_block"): "NEWKEY%\n%NEWKEY\n",
@@ -69,10 +69,9 @@ CANONICAL = {
     ("nuopc_runseq", "start", "key_value"): "NEWKEY::\nATM\n::\n",
     ("nuopc_runseq", "start", "key_list"): "NEWKEY::\n@3600\nATM\n@\n::\n",
     ("nuopc_runseq", "start", "key_null"): "NEWKEY::\n::\n",
-    # A method line starts with its line break, and the grammar's own preference is the
-    # bare assignment; the parser's template, indented in quotes, is not consulted here.
-    ("field_table", "block", "key_value"): "\nNEWKEY = 7",
-    ("field_table", "block", "key_list"): "\nNEWKEY = 1, 2, 3",
+    # A method line starts with its line break, and is indented.
+    ("field_table", "block", "key_value"): '\n  "NEWKEY", "7"',
+    ("field_table", "block", "key_list"): "\n  NEWKEY = 1, 2, 3",
 }
 
 # The same for a chain of keys, keyed by how many keys there are: the Fortran ``a%b = 1``
@@ -112,27 +111,31 @@ def chain_rows(grammar: str) -> list[tuple[str, str, int, str]]:
 
 
 def assert_canonical_entry(
-    compiled: Any,
+    parser: ConfigParser,
     container: str,
     category: str,
     expected: str,
     values: Mapping[str, Any] = VALUES,
     keys: Sequence[str] = ("NEWKEY",),
 ) -> None:
-    """Assert the entry text a grammar produces with no neighbour to copy a style from.
+    """Assert the entry text a parser writes for a kind of entry the file has none of.
 
     The first candidate has to be both the expected text and valid in that container, so
-    this pins the whole generate-rank-render pipeline against a real grammar.
+    this pins the template the parser declares, the choice of a value type and the
+    rendering, against a real grammar.
 
     Args:
-        compiled: The ``CompiledGrammar`` for the format.
-        container: Name of the container rule the entry is generated for.
+        parser: The parser, which declares the template and supplies the grammar.
+        container: Name of the container rule the entry is written in.
         category: The entry category, of the innermost entry for a chain.
         expected: The exact text expected.
         values: The value to write per category, for a format that cannot hold the usual.
         keys: The key path, one key per entry of the chain.
     """
-    snippets = iter_entry_snippets(compiled.info, container, category, keys, values[category], EntryStyle())
+    compiled = compile_grammar(parser.grammar)
+    snippets = iter_entry_snippets(
+        compiled.info, container, category, keys, values[category], EntryStyle(), parser.entry_templates
+    )
     first = next(iter(snippets))
     assert first == expected
 

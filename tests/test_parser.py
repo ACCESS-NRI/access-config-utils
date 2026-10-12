@@ -19,7 +19,7 @@ which ``HeaderParser`` adds.
 from pathlib import Path
 
 import pytest
-from conftest import TOY_GRAMMAR
+from conftest import CANONICAL, CHAIN_CANONICAL, PARSERS, TOY_GRAMMAR
 
 from access.config.grammar_values import VALUE_RULE_PRIORITY
 from access.config.parser import ConfigParser
@@ -60,6 +60,21 @@ def test_parser_declares_defaults(parser) -> None:
     assert ctx.entry_templates == {}
     assert ctx.value_rule_priority == tuple(VALUE_RULE_PRIORITY)
     assert ctx.key_case == "upper"
+
+
+@pytest.mark.parametrize("name", PARSERS)
+def test_a_shipped_parser_declares_a_template_for_every_entry_it_can_write(name) -> None:
+    """Test that the templates a shipped parser declares are those pinned in ``CANONICAL``.
+
+    A kind of entry the grammar can write but no template is declared for could only be
+    added by copying a neighbour, and one declared that the grammar cannot write is text
+    nothing reads. Nothing derives the missing ones, so the two tables have to agree.
+    """
+    declared = set(PARSERS[name]().entry_templates)
+    pinned = {(container, category) for (grammar, container, category) in CANONICAL if grammar == name}
+    pinned |= {(container, category) for (grammar, container, category, _) in CHAIN_CANONICAL if grammar == name}
+
+    assert declared == pinned
 
 
 def test_parser_appends_a_trailing_newline(parser) -> None:
@@ -848,9 +863,8 @@ def test_config_entry_template_override():
 def test_config_entry_template_used_without_a_donor():
     """Test that the declared template is compiled and used for an entry with no neighbour.
 
-    A template applies only where nothing nearby can supply a style, so an empty block is
-    the case that reaches it: the block holds no entry to copy from, and no sibling block
-    either.
+    A template applies where the file has no entry of the kind to copy, so an empty block
+    is the case that reaches it: the block holds no entry, and no sibling block either.
     """
     parser = TemplateParser()
 
@@ -886,7 +900,7 @@ class BrokenTemplateParser(TemplateParser):
     @property
     def entry_templates(self):
         # Declared for the block, because that is the container an empty one gives us: a
-        # template is only ever tried where there is no neighbouring entry to copy from.
+        # template is only tried where there is no entry of the kind to copy.
         return {("block", "key_value"): "{key} <<>> {value}"}
 
 

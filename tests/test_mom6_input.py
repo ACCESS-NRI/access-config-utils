@@ -556,4 +556,4 @@ def test_canonical_entry_text(parser, container, category, expected) -> None:
     Byte-exact, and re-parsed in the container it was generated for. These rows are the
     statement of what this grammar can express and how it spells it.
     """
-    assert_canonical_entry(compile_grammar(parser.grammar), container, category, expected)
+    assert_canonical_entry(parser, container, category, expected)

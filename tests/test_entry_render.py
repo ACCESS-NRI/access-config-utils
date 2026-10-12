@@ -213,49 +213,72 @@ class TestValueChoice:
         assert snippets("key_null", ("K",), None, EntryStyle()) == ["K =\n"]
 
 
-class TestParserTemplateOverride:
-    """The template a parser may declare for a container it wants laid out its own way."""
+class TestDeclaredTemplate:
+    """The template a parser declares for a kind of entry the file has none to copy of."""
 
-    OVERRIDE = {("start", "key_value"): " {key}: {value}\n"}
+    DECLARED = {("start", "key_value"): " {key}: {value}\n"}
 
-    def test_is_offered_first_when_nothing_can_supply_a_style(self, offer) -> None:
-        """Test that the declared template wins where no neighbour can supply a style."""
+    def test_is_offered_first_when_the_file_shows_no_indent(self, offer) -> None:
+        """Test that the declared template wins where nothing above can be copied."""
         offer(LINE)
 
-        assert snippets("key_value", ("K",), 1, EntryStyle(), self.OVERRIDE)[0] == " K: 1\n"
+        assert snippets("key_value", ("K",), 1, EntryStyle(), self.DECLARED)[0] == " K: 1\n"
 
-    def test_is_not_offered_when_a_neighbour_can(self, offer) -> None:
-        """Test that copying the entries already in the file beats a declared convention.
+    def test_takes_the_indent_of_the_entry_above_and_then_its_own(self, offer) -> None:
+        """Test that the file's indentation is tried first, and the template's own after it.
 
-        A template is fixed text, so it cannot reproduce a neighbour's whitespace; offered
-        unconditionally it would space a new entry unlike the one directly above it.
+        A grammar that allows no indentation there refuses the first, and the second is the
+        one that parses.
         """
         offer(LINE)
+        style = EntryStyle(indent="    ", has_donor=True)
 
-        assert snippets("key_value", ("K",), 1, EntryStyle(has_donor=True), self.OVERRIDE)[0] == "K = 1\n"
+        assert snippets("key_value", ("K",), 1, style, self.DECLARED)[:2] == ["    K: 1\n", " K: 1\n"]
 
-    def test_is_not_offered_for_a_chain_of_keys(self, offer) -> None:
+    def test_an_entry_above_with_no_indent_removes_the_default(self, offer) -> None:
+        """Test that an unindented file is not written an indented entry."""
+        offer(LINE)
+
+        assert snippets("key_value", ("K",), 1, EntryStyle(has_donor=True), self.DECLARED)[0] == "K: 1\n"
+
+    def test_a_copy_of_a_neighbour_comes_before_it(self, offer) -> None:
+        """Test that copying an entry of the kind beats a declared convention."""
+        offer(LINE)
+        style = copied((1, "key_value"), KEY, literal("="), Fragment("value", notation=("integer", "0")), literal("\n"))
+
+        texts = snippets("key_value", ("K",), 1, style, self.DECLARED, ("integer",))
+
+        assert texts[:3] == ["K=1\n", "K: 1\n", " K: 1\n"]
+
+    def test_writes_every_key_of_a_chain(self, offer) -> None:
+        """Test that ``{keys:SEP}`` serves a key path of any depth."""
+        offer(CHAIN)
+        declared = {("start", "key_value"): "{keys:%} = {value}\n"}
+
+        assert snippets("key_value", ("A", "B"), 1, EntryStyle(), declared, ("integer",))[0] == "A%B = 1\n"
+
+    def test_a_template_for_one_key_is_not_offered_for_a_chain(self, offer) -> None:
         """Test that a template writing one key is not used for a key path of two."""
         offer(CHAIN)
 
-        assert snippets("key_value", ("A", "B"), 1, EntryStyle(), self.OVERRIDE, ("integer",)) == ["A%B = 1\n"]
+        assert snippets("key_value", ("A", "B"), 1, EntryStyle(), self.DECLARED, ("integer",)) == ["A%B = 1\n"]
 
     def test_a_declaration_for_another_container_is_ignored(self, offer) -> None:
-        """Test that the override is looked up by container and category together."""
+        """Test that the declaration is looked up by container and category together."""
         offer(LINE)
         elsewhere = {("block", "key_value"): " {key}: {value}\n"}
 
         assert snippets("key_value", ("K",), 1, EntryStyle(), elsewhere)[0] == "K = 1\n"
 
     def test_the_generated_candidates_still_follow(self, offer) -> None:
-        """Test that the override is a preference, not a replacement.
+        """Test that the declaration is a preference, not a replacement.
 
         If it no longer fits the grammar the caller simply moves on, so the derived text has
         to be offered behind it.
         """
         offer(LINE)
 
-        assert snippets("key_value", ("K",), 1, EntryStyle(), self.OVERRIDE) == [" K: 1\n", "K = 1\n"]
+        assert snippets("key_value", ("K",), 1, EntryStyle(), self.DECLARED) == [" K: 1\n", "K = 1\n"]
 
 
 class TestCopiedTemplate:

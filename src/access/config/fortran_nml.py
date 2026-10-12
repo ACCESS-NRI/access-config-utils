@@ -7,9 +7,10 @@ Fortran namelists allow format-free I/O of variables by key-value assignements. 
 they were an extension to the languages, but became part of the standard in Fortran 90.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
-from access.config.parser import BLOCK_RULE, ConfigParser
+from access.config.grammar_contract import BLOCK_RULE, KEY_BLOCK, KEY_LIST, KEY_NULL, KEY_VALUE, START_RULE
+from access.config.parser import ConfigParser
 
 
 class FortranNMLParser(ConfigParser):
@@ -61,6 +62,20 @@ class FortranNMLParser(ConfigParser):
         carrying the type's name too: ``a%d = 1``, after the type's last line.
         """
         return (BLOCK_RULE, "dtype_body")
+
+    @property
+    def entry_templates(self) -> Mapping[tuple[str, str], str]:
+        """Mapping[tuple[str, str], str]: The text of a new group and of a new assignment.
+
+        A component of a derived type is a line of the group carrying the whole key path,
+        ``a%b = 1``, which is what ``{keys:%}`` writes for a path of any depth.
+        """
+        return {
+            (START_RULE, KEY_BLOCK): "&{key}\n/\n",
+            (BLOCK_RULE, KEY_VALUE): "{keys:%} = {value}\n",
+            (BLOCK_RULE, KEY_LIST): "{keys:%} = {value}, {value}\n",
+            (BLOCK_RULE, KEY_NULL): "{keys:%} =\n",
+        }
 
     @property
     def repeated_blocks(self) -> str:

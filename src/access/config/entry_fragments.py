@@ -30,11 +30,11 @@ Examples:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import re
 from dataclasses import dataclass
 from typing import Literal
 
-from access.config.grammar_contract import KEY_BLOCK, VALUE_SLOT_COUNTS
+from access.config.grammar_contract import VALUE_SLOT_COUNTS
 
 FragmentKind = Literal["literal", "ws", "key", "value", "block"]
 
@@ -227,66 +227,95 @@ def expand_value_slots(template: EntryTemplate, count: int) -> EntryTemplate:
     return template[: first + 1] + repeated + template[second + 1 :]
 
 
-_MARKERS: Mapping[str, Fragment] = {
-    "{key}": Fragment("key"),
-    "{value}": Fragment("value"),
-    "{block}": Fragment("block"),
-    "{ws}": Fragment("ws"),
-}
+_MARKER = re.compile(r"\{key\}|\{keys:([^}]*)\}|\{value\}")
 
 
-def compile_template(text: str, category: str, options: frozenset[str]) -> EntryTemplate:
-    """Compile a hand-written entry template declared by a parser.
+def compile_template(
+    text: str, category: str, depth: int, indent: str | None, options: frozenset[str]
+) -> EntryTemplate | None:
+    """Compile the template text a parser declares, for an entry chaining *depth* keys.
 
-    The template is ordinary text with ``{key}``, ``{value}``, ``{block}`` and ``{ws}``
-    markers. ``{ws}`` marks whitespace that should follow a neighbouring entry's style;
-    literal spaces are left alone.
+    The text is ordinary text with three markers: ``{key}``, the key of a plain entry;
+    ``{keys:SEP}``, every key of a chain parted by SEP, which the Fortran ``a%b`` writes as
+    ``{keys:%}``; and ``{value}``. A list template has two ``{value}`` markers, because the
+    text between them is the element separator, which longer lists repeat.
+
+    The whitespace the line of the first key starts with is the indentation the template
+    declares. *indent* replaces it, so that an entry is indented like the one above it.
 
     Args:
         text (str): The template text.
         category (str): The entry category it is for.
+        depth (int): How many keys the entry chains together; 1 for a plain entry.
+        indent (str | None): The indentation the file shows, or ``None`` to keep the
+            template's own.
         options (frozenset[str]): Value-type rules admitted in this position.
 
     Returns:
-        EntryTemplate: The compiled template.
+        EntryTemplate | None: The compiled template, or ``None`` if it writes one key and
+            *depth* is not 1.
 
     Raises:
         ValueError: If the markers do not match what *category* requires.
 
     Examples:
-        >>> template = compile_template("{key} = {value}\\n", "key_value",
+        >>> template = compile_template("{key} = {value}\\n", "key_value", 1, None,
         ...                             frozenset({"integer"}))
         >>> [(f.kind, f.text) for f in template]
         [('key', ''), ('literal', ' = '), ('value', ''), ('literal', '\\n')]
 
+        A chain writes each of its keys, parted as the template says, after the indent.
+
+        >>> template = compile_template("{keys:%}=\\n", "key_null", 2, "  ", frozenset())
+        >>> [(f.kind, f.text) for f in template]
+        [('literal', '  '), ('key', ''), ('literal', '%'), ('key', ''), ('literal', '=\\n')]
+
         A list template needs two value markers, because the text between them is what
         identifies the element separator.
 
-        >>> compile_template("{key} = {value}\\n", "key_list", frozenset({"integer"}))
+        >>> compile_template("{key} = {value}\\n", "key_list", 1, None, frozenset())
         Traceback (most recent call last):
             ...
         ValueError: A key_list template needs exactly 2 '{value}' markers
     """
-    fragments: list[Fragment] = []
-    rest = text
-    while rest:
-        found = [(rest.index(name), name) for name in _MARKERS if name in rest]
-        if not found:
-            fragments.append(Fragment("literal", rest))
-            break
-        position, name = min(found)
-        if position:
-            fragments.append(Fragment("literal", rest[:position]))
-        marker = _MARKERS[name]
-        fragments.append(Fragment("value", options=options) if marker.kind == "value" else marker)
-        rest = rest[position + len(name) :]
-
-    template = tuple(fragments)
     expected = VALUE_SLOT_COUNTS[category]
-    if count_fragments(template, "value") != expected:
+    if text.count("{value}") != expected:
         raise ValueError(f"A {category} template needs exactly {expected} '{{value}}' markers")
-    if count_fragments(template, "block") != (1 if category == KEY_BLOCK else 0):
-        raise ValueError(f"A {category} template has the wrong number of '{{block}}' markers")
-    if count_fragments(template, "key") < 1:
-        raise ValueError("An entry template needs at least one '{key}' marker")
-    return template
+    if "{key}" not in text and "{keys:" not in text:
+        raise ValueError("An entry template needs a '{key}' or '{keys:...}' marker")
+
+    fragments: list[Fragment] = []
+    position = 0
+    for found in _MARKER.finditer(text):
+        marked = _marker_fragments(found, depth, options)
+        if marked is None:
+            return None
+        fragments += [Fragment("literal", text[position : found.start()]), *marked]
+        position = found.end()
+    fragments.append(Fragment("literal", text[position:]))
+    return _indented(tuple(f for f in fragments if f.kind != "literal" or f.text), indent)
+
+
+def _marker_fragments(marker: re.Match[str], depth: int, options: frozenset[str]) -> list[Fragment] | None:
+    """Return what a marker writes, or ``None`` if the marker cannot write *depth* keys."""
+    if marker.group() == "{value}":
+        return [Fragment("value", options=options)]
+    if marker.group(1) is None:
+        return [Fragment("key")] if depth == 1 else None
+    fragments = []
+    for level in range(depth):
+        if level:
+            fragments.append(Fragment("literal", marker.group(1)))
+        fragments.append(Fragment("key", level=level))
+    return fragments
+
+
+def _indented(template: EntryTemplate, indent: str | None) -> EntryTemplate:
+    """Return *template* with the whitespace its first key's line starts with replaced."""
+    if indent is None:
+        return template
+    first = next(index for index, fragment in enumerate(template) if fragment.kind == "key")
+    before = template[first - 1].text if first else ""
+    line_start = before.rfind("\n") + 1
+    text = before[:line_start] + indent + before[line_start:].lstrip(" \t")
+    return (*template[: max(first - 1, 0)], *([Fragment("literal", text)] if text else []), *template[first:])

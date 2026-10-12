@@ -16,7 +16,6 @@ import pytest
 from conftest import TEXT_VALUES, assert_canonical_entry, canonical_rows
 from lark.exceptions import UnexpectedInput
 
-from access.config.grammar_compiled import compile_grammar
 from access.config.grammar_values import UnsupportedEntryError
 from access.config.nuopc_runseq import NUOPCRunSeqParser
 
@@ -399,4 +398,4 @@ class TestAddingAndDeleting:
 @pytest.mark.parametrize(("container", "category", "expected"), canonical_rows("nuopc_runseq"))
 def test_canonical_entry_text(parser, container, category, expected) -> None:
     """Test the text of a new table, with no neighbour to copy a style from."""
-    assert_canonical_entry(compile_grammar(parser.grammar), container, category, expected, TEXT_VALUES)
+    assert_canonical_entry(parser, container, category, expected, TEXT_VALUES)

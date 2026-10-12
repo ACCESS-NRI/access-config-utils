@@ -16,6 +16,9 @@ We have also found MOM6 parameter files with C-style comments in files used by C
 are ignored by MOM6, but are actually not part of the specifications.
 """
 
+from collections.abc import Mapping
+
+from access.config.grammar_contract import BLOCK_RULE, KEY_BLOCK, KEY_LIST, KEY_VALUE, START_RULE
 from access.config.parser import ConfigParser
 
 
@@ -28,6 +31,17 @@ class MOM6InputParser(ConfigParser):
     @property
     def case_sensitive_keys(self) -> bool:
         return True
+
+    @property
+    def entry_templates(self) -> Mapping[tuple[str, str], str]:
+        """Mapping[tuple[str, str], str]: The text of a new parameter and of a new block."""
+        return {
+            (START_RULE, KEY_VALUE): "{key} = {value}\n",
+            (START_RULE, KEY_LIST): "{key} = {value}, {value}\n",
+            (START_RULE, KEY_BLOCK): "{key}%\n%{key}\n",
+            (BLOCK_RULE, KEY_VALUE): "{key} = {value}\n",
+            (BLOCK_RULE, KEY_LIST): "{key} = {value}, {value}\n",
+        }
 
     @property
     def grammar(self) -> str:

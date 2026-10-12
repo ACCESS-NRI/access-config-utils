@@ -197,12 +197,9 @@ def iter_entry_snippets(
     thing that writes the new entry exactly as the file writes the others, punctuation and
     value notation included.
 
-    A parser-declared override for this container and category comes next, but only when
-    *style* has no donor. A template is fixed text, so it cannot reproduce a neighbour's
-    whitespace; offered unconditionally it would space a new entry unlike the entry directly
-    above it, which is worse than the canonical layout it was meant to replace. What it is
-    for is the case where nothing nearby can say how the entry should look. It writes one
-    key, so it is not offered for a chain of them.
+    The template the parser declares for this container and category comes next, written
+    with the indentation of the entry above where the file shows one, and then with its
+    own. It is how the first entry of a kind is written when the file has none to copy.
 
     Neither is more than a preference: if one does not parse, or reads back as something
     else, the caller simply moves on to the templates the grammar derives.
@@ -226,10 +223,12 @@ def iter_entry_snippets(
     depth = len(keys)
     templates = _ranked_templates(info, container, category, depth, style)
 
-    override = (overrides or {}).get((container, category))
-    if override is not None and not style.has_donor and depth == 1:
-        options = admitted_value_rules(info, container, category)
-        templates.insert(0, compile_template(override, category, options))
+    declared = (overrides or {}).get((container, category))
+    if declared is not None:
+        options = admitted_value_rules(info, container, category, depth)
+        shown = style.indent if style.has_donor else None
+        compiled = (compile_template(declared, category, depth, indent, options) for indent in (shown, None))
+        templates[0:0] = dict.fromkeys(template for template in compiled if template is not None)
 
     donor = style.donor(depth, category)
     if donor is not None:

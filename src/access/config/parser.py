@@ -76,22 +76,21 @@ class ConfigParser(ABC):
 
     @property
     def entry_templates(self) -> Mapping[tuple[str, str], str]:
-        """Optional hand-written templates for the text of a new entry.
+        """The text of a new entry of each kind the format can write.
 
         Keyed by container rule name and entry category, e.g. ``("block", "key_value")``.
-        The value is ordinary text with ``{key}``, ``{value}``, ``{block}`` and ``{ws}``
-        markers, where ``{ws}`` marks whitespace that should follow the style of a
-        neighbouring entry.
+        The value is ordinary text with ``{key}``, ``{keys:SEP}`` and ``{value}`` markers.
+        ``{key}`` is the key of a plain entry. ``{keys:SEP}`` is every key of a chain,
+        parted by SEP, as the Fortran ``a%b = 1`` is written ``{keys:%} = {value}``, so one
+        template serves a key path of any depth. A list template has two ``{value}``
+        markers, because the text between them is the element separator, which longer lists
+        repeat. A block is written empty, its contents being added afterwards.
 
-        A template applies **only when there is no neighbouring entry to copy a style
-        from**. Matching the entries already in the file always wins, because a minimal diff
-        matters more than any declared convention; what a template decides is how the very
-        first entry of its kind should look. Override this when a format's conventional
-        layout is not what the grammar-derived text happens to be -- an indented block body,
-        say, which nothing in the grammar implies.
-
-        Even then it is a preference, not a replacement: synthesis falls back to the
-        grammar-derived candidates if the template no longer fits the grammar.
+        A new entry is first written as a copy of the nearest entry of its kind, which keeps
+        its spacing, its punctuation and the notation of its values: a minimal diff matters
+        more than any declared convention. A template is for the first entry of a kind,
+        which has none to copy. The whitespace the line of its first key starts with is its
+        own indentation, which that of the entry above replaces where the file shows one.
 
         Returns:
             Mapping[tuple[str, str], str]: The templates; empty by default.

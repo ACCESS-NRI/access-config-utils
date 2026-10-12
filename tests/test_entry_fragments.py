@@ -167,11 +167,11 @@ class TestExpandValueSlots:
 
 
 class TestCompileTemplate:
-    """Compiling the template text a parser may declare for a new entry."""
+    """Compiling the template text a parser declares for a new entry."""
 
     def test_splits_text_around_its_markers(self) -> None:
         """Test that the markers become placeholders and the rest becomes fixed text."""
-        template = compile_template("{key} = {value}\n", "key_value", frozenset({"integer"}))
+        template = compile_template("{key} = {value}\n", "key_value", 1, None, frozenset({"integer"}))
 
         assert [(f.kind, f.text) for f in template] == [
             ("key", ""),
@@ -182,20 +182,20 @@ class TestCompileTemplate:
         # The admitted value rules are carried on the value placeholder, for rendering.
         assert template[2].options == frozenset({"integer"})
 
-    def test_handles_a_block_and_a_repeated_key(self) -> None:
-        """Test a block template, whose key is written twice and whose body is a slot."""
-        template = compile_template("{key}%\n{block}%{key}\n", "key_block", frozenset())
+    def test_a_key_written_twice(self) -> None:
+        """Test a block template, whose key closes it as well as opening it."""
+        template = compile_template("{key}%\n%{key}\n", "key_block", 1, None, frozenset())
 
-        assert [f.kind for f in template] == ["key", "literal", "block", "literal", "key", "literal"]
+        assert [f.kind for f in template] == ["key", "literal", "key", "literal"]
 
     def test_text_with_no_marker_at_all(self) -> None:
-        """Test the branch that consumes the remainder once no marker is left."""
+        """Test that a template without a key is refused."""
         with pytest.raises(ValueError, match="key"):
-            compile_template("just text", "key_null", frozenset())
+            compile_template("just text", "key_null", 1, None, frozenset())
 
     def test_a_marker_at_the_very_start(self) -> None:
         """Test that a template opening on a marker emits no empty literal before it."""
-        template = compile_template("{key}=", "key_null", frozenset())
+        template = compile_template("{key}=", "key_null", 1, None, frozenset())
         assert [f.kind for f in template] == ["key", "literal"]
 
     @pytest.mark.parametrize(
@@ -203,17 +203,51 @@ class TestCompileTemplate:
         [
             ("{key}={value}", "key_null", "exactly 0"),
             ("{key}={value}", "key_list", "exactly 2"),
-            ("{key}=", "key_block", "'{block}'"),
+            ("{key}={value}{value}", "key_value", "exactly 1"),
             ("={value}", "key_value", "'{key}'"),
-            ("{key}={block}", "key_null", "'{block}'"),
         ],
     )
     def test_rejects_markers_that_do_not_fit_the_category(self, text, category, message) -> None:
         """Test that a template is checked against what its category requires.
 
         A list needs two value markers because the text between them is what identifies the
-        element separator; a block needs exactly one body marker; every template needs a
-        key.
+        element separator, and every template needs a key.
         """
         with pytest.raises(ValueError, match=message):
-            compile_template(text, category, frozenset())
+            compile_template(text, category, 1, None, frozenset())
+
+    @pytest.mark.parametrize(("depth", "written"), [(1, "A"), (2, "A%B"), (3, "A%B%C")])
+    def test_keys_writes_every_key_of_a_chain(self, depth, written) -> None:
+        """Test that ``{keys:SEP}`` writes one key per level, parted by SEP."""
+        template = compile_template("{keys:%} =\n", "key_null", depth, None, frozenset())
+
+        assert [(f.kind, f.level) for f in template if f.kind == "key"] == [("key", level) for level in range(depth)]
+        assert "".join(f.text if f.kind == "literal" else "A%B%C"[2 * f.level] for f in template) == written + " =\n"
+
+    def test_a_separator_may_hold_any_text_but_a_closing_brace(self) -> None:
+        """Test the field table header, whose keys are parted by ``", "`` inside quotes."""
+        template = compile_template('"{keys:", "}"/\n', "key_block", 3, None, frozenset())
+
+        assert [f.text for f in template if f.kind == "literal"] == ['"', '", "', '", "', '"/\n']
+
+    def test_a_template_for_one_key_cannot_write_a_chain(self) -> None:
+        """Test that ``{key}`` is no template at a depth of two: it names the one key."""
+        assert compile_template("{key} = 1\n", "key_null", 2, None, frozenset()) is None
+
+    @pytest.mark.parametrize(
+        ("text", "indent", "written"),
+        [
+            pytest.param(" {key} =\n", None, " ", id="keeps-its-own"),
+            pytest.param(" {key} =\n", "    ", "    ", id="replaces-its-own"),
+            pytest.param(" {key} =\n", "", "", id="removes-its-own"),
+            pytest.param("{key} =\n", "  ", "  ", id="adds-one"),
+            pytest.param('\n  "{key}" =\n', "    ", '\n    "', id="after-a-line-break"),
+            pytest.param("&{key}\n", "  ", "  &", id="before-a-sigil"),
+        ],
+    )
+    def test_indent_replaces_the_whitespace_the_first_keys_line_starts_with(self, text, indent, written) -> None:
+        """Test that the file's indentation takes the place of the template's own."""
+        template = compile_template(text, "key_null", 1, indent, frozenset())
+
+        key = next(index for index, fragment in enumerate(template) if fragment.kind == "key")
+        assert "".join(f.text for f in template[:key]) == written
