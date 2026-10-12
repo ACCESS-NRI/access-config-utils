@@ -14,6 +14,21 @@ an assignment is an update or an addition, and wrapping what the store reports b
 something that itself keeps the tree in step -- a ``ConfigList`` for a list, a nested
 ``Config`` for a block.
 
+A key the configuration does not have yet is written by the nearest configuration whose
+block has a body in the file. That is this one, usually; for a block merged from several in
+the file, or written one component per line as a Fortran derived type is, it is the one
+holding it, which writes a line carrying the whole key path -- ``a%d = 1`` for ``d`` in
+``a``. The configurations on that path are then read again, in place, so that a caller
+holding one sees the new key.
+
+Deleting an entry also prunes the wrappers the grammar cannot derive empty, and that
+pruning stops only at a node with no parent or at a plain repetition: an empty block is
+still a block. A block written one component per line holds nothing once its last component
+goes, and the lines writing it, perhaps those of the blocks it is nested in, go with it. The
+configurations above are therefore read again from the nearest one whose container
+survived, so that a block the file no longer has leaves the dict too and no reference is
+left naming nodes that are gone.
+
 The mapping methods ``dict`` implements in C are all overridden, because they do not go
 through ``__setitem__`` / ``__delitem__`` and would therefore skip both the key
 normalisation and the tree update.
@@ -78,11 +93,8 @@ class ConfigList(list):
     def _write(self, values: list[Any], origins: list[int | None] | None = None) -> None:
         """Write *values* through the store, then hold them.
 
-        Args:
-            values (list[Any]): The new elements.
-            origins (list[int | None] | None): For a list of a different length, the
-                position of the old element each new one stands in for, ``None`` for a new
-                one. ``None`` for a list of the same length, written position by position.
+        *origins* is, for a list of a different length, the position of the old element each
+        new one stands in for (``None`` for a new one); ``None`` for the same length.
         """
         plain = [_plain(value) for value in values]
         self._store.replace(self._key, plain, origins)
@@ -186,15 +198,7 @@ class ConfigRecord(dict):
     """
 
     def _refuse(self, *args: Any, **kwargs: Any) -> NoReturn:
-        """Reject a write to the record.
-
-        Args:
-            *args (Any): Ignored.
-            **kwargs (Any): Ignored.
-
-        Raises:
-            TypeError: Always.
-        """
+        """Reject a write to the record with a ``TypeError``."""
         raise TypeError("A record is replaced whole: assign a dict to its place in the list")
 
     __setitem__ = _refuse  # type: ignore[assignment]
@@ -239,15 +243,7 @@ class ConfigBlockList(list):
     """
 
     def _unsupported(self, *args: Any, **kwargs: Any) -> NoReturn:
-        """Reject an operation that would add, remove or replace a whole block.
-
-        Args:
-            *args (Any): Ignored.
-            **kwargs (Any): Ignored.
-
-        Raises:
-            NotImplementedError: Always.
-        """
+        """Raise ``NotImplementedError`` for adding, removing or replacing a whole block."""
         raise NotImplementedError(
             "Adding, removing or replacing a whole occurrence of a repeated block is not "
             "supported; edit the entries of one occurrence, or delete the key to remove all "
@@ -293,19 +289,8 @@ class Config(dict):
     def _wrap(self, key: str, ref: EntryRef) -> Any:
         """Return the object standing for an entry in the dict.
 
-        A list and a block are both handed out as something that keeps the parse tree in
-        step: a ``ConfigList`` pairs each element with the node holding it, and a nested
-        ``Config`` does the same for the entries of a block. A block the file writes more
-        than once, in a format that reads those as separate records, becomes a
-        ``ConfigBlockList`` of one ``Config`` per occurrence.
-
-        Args:
-            key (str): The normalised key the entry is stored under.
-            ref (EntryRef): The entry to represent.
-
-        Returns:
-            Any: The scalar, a ``ConfigList``, a nested ``Config``, a ``ConfigBlockList``,
-                or ``None``.
+        That is the scalar (``None`` if valueless), a ``ConfigList`` for a list, a nested
+        ``Config`` for a block, or a ``ConfigBlockList`` for a block written more than once.
         """
         if ref.category == KEY_BLOCK:
             blocks = [self._block(key, ref, index) for index in range(len(ref.block_nodes))]
@@ -381,30 +366,10 @@ class Config(dict):
     def _add(self, key: str, raw_key: str, value: Any) -> None:
         """Add an entry for a key that is not in the configuration yet.
 
-        The entry is written by the nearest configuration whose block has a body in the
-        file. That is this one, usually; for a block merged from several in the file, or
-        written one component per line as a Fortran derived type is, it is the one holding
-        it, which writes a line carrying the whole key path -- ``a%d = 1`` for ``d`` in
-        ``a``. The configurations on that path are then read again, in place, so that a
-        caller holding one sees the new key.
-
-        A ``dict`` the format cannot write as a block of its own is written one level
-        deeper: the Fortran ``nml["g"]["t"] = {"a": 1}`` is the line ``t%a = 1``. What else
-        the dict holds is then added to the block that line created.
-
-        A block arrives empty, because nothing in it can say how its contents should be
-        spaced until it has some. It is handed the style of its nearest sibling and then
-        filled through this same path, one key at a time, so nesting to any depth works.
-
-        A list of dicts is a list of records, which the file writes one entry per record:
-        the first is written as the entry, and the others are added beside it, each a copy
-        of the one before. Should one of them be refused, the key goes again.
-
-        Args:
-            key (str): The normalised key, used for the dict entry.
-            raw_key (str): The key as the caller wrote it, used for the file text.
-            value (Any): The value to store.
+        *key* is normalised, for the dict entry; *raw_key* is as the caller wrote it,
+        for the file text. The module docstring says which configuration writes the entry.
         """
+        # A list of dicts is a list of records, which the file writes one entry per record.
         records = isinstance(value, list) and len(value) > 0 and all(isinstance(item, dict) for item in value)
         anchor, path = self._nearest_addable()
         first = _plain(value[0]) if records else value
@@ -415,6 +380,8 @@ class Config(dict):
             anchor._reread(keys)
 
         if records:
+            # The first record is written as the entry, the others are added beside it, each
+            # a copy of the one before. Should one be refused, the key goes again.
             if len(value) > 1:
                 try:
                     anchor._at(keys)._write(list(value), [0, *[None] * (len(value) - 1)])
@@ -423,11 +390,16 @@ class Config(dict):
                     raise
             return
         if isinstance(written, dict):
+            # A block arrives empty, and nothing in it says how its contents should be
+            # spaced until it has some: it is handed the style of its nearest sibling and
+            # filled through this same path, a key at a time, so any nesting depth works.
             block = anchor._at(keys)
             block._store.fallback_style = anchor._store.created_block_style(ref.entry_nodes[0])
             for block_key, block_value in written.items():
                 block[block_key] = block_value
         for depth, items in reversed(rest):
+            # The other items of each dict written one level down go to the block that line
+            # created.
             owner = anchor._at(keys[:depth])
             for item_key, item_value in items:
                 owner[item_key] = item_value
@@ -435,10 +407,8 @@ class Config(dict):
     def _nearest_addable(self) -> tuple[Config, list[str]]:
         """Return the nearest configuration a new line can go in, and the keys down to this.
 
-        Returns:
-            tuple[Config, list[str]]: This configuration, or the nearest one holding it
-                whose block has a body in the file; and the keys leading from that one down
-                to this, empty if it is this.
+        That is this one unless its block is merged from several or written a component per
+        line; then the nearest one above it that has a body. The keys run outermost first.
         """
         anchor, path = self, []
         while not anchor._store.addable and anchor._parent is not None:
@@ -451,24 +421,8 @@ class Config(dict):
     ) -> tuple[list[str], EntryRef, Any, _Leftovers]:
         """Write *value* at a key path below this configuration, deeper if need be.
 
-        A non-empty ``dict`` the format refuses as a block is written as its first item one
-        level down instead, and so on, until something is written or there is nothing left
-        to go down into. A record, written with a *category* of its own, never is.
-
-        Args:
-            raw_keys (list[str]): The key path as the caller wrote it.
-            value (Any): The value to store.
-            category (str | None): The category of entry to write, where *value* does not
-                say: ``key_value`` for a record, which is a ``dict``.
-
-        Returns:
-            tuple[list[str], EntryRef, Any, _Leftovers]: The key path written, normalised,
-                the new entry, the value written at the end of it, and the items of each
-                dict gone down through that are still to add.
-
-        Raises:
-            UnsupportedEntryError: The refusal of the path first asked for, if no level
-                down could be written either.
+        Return the normalised path written, its entry, the value written there and the items
+        still to add (``_Leftovers``). Raise the first refusal if no level can be written.
         """
         rest: _Leftovers = []
         refusal = None
@@ -477,6 +431,10 @@ class Config(dict):
                 ref = self._store.add_path(raw_keys, value, category)
                 return [self._store.ctx.normalise_key(raw) for raw in raw_keys], ref, value, rest
             except UnsupportedEntryError as error:
+                # A non-empty dict the format refuses as a block goes one level down as
+                # its first item, and so on -- the Fortran ``nml["g"]["t"] = {"a": 1}`` is
+                # the line ``t%a = 1`` -- until something is written. A record, which has
+                # a *category* of its own, never does.
                 refusal = refusal or error
                 if category is not None or not isinstance(value, dict) or not value:
                     raise refusal from None
@@ -501,14 +459,8 @@ class Config(dict):
     def _is_anchor(self) -> bool:
         """Report whether a deletion below this configuration leaves its container alone.
 
-        Deleting an entry also removes the wrappers the grammar cannot derive empty, and
-        that pruning stops only at a node with no parent or at a plain repetition: an empty
-        block is still a block. A configuration over such a node, held in the parse tree
-        rather than merged from several, is therefore still where it was.
-
-        Returns:
-            bool: True for the configuration of a whole file, or of a block whose container
-                no deletion can remove.
+        True for a whole file, or for a block held in the parse tree rather than merged from
+        several, whose container is a plain repetition, which pruning does not remove.
         """
         store = self._store
         return self._parent is None or (store.addable and store.ctx.info.is_repetition_rule(str(store.tree.data)))
@@ -516,12 +468,8 @@ class Config(dict):
     def _resync(self) -> None:
         """Bring the configurations this one is nested in back in step with the tree.
 
-        A block written a component per line, as a derived type is, holds nothing once its
-        last component goes, and the lines writing it are already out of the tree -- and so
-        may be the lines of the blocks it was nested in. The configurations above it are
-        read again from the nearest one whose container survived, down the path to this
-        one, so that a block the file no longer has leaves the dict too, and the references
-        left to it no longer name nodes that are gone.
+        They are read again from the nearest anchor (``_is_anchor``), a configuration whose
+        container survives any deletion, down the path to this one.
         """
         path: list[str] = []
         anchor = self
@@ -535,19 +483,11 @@ class Config(dict):
     def _reread(self, path: Sequence[str], ref: EntryRef | None = None) -> None:
         """Read this configuration again after the tree changed below it, then down *path*.
 
-        What the file no longer has leaves the dict. The configurations already on the path
-        are kept, so that a caller holding one sees the change, and are pointed at their
-        blocks as read afresh: a block merged from several in the file is a node the reader
-        builds, and reading again builds a new one. Where the path leaves them, the rest is
-        new and is wrapped whole.
-
-        Args:
-            path (Sequence[str]): Keys leading down to the configuration the change was made
-                in, starting with a key of this one; for an entry just added, down to it.
-            ref (EntryRef | None): The reference its parent read afresh for this block, to
-                point this configuration at; ``None`` for the one the reading starts from.
+        *path* is the keys down to the configuration changed, or to the entry just added.
+        *ref* is the block reference its parent read afresh; ``None`` where reading starts.
         """
         refs = self._store.reread(ref)
+        # What the file no longer has leaves the dict.
         for vanished in [key for key in self if key not in refs]:
             child = dict.__getitem__(self, vanished)
             if isinstance(child, Config):
@@ -557,8 +497,12 @@ class Config(dict):
             key = path[0]
             child = dict.get(self, key)
             if isinstance(child, Config):
+                # Kept, so that a caller holding it sees the change, but pointed at its
+                # block as read afresh: a block merged from several in the file is a node
+                # the reader builds, and reading again builds a new one.
                 child._reread(path[1:], refs[key])
             elif key not in self:
+                # Where the path leaves the configurations already there, the rest is new.
                 dict.__setitem__(self, key, self._wrap(key, refs[key]))
 
     # --- Remaining mapping protocol ---
