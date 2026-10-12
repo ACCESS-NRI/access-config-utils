@@ -35,12 +35,8 @@ _TRAILING_COMMENT = re.compile(r"\s+#.*$")
 def _round_trip_yaml(indent: dict[str, int] | None = None) -> YAML:
     """Return a round-trip ``YAML`` instance that changes nothing it does not have to.
 
-    Args:
-        indent (dict[str, int] | None): The ``mapping``, ``sequence`` and ``offset``
-            indentation to dump with. ruamel.yaml's own defaults when ``None``.
-
-    Returns:
-        YAML: The configured instance.
+    *indent* holds the ``mapping``, ``sequence`` and ``offset`` to dump with; ruamel.yaml's
+    own defaults apply when it is ``None``.
     """
     yaml = YAML()
     yaml.preserve_quotes = True
@@ -54,15 +50,8 @@ def _round_trip_yaml(indent: dict[str, int] | None = None) -> YAML:
 def _line_content(line: str) -> tuple[int, str]:
     """Split a line into the column its content starts at and the content itself.
 
-    The dash of a block sequence entry is not content: in ``  - name: ocean`` the content is
-    ``name: ocean``, starting at column 4. That is the column a mapping nested in the entry
-    is indented from.
-
-    Args:
-        line (str): A line of YAML.
-
-    Returns:
-        tuple[int, str]: The column and the content, without any trailing comment.
+    The content has no trailing comment and no sequence dash: in ``  - name: ocean`` it is
+    ``name: ocean``, at column 4, which a nested mapping is indented from.
     """
     stripped = line.lstrip(" ")
     column = len(line) - len(stripped)
@@ -80,13 +69,8 @@ def guess_indent(text: str) -> dict[str, int]:
     sequence indent and dash offset from the first block sequence nested under one, all
     relative to the column of that key -- which is how ``YAML.indent`` takes them. A block
     sequence may put its dashes in the key's own column, so an offset of zero counts too.
-    Whatever the text does not show falls back to ``DEFAULT_INDENT``.
-
-    Args:
-        text (str): The YAML text.
-
-    Returns:
-        dict[str, int]: The ``mapping``, ``sequence`` and ``offset`` indentation.
+    Whatever the text does not show falls back to ``DEFAULT_INDENT``, so the result always
+    has its ``mapping``, ``sequence`` and ``offset`` keys.
     """
     found: dict[str, int] = {}
     key_column = None  # Column of the previous line's key, if it was a bare key.
