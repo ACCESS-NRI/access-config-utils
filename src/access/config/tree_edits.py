@@ -33,7 +33,7 @@ from access.config.tree_navigation import (
 if TYPE_CHECKING:
     from lark import Lark
 
-    from access.config.grammar_info import GrammarInfo
+    from access.config.grammar_compiled import GrammarInfo
 
 
 def update_node_value(rule_node: Tree, value: Any) -> None:

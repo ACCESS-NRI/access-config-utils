@@ -23,7 +23,7 @@ from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
 import pytest
-from lark import Lark, Token, Tree
+from lark import Token, Tree
 from lark.exceptions import UnexpectedInput
 
 from access.config.entry_render import iter_entry_snippets
@@ -31,7 +31,6 @@ from access.config.entry_style import EntryStyle
 from access.config.field_table import FieldTableParser
 from access.config.fortran_nml import FortranNMLParser
 from access.config.grammar_compiled import compile_grammar
-from access.config.grammar_info import GrammarInfo
 from access.config.grammar_values import UnsupportedEntryError
 from access.config.mom6_input import MOM6InputParser
 from access.config.nuopc_config import NUOPCParser
@@ -155,18 +154,6 @@ def assert_canonical_entry(
         assert text == expected
         return
     pytest.fail("No candidate parses")
-
-
-@pytest.fixture(scope="session")
-def larks() -> dict[str, Lark]:
-    """Fixture returning a compiled parser per shipped grammar."""
-    return {name: compile_grammar(cls().grammar).lark for name, cls in PARSERS.items()}
-
-
-@pytest.fixture(scope="session")
-def infos() -> dict[str, GrammarInfo]:
-    """Fixture returning the grammar views per shipped grammar."""
-    return {name: compile_grammar(cls().grammar).info for name, cls in PARSERS.items()}
 
 
 TOY_GRAMMAR = """
