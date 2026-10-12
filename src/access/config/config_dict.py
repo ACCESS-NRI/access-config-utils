@@ -21,7 +21,6 @@ normalisation and the tree update.
 
 from __future__ import annotations
 
-import copy
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any, NoReturn, SupportsIndex
 
@@ -202,16 +201,8 @@ class ConfigList(list):
         self._write(updated, origins)
         return self
 
-    def __copy__(self) -> list[Any]:
-        """Return a plain list holding the same elements, a record as a plain dict."""
-        return [_plain(value) for value in self]
-
-    def __deepcopy__(self, memo: dict[int, Any]) -> list[Any]:
-        """Return a plain list holding copies of the elements."""
-        return copy.deepcopy([_plain(value) for value in self], memo)
-
     def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[Any, ...]:
-        """Pickle as a plain list: the parse tree is not part of the data."""
+        """Copy and pickle as a plain list, a record as a plain dict: no parse tree."""
         return list, ([_plain(value) for value in self],)
 
 
@@ -298,16 +289,8 @@ class ConfigRecord(dict):
         self.update(other)
         return self
 
-    def __copy__(self) -> dict[str, Any]:
-        """Return a plain dict holding the same parameters."""
-        return dict(self)
-
-    def __deepcopy__(self, memo: dict[int, Any]) -> dict[str, Any]:
-        """Return a plain dict holding copies of the parameters."""
-        return copy.deepcopy(dict(self), memo)
-
     def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[Any, ...]:
-        """Pickle as a plain dict: the parse tree is not part of the data."""
+        """Copy and pickle as a plain dict: the parse tree is not data."""
         return dict, (dict(self),)
 
 
