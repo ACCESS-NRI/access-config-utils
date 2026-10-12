@@ -28,8 +28,7 @@ from access.config.parser import ConfigParser
 def test_parser_is_abstract() -> None:
     """Test that the base class cannot be instantiated without a grammar.
 
-    It declares the grammar as an abstract property, so a subclass that forgets it is
-    refused at construction rather than failing somewhere inside ``parse``.
+    A subclass without the abstract grammar fails at construction, not inside ``parse``.
     """
     with pytest.raises(TypeError):
         ConfigParser()
@@ -46,8 +45,7 @@ def test_parser_is_abstract() -> None:
 def test_parser_declares_defaults() -> None:
     """Test the properties a format only overrides when it has to.
 
-    A subclass supplies a grammar and nothing else. Its keys are then case-sensitive, and it
-    declares no template, so a new entry of a kind the file has none of is refused.
+    A subclass supplying only a grammar has case-sensitive keys and declares no template.
     """
 
     class Minimal(ConfigParser):
@@ -70,9 +68,7 @@ def test_parser_declares_defaults() -> None:
 def test_a_shipped_parser_declares_a_template_for_every_entry_it_can_write(name) -> None:
     """Test that the templates a shipped parser declares are those pinned in ``CANONICAL``.
 
-    A kind of entry the grammar can write but no template is declared for could only be
-    added by copying a neighbour, and one declared that the grammar cannot write is text
-    nothing reads. Nothing derives the missing ones, so the two tables have to agree.
+    Nothing derives a missing template, so the declared and the pinned tables must agree.
     """
     declared = set(PARSERS[name]().entry_templates)
     pinned = {(container, category) for (grammar, container, category) in CANONICAL if grammar == name}
@@ -84,10 +80,7 @@ def test_a_shipped_parser_declares_a_template_for_every_entry_it_can_write(name)
 def test_parser_appends_a_trailing_newline(parser) -> None:
     """Test that a file with no final newline parses just like one that has it.
 
-    ``parse`` appends a newline so that no grammar has to spell out the end-of-file case,
-    and ``__str__`` strips one back off. Whether the newline itself survives is the
-    grammar's business: this one discards whitespace with ``%ignore``, so it does not, and
-    the format modules are where the byte-exact round trip is pinned.
+    ``parse`` appends a newline and ``__str__`` strips one; formats pin the round trip.
     """
     without, with_newline = parser.parse("a=1"), parser.parse("a=1\n")
 
@@ -458,9 +451,7 @@ def test_config_invalid_operations(parser):
 def _check_added(parser, config, expected):
     """Assert the text of *config*, and that reading it back gives the same values.
 
-    The text alone does not prove the values survive: several value types share a Python
-    type, so a value can be written with exactly the expected text and still read back as a
-    different type.
+    Text alone does not prove the types survive: several value types share a Python type.
     """
     assert str(config) == expected
     reparsed = parser.parse(expected)
@@ -481,10 +472,8 @@ def test_config_add_key_value(parser):
 def test_config_add_key_value_types(parser):
     """Test the value type chosen for a new key, for every type the grammar admits.
 
-    This grammar admits both members of every ambiguous pair, so these expectations are the
-    specification of the order of ``VALUE_TYPE_HANDLER_REGISTRY``: ``logical`` over
-    ``bool``, ``float`` over ``double``, ``complex`` over ``double_complex`` and ``string``
-    over ``identifier``.
+    These specify the registry order: ``logical`` over ``bool``, ``float`` over ``double``,
+    ``complex`` over ``double_complex``, ``string`` over ``identifier``.
     """
     config = parser.parse("a=1")
     config["t1"] = True
@@ -610,8 +599,7 @@ def test_config_add_after_delete(parser):
 def test_config_add_into_emptied_config(parser):
     """Test adding a key after every key has been deleted.
 
-    ``__str__`` reports an empty configuration as the empty string even though the parse
-    tree still holds whatever was not an entry, so the first addition brings that back.
+    An empty configuration prints as nothing, but its tree keeps the comments: they return.
     """
     config = parser.parse("a=1 b=2")
     for key in list(config):
@@ -699,9 +687,7 @@ def test_config_add_no_node_reuse(parser):
 def test_config_dict_methods(parser):
     """Test the dict methods ``dict`` implements without going through __setitem__.
 
-    Inheriting them would skip both key normalisation and the parse tree update. A ``pop``
-    followed by an assignment is the damaging case: the removed entry would stay in the tree
-    and a second one would be added, writing a file with the key twice.
+    A ``pop`` then an assignment would leave the old entry and add a second: key twice.
     """
     config = parser.parse("a=1 b=2")
 
@@ -852,10 +838,9 @@ def test_config_entry_template_override():
 
 
 def test_config_entry_template_used_without_a_donor():
-    """Test that the declared template is compiled and used for an entry with no neighbour.
+    """Test that the declared template is used for an entry with no neighbour.
 
-    A template applies where the file has no entry of the kind to copy, so an empty block
-    is the case that reaches it: the block holds no entry, and no sibling block either.
+    An empty block is the case that reaches it: no entry in it, and no sibling block.
     """
     parser = TemplateParser()
 
@@ -867,8 +852,7 @@ def test_config_entry_template_used_without_a_donor():
 def test_config_add_string_that_reads_as_another_type():
     """Test that a string the grammar would read as a boolean is written quoted.
 
-    The bare word ``True`` reads back as a boolean in this grammar, so the string ``"True"``
-    has to go in quotes, or it would be stored as the wrong type.
+    The bare word ``True`` would read back as a boolean, so the string needs its quotes.
     """
     parser = TemplateParser()
 
@@ -896,8 +880,7 @@ class BrokenTemplateParser(TemplateParser):
 def test_config_a_template_that_does_not_fit_the_grammar_writes_nothing():
     """Test that nothing is derived from the grammar behind a template that is wrong.
 
-    The text is parsed before it is used, so a template the grammar refuses is an error
-    naming what could not be written, and the file is left as it was.
+    The text is parsed first: a refused template is an error and leaves the file as it was.
     """
     parser = BrokenTemplateParser()
 
@@ -936,8 +919,7 @@ class BlocklessParser(ConfigParser):
 def test_config_blockless_grammar():
     """Test that a grammar without a block rule still compiles and accepts new keys.
 
-    The parser is built with ``block`` as a second start symbol only when the grammar has
-    such a rule, since Lark rejects a start symbol naming a rule that does not exist.
+    ``block`` is a second start symbol only when the grammar has such a rule.
     """
     parser = BlocklessParser()
     config = parser.parse("a=1")
@@ -949,8 +931,7 @@ def test_config_blockless_grammar():
 def test_config_string_quote_switching(parser):
     """Test that updating a string picks a quote character the value does not contain.
 
-    Values are wrapped verbatim rather than escaped, so keeping the original quote would
-    produce a line that no longer parses.
+    Values are wrapped verbatim, so keeping the original quote would not parse.
     """
     config = parser.parse("a='x'b=\"y\"")
 
@@ -974,8 +955,7 @@ def test_config_string_quote_switching(parser):
 def test_config_non_finite_floats(parser):
     """Test that infinities and NaNs are refused rather than written as bare words.
 
-    Python writes them as ``inf`` and ``nan``, which no supported format reads back as a
-    number, so writing one would silently produce a file that no longer means the same.
+    No supported format reads ``inf`` or ``nan`` back as a number.
     """
     config = parser.parse("a=1.0 b=(1.0, 2.0) c=1.0d0")
 
@@ -991,10 +971,8 @@ def test_config_non_finite_floats(parser):
 class HeaderParser(ConfigParser):
     """Parser for headers naming a block by a chain of keys, as an FMS field table does.
 
-    ``"tracer", "age"`` is a block for ``tracer`` holding a block for ``age``, whose
-    contents follow on lines of their own. Several headers for one type merge into one
-    block, so the type's block has no body in the file and a new name has to be written as
-    a whole header.
+    Headers for one type merge into one block with no body in the file, so a new name has to
+    be written as a whole header.
     """
 
     @property
@@ -1030,9 +1008,7 @@ class HeaderParser(ConfigParser):
 def test_config_add_a_block_through_a_chain_of_keys() -> None:
     """Test a new name added to a type whose headers are merged.
 
-    The header goes after the last one of the type, written like it, and the block it opens
-    is filled with lines written like those of the block above. A reference held to the type
-    sees the new name.
+    The header goes after the type's last, and its block is filled like the block above.
     """
     text = '"tracer", "a"\n  "x", \'1\' /\n"tracer", "b"\n  "y", \'2\' /\n"diag", "q"\n  "w", \'4\' /\n'
     config = HeaderParser().parse(text)
@@ -1050,8 +1026,7 @@ def test_config_add_a_block_through_a_chain_of_keys() -> None:
 def test_config_records_written_one_entry_each() -> None:
     """Test a method an FMS field table writes one line per record, read as a list of them.
 
-    A record is replaced whole, and a new one is written beside the one before it, as a
-    copy of it: tight commas here, like its neighbours.
+    A record is replaced whole; a new one is written as a copy of its neighbour.
     """
     text = '"tracer", "a"\n  "rayleigh","Str","i=1,j=9"\n  "rayleigh","Str","i=2,j=9" /\n'
     config = HeaderParser().parse(text)

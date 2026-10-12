@@ -40,13 +40,9 @@ def container() -> Tree:
 def offer() -> Iterator[object]:
     """Return a function scripting one insertion attempt end to end.
 
-    Each candidate is declared as ``(text, outcome)``: a node list to splice, an exception
-    the parse should raise, or the refs a read-back should report. The fakes patch the
-    module under test, since every import here binds its own reference.
-
-    The patches go onto a stack rather than into a ``with`` here, because the fakes close
-    over arguments only known once the returned function is called. The stack unwinds them
-    when the fixture tears down, which is what keeps them in force for the whole test.
+    Each candidate is ``(text, outcome)``: nodes to splice, an exception, or refs read back.
+    The patches go onto an ``ExitStack``, not a ``with``, because the fakes close over
+    arguments only known once the returned function is called.
     """
     with ExitStack() as stack:
 
@@ -137,8 +133,7 @@ class TestEntryMatches:
     def test_rejects_a_value_read_back_as_another_type(self) -> None:
         """Test that the type is compared as well as the value.
 
-        Several value types share a Python type, so a candidate can be written with exactly
-        the right text and still be read back meaning something else.
+        A candidate with the right text can still read back as another type.
         """
         refs, _ = scalar_ref()
         assert not entry_matches(refs, ("z",), True, FakeContext())
@@ -169,8 +164,7 @@ class TestEntryMatches:
     def test_a_new_block_has_to_come_back_empty(self) -> None:
         """Test that a block is accepted only when it holds nothing yet.
 
-        Its contents are added afterwards, one key at a time; a candidate arriving with
-        entries already in it means the grammar wrote something other than a fresh block.
+        Its contents are added afterwards; a candidate with entries is not a fresh block.
         """
         empty = Tree("block", [])
         filled = Tree("block", [entry_node("key_value", "p", value_node())])
@@ -262,8 +256,7 @@ class TestInsertEntryRejections:
     def test_a_list_too_short_to_be_one(self, container, value) -> None:
         """Test the two-element floor.
 
-        Every supported format needs at least two values to be a list rather than a scalar,
-        and writing a scalar would put the wrong type in the dict.
+        A one-value list would be written as a scalar, putting the wrong type in the dict.
         """
         with pytest.raises(ValueError, match="at least two elements"):
             insert_entry(container, FakeContext(), ("z",), value, EntryStyle())
@@ -304,8 +297,7 @@ class TestInsertEntryCandidates:
     def test_skips_a_candidate_the_reader_rejects(self, container, offer, error) -> None:
         """Test that a candidate parsing into a shape the reader refuses is passed over.
 
-        Both are shapes a grammar can produce and the reader cannot use, so neither may
-        escape as an exception from an insertion that has a good candidate behind it.
+        Neither may escape as an exception while a good candidate is left.
         """
         refs, node = scalar_ref()
         offer(("odd\n", (error, Tree("line", []))), ("z = 1\n", (refs, node)))
@@ -315,8 +307,7 @@ class TestInsertEntryCandidates:
     def test_skips_a_candidate_that_reads_back_wrong(self, container, offer) -> None:
         """Test the check that makes ranking a matter of style rather than of correctness.
 
-        The first candidate parses cleanly and means something else -- a bare word a format
-        reads as a path, say. It has to be discarded rather than written out.
+        A bare word a format reads as a path parses cleanly and means something else.
         """
         wrong, wrong_node = scalar_ref()
         right, right_node = scalar_ref()
@@ -368,10 +359,7 @@ class TestInsertEntryExhausted:
 def test_insert_entry_passes_the_style_and_template_through(container) -> None:
     """Test that what the caller decided about layout reaches synthesis unchanged.
 
-    ``config_store`` works out which style applies -- the container's own entries, or what
-    a created block inherited -- and this module's only job with it is to hand it on, with
-    the template the parser declares for this container and category and what the format
-    can write.
+    ``config_store`` picks the style: this module hands it on with the declared template.
     """
     seen: dict[str, object] = {}
     style = EntryStyle(indent="    ")
@@ -400,8 +388,7 @@ def test_insert_entry_passes_the_style_and_template_through(container) -> None:
 def test_insert_entry_reads_the_candidate_in_a_throwaway_container(container) -> None:
     """Test that a candidate is interpreted apart from the tree it may never join.
 
-    The read-back happens on a fresh node of the container's own rule, so a candidate that
-    parses but means the wrong thing leaves no trace behind it.
+    A candidate that parses but means the wrong thing then leaves no trace in the tree.
     """
     read_from: list[Tree] = []
     node = Tree("line", [Token("T", "z=1")])

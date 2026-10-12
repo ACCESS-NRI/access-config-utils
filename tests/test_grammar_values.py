@@ -58,10 +58,7 @@ ROUND_TRIPS = [
 def test_handler_round_trip(rule, text, value, written) -> None:
     """Test three of the four operations of one handler: check, parse, and seed.
 
-    ``to_new_token`` is the path taken for a key that does not exist yet, where there is no
-    previous token to preserve notation from, so it is what fixes how a brand-new value of
-    each type is spelled. ``to_token`` is the fourth and is not asserted here, because what
-    it writes depends on the token being replaced -- see the two classes below.
+    ``to_token`` depends on the token it replaces and is asserted in the classes below.
     """
     handler = VALUE_TYPE_HANDLER_REGISTRY[rule]
 
@@ -84,8 +81,7 @@ class TestTypeChecking:
     def test_a_bool_is_not_a_number(self, rule) -> None:
         """Test that ``bool`` being a subclass of ``int`` does not leak into the numbers.
 
-        The checks are ``type(value) is ...`` rather than ``isinstance`` for exactly this:
-        ``True`` written as ``1`` would read back as an integer, silently changing the type.
+        The checks are ``type(value) is ...``: ``True`` written as ``1`` would change type.
         """
         assert not VALUE_TYPE_HANDLER_REGISTRY[rule].type_check(True)
 
@@ -173,8 +169,7 @@ class TestFortranStringQuoting:
     def test_a_value_holding_both_quotes_can_still_be_written(self) -> None:
         """Test the difference from the general string type, which has to refuse this.
 
-        Doubling means the quote in use never has to change, so a value containing both is
-        representable rather than an error.
+        Doubling keeps the quote in use, so a value holding both is representable.
         """
         handler = VALUE_TYPE_HANDLER_REGISTRY["fortran_string"]
         both = "has ' and \""
@@ -205,10 +200,7 @@ class TestFloatNotation:
     def test_a_new_double_carries_its_marker_only_with_an_exponent(self) -> None:
         """Test that the ``d`` seed shows up only where Python's own repr uses an exponent.
 
-        ``_float_to_str`` substitutes the marker into ``str(value)``, so a value whose repr
-        has no ``e`` comes out plain. Both forms are valid: ``config.lark`` makes the
-        exponent optional in ``DOUBLE``, so ``0.01`` parses as a double just as ``1d-20``
-        does.
+        A value whose repr has no ``e`` comes out plain, which ``DOUBLE`` also parses.
         """
         handler = VALUE_TYPE_HANDLER_REGISTRY["double"]
 
@@ -222,8 +214,7 @@ class TestFloatNotation:
     def test_refuses_a_non_finite_value(self, rule, value) -> None:
         """Test that an infinity or a NaN is refused rather than written as a bare word.
 
-        Python writes them as ``inf`` and ``nan``, which no supported format reads back as a
-        number, so writing one would produce a file that no longer means the same thing.
+        No supported format reads ``inf`` or ``nan`` back as a number.
         """
         with pytest.raises(UnsupportedEntryError, match="cannot be represented"):
             VALUE_TYPE_HANDLER_REGISTRY[rule].to_token(value, "1.0")
@@ -250,16 +241,14 @@ class TestBareExponent:
     def test_an_ordinary_spelling_is_left_alone(self, text) -> None:
         """Test that a number already carrying an exponent letter is not touched.
 
-        The search for a sign starts past a leading one, so ``-2.5`` is not read as an
-        exponent, and a text holding ``e`` or ``d`` is left to be parsed as it stands.
+        A leading sign is not an exponent, and a text holding ``e`` or ``d`` is left alone.
         """
         assert VALUE_TYPE_HANDLER_REGISTRY["bare_exponent"].from_token(text) == float(text)
 
     def test_the_plain_float_handler_is_untouched(self) -> None:
         """Test that the notation stayed out of the handler every format shares.
 
-        The registry is keyed by rule name, so teaching ``float`` this spelling would teach
-        it to every grammar importing ``config.float`` -- none of which can produce it.
+        Teaching ``float`` this spelling would teach it to every grammar importing it.
         """
         assert VALUE_TYPE_HANDLER_REGISTRY["float"].from_token("1.5") == 1.5
         with pytest.raises(ValueError):
@@ -296,8 +285,7 @@ class TestRewrite:
     def test_a_token_already_holding_the_value_keeps_its_text(self) -> None:
         """Test that an unchanged element is written exactly as it was.
 
-        ``1.0d0`` would otherwise come back as ``1.0``, and a NaN, which cannot be written
-        anew, could not be written over itself.
+        ``1.0d0`` would come back as ``1.0``, and a NaN could not be written over itself.
         """
         assert VALUE_TYPE_HANDLER_REGISTRY["double"].rewrite(1.0, "1.0d0") == "1.0d0"
         assert VALUE_TYPE_HANDLER_REGISTRY["float"].rewrite(math.nan, "nan") == "nan"
@@ -431,8 +419,7 @@ class TestInferredTyping:
     def test_quotes_a_string_that_would_read_back_as_something_else(self, value, written) -> None:
         """Test the single quotes the field manager reads a string from.
 
-        A string ending with ``/`` is quoted only where it would end its line, since the
-        field manager takes a ``/`` there as the end of the entry.
+        A string ending with ``/`` is quoted only where it would end its line (entry end).
         """
         assert VALUE_TYPE_HANDLER_REGISTRY["inferred_text"].to_new_token(value) == written
         expected = '"a/"' if value == "a/" else f'"{written}"'
@@ -517,8 +504,7 @@ class TestNamedAssignments:
     def test_changes_only_what_changed(self) -> None:
         """Test a changed, a removed and a new parameter, and a renamed record.
 
-        The changed one keeps its padding, the others theirs, and the new one is parted
-        from the one before it as the last two parameters are.
+        The changed one keeps its padding; the new one is parted like the last two.
         """
         token = '"fixed", "a=1, 2,3, b = x, c=1.E-6"'
         record = {"value": "other", "a": [1, 5], "c": 2.0e-6, "d": "new"}
@@ -543,8 +529,7 @@ class TestNamedAssignments:
 def test_the_registry_order_states_the_ambiguous_pairs() -> None:
     """Test the order of the six pairs whose members accept the same Python type.
 
-    These are the whole reason the order exists: without it the choice would fall to
-    whichever grammar rule happened to match first.
+    Without the order the choice would fall to whichever grammar rule matched first.
     """
     order = list(VALUE_TYPE_HANDLER_REGISTRY)
 

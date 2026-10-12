@@ -207,8 +207,7 @@ class TestAdd:
     def test_falls_back_to_the_inherited_style(self, ctx, spy) -> None:
         """Test the block created this session, which has no entry of its own to copy.
 
-        Its contents would otherwise be written with no indentation at all, foreign to a
-        file whose blocks are indented.
+        Its contents would otherwise be written flush left, foreign to an indented file.
         """
         calls, _ = spy
         tree = ctx.lark.parse("blk<\n>\n", start="start")
@@ -413,8 +412,7 @@ class TestRemove:
     def test_unlinks_every_entry_that_wrote_the_key(self, ctx) -> None:
         """Test the file that assigns a key twice, where only the last is in the dict.
 
-        Removing just that one would leave the earlier line behind, and the key would come
-        back the next time the file was read.
+        Removing just that one would leave the earlier line, and the key would come back.
         """
         tree = ctx.lark.parse("a = 1\na = 2\nb = 3\n", start="start")
         AddParent().visit(tree)
@@ -428,8 +426,7 @@ class TestRemove:
     def test_delegates_to_the_tree_edit(self, store) -> None:
         """Test that removal goes through the repair path, not a bare list removal.
 
-        A grammar can require entries and the text around them to alternate, so what is left
-        behind may need rejoining; the store must not do the unlink itself.
+        Entries and text may have to alternate, so what is left may need rejoining.
         """
         seen: list[Tree] = []
         entries = list(store.refs["a"].entry_nodes)
@@ -477,16 +474,14 @@ class TestRender:
     def test_works_on_a_copy(self, store) -> None:
         """Test that rendering twice gives the same text.
 
-        The reconstructor mutates the tree it is given, so the store has to hand it a deep
-        copy or a second call would see a mangled tree.
+        The reconstructor mutates the tree it is given, so the store hands it a deep copy.
         """
         assert store.render() == store.render()
 
     def test_a_container_with_entries_left_reports_a_failure(self, ctx) -> None:
-        """Test that a tree that cannot be written out raises rather than coming back empty.
+        """Test that a tree that cannot be written out raises, not comes back empty.
 
-        Silently returning nothing would lose a file's contents; the empty-string fallback
-        is only for a configuration with no entries at all.
+        Returning nothing would lose a file's contents; '' is only for no entries at all.
         """
         tree = ctx.lark.parse("a = 1\n", start="start")
         AddParent().visit(tree)
@@ -498,8 +493,7 @@ class TestRender:
     def test_an_emptied_container_still_writes_its_comments(self, ctx) -> None:
         """Test that what was never an entry survives every entry being deleted.
 
-        Blank lines and comments are genuinely part of the file, so a configuration emptied
-        of keys is not an empty file.
+        Blank lines and comments are part of the file, so it is not an empty file.
         """
         tree = ctx.lark.parse("a = 1\n\n", start="start")
         AddParent().visit(tree)
@@ -513,8 +507,7 @@ class TestRender:
     def test_an_emptied_container_a_grammar_cannot_derive_writes_nothing(self, ctx) -> None:
         """Test the fallback for a format whose start rule requires at least one entry.
 
-        There is no text left to write for such a grammar, so the empty string is the honest
-        answer rather than an error.
+        There is no text left to write for it, so the empty string is the honest answer.
         """
         tree = ctx.lark.parse("a = 1\n", start="start")
         AddParent().visit(tree)
@@ -533,8 +526,7 @@ def _refuse(tree: Tree) -> str:
 def test_render_strips_only_one_trailing_newline(ctx) -> None:
     """Test that a file ending in a blank line keeps it.
 
-    ``parse`` appends exactly one newline, so exactly one comes back off; a second would eat
-    a blank line the file really had.
+    ``parse`` appends one newline and one comes off; a second would eat a real blank line.
     """
     tree = ctx.lark.parse("a = 1\n\n", start="start")
     AddParent().visit(tree)
