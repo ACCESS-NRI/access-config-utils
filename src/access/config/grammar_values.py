@@ -21,7 +21,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Callable, Collection, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -163,6 +163,26 @@ def _float_to_str(value: float, token_text: str) -> str:
         return str(value)
 
 
+def _is_trimmed(value: Any, banned: str) -> bool:
+    """Report whether *value* is a non-empty string, trimmed, holding none of *banned*."""
+    return type(value) is str and value != "" and value == value.strip() and not any(c in value for c in banned)
+
+
+def _complex_to_str(value: complex, token_text: str) -> str:
+    """Convert a complex to a string, each part in the notation of the original token."""
+    return "(" + _float_to_str(value.real, token_text) + ", " + _float_to_str(value.imag, token_text) + ")"
+
+
+def _is_bool(value: Any) -> bool:
+    """Report whether *value* is a bool, which an ``int`` is not for this purpose."""
+    return type(value) is bool
+
+
+def _is_str(value: Any) -> bool:
+    """Report whether *value* is a plain string."""
+    return type(value) is str
+
+
 def _is_text_line(value: Any) -> bool:
     """Report whether *value* can be written as a line of free text.
 
@@ -170,20 +190,8 @@ def _is_text_line(value: Any) -> bool:
     it belongs to the line rather than to the value, so a value with a comment character, a
     line break, or whitespace at either end would not read back as itself. Nor would one
     starting with ``::``, which closes an ESMF table.
-
-    Args:
-        value (Any): The value to check.
-
-    Returns:
-        bool: True if *value* is a string that reads back unchanged as a line of text.
     """
-    return (
-        type(value) is str
-        and value != ""
-        and value == value.strip()
-        and not any(character in value for character in "#\r\n")
-        and not value.startswith("::")
-    )
+    return _is_trimmed(value, "#\r\n") and not value.startswith("::")
 
 
 # --- Values typed by their spelling ---
@@ -246,23 +254,12 @@ def _is_inferable(value: Any) -> bool:
 
     A logical, an integer, a finite real, or a string that is not empty, has no whitespace
     at either end, and holds no double quote, comma, equals sign or line break.
-
-    Args:
-        value (Any): The value to check.
-
-    Returns:
-        bool: True if *value* can be written.
     """
     if type(value) in (bool, int):
         return True
     if type(value) is float:
         return math.isfinite(value)
-    return (
-        type(value) is str
-        and value != ""
-        and value == value.strip()
-        and not any(character in value for character in '",=\r\n')
-    )
+    return _is_trimmed(value, '",=\r\n')
 
 
 def _inferred_to_str(value: bool | int | float | str, previous: str, *, bare: bool = False) -> str:
@@ -397,8 +394,7 @@ def _is_record(value: Any) -> bool:
     for key, item in value.items():
         if key == "value":
             continue
-        valid_key = type(key) is str and key != "" and key == key.strip()
-        if not valid_key or any(character in key for character in '",=\r\n'):
+        if not _is_trimmed(key, '",=\r\n'):
             return False
         items = item if type(item) is list else [item]
         if (type(item) is list and len(item) < 2) or not all(_is_inferable(element) for element in items):
@@ -456,7 +452,7 @@ def _parameter_text(value: Any, previous: str | None) -> str:
 class ValueTypeHandler:
     """Encapsulates all operations for a single value type.
 
-    Each handler bundles three operations related to a single value type:
+    Each handler bundles the operations related to a single value type:
 
     - Type checking: a function that checks if a Python value matches this type.
     - Parsing: a function that converts **token text** into the corresponding Python
@@ -471,14 +467,15 @@ class ValueTypeHandler:
         type_check (Callable[[Any], bool]): Predicate that returns ``True`` when a Python
             value matches this type.
         from_token (Callable[[str], Any]): Converts token text (the ``str`` value matched
-            by the terminal) into the corresponding Python value.
+            by the terminal) into the corresponding Python value. The text itself by
+            default.
         to_token (Callable[[Any, str], str]): Converts a Python value back into token
             text, given the previous token text (to preserve notation, e.g. a ``D``
-            exponent).
-        seed_token (Callable[[Any], str]): Produces stand-in "previous token text" for a
-            value that has none, i.e. one being written for a key that does not exist yet.
-            It takes the value because the right stand-in can depend on it, as it does for
-            a quoted string.
+            exponent). The value as ``str`` by default.
+        seed (str | Callable[[Any], str]): The stand-in "previous token text" for a value
+            that has none, i.e. one being written for a key that does not exist yet; a
+            function of the value where the right stand-in depends on it, as it does for a
+            value typed by its spelling. Empty by default.
         collects (bool): Whether an entry holding a value of this type is one record of
             several the file writes under the same key, rather than the key's value. An
             FMS field table writes a method that way, once per record, and the key reads
@@ -486,9 +483,9 @@ class ValueTypeHandler:
     """
 
     type_check: Callable[[Any], bool]
-    from_token: Callable[[str], Any]
-    to_token: Callable[[Any, str], str]
-    seed_token: Callable[[Any], str]
+    from_token: Callable[[str], Any] = str
+    to_token: Callable[[Any, str], str] = lambda value, token: str(value)  # noqa: E731
+    seed: str | Callable[[Any], str] = ""
     collects: bool = False
 
     def to_new_token(self, value: Any) -> str:
@@ -504,126 +501,123 @@ class ValueTypeHandler:
         Returns:
             str: The token text.
         """
-        return self.to_token(value, self.seed_token(value))
+        return self.to_token(value, self.seed(value) if callable(self.seed) else self.seed)
+
+    def rewrite(self, value: Any, token_text: str) -> str:
+        """Return the token text that writes *value* over a token holding *token_text*.
+
+        A token that already holds *value* keeps its text, so writing a list leaves the
+        elements that did not change written exactly as they were -- ``1.0d0`` stays
+        ``1.0d0`` -- and a value that cannot be written anew, such as a NaN, can still be
+        written over itself.
+
+        Args:
+            value (Any): The new value.
+            token_text (str): The text of the token being replaced.
+
+        Returns:
+            str: The token text.
+
+        Raises:
+            TypeError: If *value* is not of this type.
+        """
+        if not self.type_check(value):
+            raise TypeError("Trying to change value type")
+        if identical_values(self.from_token(token_text), value):
+            return token_text
+        return self.to_token(value, token_text)
 
 
+_FLOAT = ValueTypeHandler(
+    type_check=lambda value: type(value) is float, from_token=float, to_token=_float_to_str, seed="0.0"
+)
+_COMPLEX = ValueTypeHandler(
+    type_check=lambda value: type(value) is complex,
+    from_token=lambda token: complex(*map(float, token.strip("()").split(","))),
+    to_token=_complex_to_str,
+    seed="(0.0, 0.0)",
+)
+
+# The order of the entries is the order in which a rule is tried when a value is written for
+# a brand-new key. Several handlers accept the same Python type, so the choice has to be
+# made deterministically rather than left to whichever grammar rule happens to match first:
+#
+# - ``logical`` before ``bool``: a grammar admitting both writes ``.true.``, not ``True``.
+# - ``float`` before ``double``, so plain notation is preferred over a ``D`` exponent.
+# - ``string`` before ``identifier``, so quoting is preferred wherever it is allowed, and
+#   bare words are used only by grammars that have no ``string`` rule.
+# - ``identifier`` before ``text_line``, so a whole line of free text is what a string
+#   becomes only in a format with nothing narrower to write it as.
+# - ``inferred_string`` before ``inferred_text``, so a value goes in quotes where a format
+#   allows it either way.
+#
+# Only rules the grammar actually admits are considered, so a format picks the first entry
+# it supports: ``True`` becomes ``.true.`` where a grammar has ``logical``, ``True`` where
+# it has only ``bool``. This is a preference, not a restriction: every accepting rule is
+# tried in turn and the result validated, so the order changes how output looks but never
+# what it means.
 VALUE_TYPE_HANDLER_REGISTRY: dict[str, ValueTypeHandler] = {
     "logical": ValueTypeHandler(
-        type_check=lambda value: type(value) is bool,
+        type_check=_is_bool,
         # Every spelling this rule admits is a dot or nothing, then T or F: the letter
         # is what decides.
         from_token=lambda token: str(token).lstrip(".")[:1].lower() == "t",
         to_token=_logical_to_str,
-        seed_token=lambda value: ".true.",
+        seed=".true.",
     ),
     "bool": ValueTypeHandler(
-        type_check=lambda value: type(value) is bool,
+        type_check=_is_bool,
         from_token=lambda token: str(token) == "True",
         to_token=lambda value, token: "True" if value else "False",
-        seed_token=lambda value: "True",
+        seed="True",
     ),
-    "integer": ValueTypeHandler(
-        type_check=lambda value: type(value) is int,
-        from_token=lambda token: int(token),
-        to_token=lambda value, token: str(value),
-        seed_token=lambda value: "0",
-    ),
-    "float": ValueTypeHandler(
-        type_check=lambda value: type(value) is float,
-        from_token=lambda token: float(token),
-        to_token=lambda value, token: _float_to_str(value, token),
-        # No exponent character, so _float_to_str uses Python's own notation.
-        seed_token=lambda value: "0.0",
-    ),
-    "bare_exponent": ValueTypeHandler(
-        type_check=lambda value: type(value) is float,
-        from_token=lambda token: float(_exponent_letter(token)),
-        to_token=lambda value, token: _float_to_str(value, token),
-        # Nothing writes this notation from scratch; a value written into such a node
-        # takes the plain one, which every grammar admitting this rule also admits.
-        seed_token=lambda value: "0.0",
-    ),
-    "double": ValueTypeHandler(
-        type_check=lambda value: type(value) is float,
-        from_token=lambda token: float(token.replace("D", "E").replace("d", "e")),
-        to_token=lambda value, token: _float_to_str(value, token),
-        # The "d" makes _float_to_str emit a double exponent.
-        seed_token=lambda value: "0.0d0",
-    ),
-    "complex": ValueTypeHandler(
-        type_check=lambda value: type(value) is complex,
-        from_token=lambda token: complex(*map(float, token.strip("()").split(","))),
-        to_token=lambda value, token: (
-            "(" + _float_to_str(value.real, token) + ", " + _float_to_str(value.imag, token) + ")"
-        ),
-        seed_token=lambda value: "(0.0, 0.0)",
-    ),
-    "double_complex": ValueTypeHandler(
-        type_check=lambda value: type(value) is complex,
+    "integer": ValueTypeHandler(type_check=lambda value: type(value) is int, from_token=int, seed="0"),
+    "float": _FLOAT,
+    # The "d" makes _float_to_str emit a double exponent.
+    "double": replace(_FLOAT, from_token=lambda token: float(token.replace("D", "E").replace("d", "e")), seed="0.0d0"),
+    # Nothing writes this notation from scratch; a value written into such a node takes the
+    # plain one, which every grammar admitting this rule also admits.
+    "bare_exponent": replace(_FLOAT, from_token=lambda token: float(_exponent_letter(token))),
+    "complex": _COMPLEX,
+    "double_complex": replace(
+        _COMPLEX,
         from_token=lambda token: complex(*map(float, token.replace("D", "E").replace("d", "e").strip("()").split(","))),
-        to_token=lambda value, token: (
-            "(" + _float_to_str(value.real, token) + ", " + _float_to_str(value.imag, token) + ")"
-        ),
-        seed_token=lambda value: "(0.0d0, 0.0d0)",
-    ),
-    "fortran_identifier": ValueTypeHandler(
-        type_check=_is_fortran_bare_word,
-        from_token=lambda token: str(token),
-        to_token=lambda value, token: value,
-        seed_token=lambda value: "",
-    ),
-    "identifier": ValueTypeHandler(
-        type_check=lambda value: type(value) is str and value.isidentifier(),
-        from_token=lambda token: str(token),
-        to_token=lambda value, token: value,
-        seed_token=lambda value: "",
-    ),
-    "string": ValueTypeHandler(
-        type_check=lambda value: type(value) is str,
-        from_token=lambda token: token[1:-1],
-        to_token=_string_to_str,
-        # The quote is chosen by _string_to_str; this only states the preference.
-        seed_token=lambda value: '""',
+        seed="(0.0d0, 0.0d0)",
     ),
     "fortran_string": ValueTypeHandler(
-        type_check=lambda value: type(value) is str,
+        type_check=_is_str,
         from_token=lambda token: token[1:-1].replace(token[0] * 2, token[0]),
         to_token=_fortran_string_to_str,
         # The quote is chosen by _fortran_string_to_str; this only states the preference.
-        seed_token=lambda value: '""',
+        seed='""',
     ),
-    "text_line": ValueTypeHandler(
-        type_check=_is_text_line,
-        from_token=lambda token: str(token),
-        to_token=lambda value, token: value,
-        seed_token=lambda value: "",
-    ),
-    "path": ValueTypeHandler(
-        type_check=lambda value: isinstance(value, Path),
-        from_token=lambda token: Path(token),
-        to_token=lambda value, token: str(value),
-        seed_token=lambda value: "",
+    "string": ValueTypeHandler(
+        type_check=_is_str,
+        from_token=lambda token: token[1:-1],
+        to_token=_string_to_str,
+        # The quote is chosen by _string_to_str; this only states the preference.
+        seed='""',
     ),
     # A value typed by its spelling, as the FMS field manager types one, in double quotes.
     "inferred_string": ValueTypeHandler(
         type_check=_is_inferable,
         from_token=lambda token: _infer(token[1:-1].strip()),
         to_token=lambda value, token: '"' + _rewrite_padded(value, token[1:-1]) + '"',
-        seed_token=lambda value: '"' + _INFERRED_SEEDS[type(value)] + '"',
+        seed=lambda value: '"' + _INFERRED_SEEDS[type(value)] + '"',
     ),
+    "fortran_identifier": ValueTypeHandler(type_check=_is_fortran_bare_word),
+    "identifier": ValueTypeHandler(type_check=lambda value: type(value) is str and value.isidentifier()),
     # The same, bare, ending its line.
     "inferred_text": ValueTypeHandler(
         type_check=_is_inferable,
         from_token=lambda token: _infer(str(token)),
         to_token=lambda value, token: _inferred_to_str(value, token, bare=True),
-        seed_token=lambda value: _INFERRED_SEEDS[type(value)],
+        seed=lambda value: _INFERRED_SEEDS[type(value)],
     ),
+    "text_line": ValueTypeHandler(type_check=_is_text_line),
+    "path": ValueTypeHandler(type_check=lambda value: isinstance(value, Path), from_token=Path),
     "named_assignments": ValueTypeHandler(
-        type_check=_is_record,
-        from_token=_read_record,
-        to_token=_write_record,
-        seed_token=lambda value: '"", ""',
-        collects=True,
+        type_check=_is_record, from_token=_read_record, to_token=_write_record, seed='"", ""', collects=True
     ),
 }
 """Registry mapping value-type rule names to their ``ValueTypeHandler``.
@@ -634,46 +628,11 @@ knows how to check, parse, and serialise the corresponding Python type.
 """
 
 
-VALUE_RULE_PRIORITY: tuple[str, ...] = (
-    "logical",
-    "bool",
-    "integer",
-    "float",
-    "double",
-    "bare_exponent",
-    "complex",
-    "double_complex",
-    "fortran_string",
-    "string",
-    "inferred_string",
-    "fortran_identifier",
-    "identifier",
-    "inferred_text",
-    "text_line",
-    "path",
-    "named_assignments",
-)
+VALUE_RULE_PRIORITY: tuple[str, ...] = tuple(VALUE_TYPE_HANDLER_REGISTRY)
 """Order in which value-type rules are tried when writing a value for a brand-new key.
 
-Several handlers accept the same Python type, so the choice has to be made deterministically
-rather than left to whichever grammar rule happens to match first:
-
-- ``logical`` before ``bool``, so a grammar admitting both writes ``.true.``, not ``True``.
-- ``float`` before ``double``, so plain notation is preferred over a ``D`` exponent.
-- ``string`` before ``identifier``, so quoting is preferred wherever it is allowed, and bare
-  words are used only by grammars that have no ``string`` rule.
-- ``identifier`` before ``text_line``, so a whole line of free text is what a string becomes
-  only in a format with nothing narrower to write it as.
-- ``inferred_string`` before ``inferred_text``, so a value goes in quotes where a format
-  allows it either way.
-
-Only rules the grammar actually admits are considered, so a format picks the first entry it
-supports: ``True`` becomes ``.true.`` where a grammar has ``logical``, ``True`` where it
- has only ``bool``.
-
-This expresses a preference, not a restriction. The caller tries each accepting rule in turn
-and validates the result, so the order changes how output looks but never what it means. A
-parser can override it through ``ConfigParser.value_rule_priority``.
+The order of ``VALUE_TYPE_HANDLER_REGISTRY``, whose comment says why it is the one it is.
+A parser can override it through ``ConfigParser.value_rule_priority``.
 """
 
 
