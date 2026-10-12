@@ -14,6 +14,10 @@ Several handlers accept the same Python type, so writing a value for a key that 
 exist yet also needs a rule to be *chosen*. The order of the registry is the order of
 preference and ``select_value_rule`` applies it, and ``UnsupportedEntryError`` reports a
 value that no admitted rule can express.
+
+Writing a value over an existing one keeps the notation of the one it replaces -- its quote
+character, exponent letter or spelling of a logical -- so that an edit does not restyle the
+line.
 """
 
 from __future__ import annotations
@@ -38,21 +42,8 @@ class UnsupportedEntryError(TypeError):
 def _string_to_str(value: str, token_text: str) -> str:
     """Quote a string, keeping the quote character already in use where possible.
 
-    Values are wrapped verbatim rather than escaped, so the quote character has to be one
-    the value does not itself contain. The one already in use is preferred, so that
-    rewriting a value does not gratuitously change the quoting of the line.
-
-    Args:
-        value (str): The string to quote.
-        token_text (str): Text of the ``Token`` that previously held the string, whose first
-            character is the quote in use.
-
-    Returns:
-        str: The quoted string.
-
-    Raises:
-        UnsupportedEntryError: If *value* contains both quote characters, and so cannot be
-            written without escaping.
+    The value is wrapped verbatim, not escaped, so the quote must be one it lacks: raise
+    ``UnsupportedEntryError`` if it holds both.
     """
     quote = token_text[0]
     if quote in value:
@@ -65,17 +56,8 @@ def _string_to_str(value: str, token_text: str) -> str:
 def _fortran_string_to_str(value: str, token_text: str) -> str:
     """Quote a string the way ``fortran_string`` does, doubling any quote it contains.
 
-    Unlike ``_string_to_str``, no value is out of reach: that rule escapes a quote by
-    doubling it, so a string holding both quote characters can still be written. The quote
-    already in use is kept, so rewriting a value does not restyle the line.
-
-    Args:
-        value (str): The string to quote.
-        token_text (str): Text of the ``Token`` that previously held the string, whose first
-            character is the quote in use.
-
-    Returns:
-        str: The quoted string.
+    Unlike ``_string_to_str`` no value is out of reach, since doubling escapes a quote, so a
+    string holding both quote characters can still be written. The quote in use is kept.
     """
     quote = token_text[0]
     return quote + value.replace(quote, quote * 2) + quote
@@ -84,10 +66,8 @@ def _fortran_string_to_str(value: str, token_text: str) -> str:
 def _is_fortran_bare_word(value: Any) -> bool:
     """Report whether a value can be written as an unquoted word by ``fortran_identifier``.
 
-    Narrower than a Python identifier in two ways. The word has to be ASCII, since that is
-    all the grammar's terminal matches, and it must not be one of the logical spellings that
-    rule sits beside: written bare, ``true`` is not the string "true" but ``.true.``, so a
-    value that reads back as a logical has to be refused rather than silently change type.
+    It must be ASCII, which is all the terminal matches, and not a spelling of a logical:
+    written bare, ``true`` reads back as ``.true.``, so it is refused rather than retyped.
     """
     return type(value) is str and re.fullmatch(r"(?!(?i:t|f|true|false)\Z)[A-Za-z_][A-Za-z0-9_]*", value) is not None
 
@@ -95,16 +75,8 @@ def _is_fortran_bare_word(value: Any) -> bool:
 def _logical_to_str(value: bool, token_text: str) -> str:
     """Convert a bool to a string, keeping the notation of the original token.
 
-    A grammar may spell a logical several ways, so rewriting one should not restyle it. The
-    dots, the case and the length of the word are all kept: ``.TRUE.`` stays dotted, upper
-    and spelled out, a bare ``t`` stays a bare letter, and ``true`` stays a whole word.
-
-    Args:
-        value (bool): The value to write.
-        token_text (str): Text of the ``Token`` that previously held the logical.
-
-    Returns:
-        str: The logical as a string.
+    The dots, the case and the length of the word are kept: ``.TRUE.`` becomes ``.FALSE.``,
+    a bare ``t`` becomes ``f`` and ``true`` becomes ``false``.
     """
     stripped = token_text.strip(".")
     word = ("true" if value else "false") if len(stripped) > 1 else ("t" if value else "f")
@@ -117,15 +89,8 @@ def _logical_to_str(value: bool, token_text: str) -> str:
 def _exponent_letter(token_text: str) -> str:
     """Put back the ``e`` a real may leave out before a signed exponent.
 
-    A grammar may admit ``1+0`` for 1.0 and ``5-1`` for 0.5, writing the exponent's sign
-    in place of the letter, which Python's ``float`` does not accept. A sign at the start
-    is not an exponent, so the search for one begins past it.
-
-    Args:
-        token_text (str): The token as the file wrote it.
-
-    Returns:
-        str: The same number in a spelling ``float`` accepts.
+    A grammar may admit ``1+0`` for 1.0 and ``5-1`` for 0.5, which Python's ``float`` does
+    not accept. A sign at the start is not an exponent, so the search starts past it.
     """
     body = token_text[1:] if token_text[:1] in "+-" else token_text
     position = max(body.rfind("+"), body.rfind("-"))
@@ -138,21 +103,8 @@ def _exponent_letter(token_text: str) -> str:
 def _float_to_str(value: float, token_text: str) -> str:
     """Convert a float to a string using the exponent notation of the original token.
 
-    This preserves the exponent notation of the token (e.g. ``1.0d10`` or ``1.0D10``) when
-    round-trip serialising a value back into its token text.
-
-    Args:
-        value (float): Float to be converted.
-        token_text (str): Text of the ``Token`` that previously held the float (i.e.
-            ``Token.value``).
-
-    Returns:
-        str: The float as a string.
-
-    Raises:
-        UnsupportedEntryError: If *value* is an infinity or a NaN. Python writes those as
-            bare words that no supported format can read back, so writing one would produce
-            a file that no longer parses.
+    The exponent letter, as in ``1.0d10``, is kept. Raise ``UnsupportedEntryError`` for an
+    infinity or a NaN, which Python writes as bare words no supported format reads back.
     """
     if not math.isfinite(value):
         raise UnsupportedEntryError(f"{value!r} cannot be represented in a configuration file")
@@ -186,10 +138,8 @@ def _is_str(value: Any) -> bool:
 def _is_text_line(value: Any) -> bool:
     """Report whether *value* can be written as a line of free text.
 
-    The text runs to the end of the line or to a comment, and the whitespace either side of
-    it belongs to the line rather than to the value, so a value with a comment character, a
-    line break, or whitespace at either end would not read back as itself. Nor would one
-    starting with ``::``, which closes an ESMF table.
+    The text runs to the end of the line or a comment, and the whitespace around it belongs
+    to the line, not the value. A leading ``::`` is refused too, as it closes an ESMF table.
     """
     return _is_trimmed(value, "#\r\n") and not value.startswith("::")
 
@@ -228,11 +178,7 @@ def _single_quoted(text: str) -> bool:
 def _infer(text: str) -> bool | int | float | str:
     """Return the value the FMS field manager reads *text* as, typed by its spelling.
 
-    Args:
-        text (str): One value, without the whitespace around it.
-
-    Returns:
-        bool | int | float | str: The value.
+    The *text* is one value, without the whitespace around it.
     """
     if _single_quoted(text):
         return text[1:-1]
@@ -265,21 +211,8 @@ def _is_inferable(value: Any) -> bool:
 def _inferred_to_str(value: bool | int | float | str, previous: str, *, bare: bool = False) -> str:
     """Spell *value* so that it reads back as itself, in the notation of *previous*.
 
-    A logical keeps the spelling it replaces, and a real its exponent letter. A string is
-    written in single quotes where it would otherwise read back as something else -- ``'3'``
-    for the string "3" -- or where the text it replaces was quoted.
-
-    Args:
-        value (bool | int | float | str): The value, one ``_is_inferable`` accepts.
-        previous (str): The text the value replaces, without the whitespace around it.
-        bare (bool): Whether the text ends a line, where a closing ``/`` would end the
-            entry instead, so a string ending with one has to be quoted.
-
-    Returns:
-        str: The text.
-
-    Raises:
-        TypeError: If *previous* reads as a value of another type.
+    A string is quoted where it would read back as something else (``'3'`` for "3") or where
+    *previous* was. Raise ``TypeError`` if *previous* reads as a value of another type.
     """
     if type(value) is not type(_infer(previous)):
         raise TypeError("Trying to change value type")
@@ -291,6 +224,8 @@ def _inferred_to_str(value: bool | int | float | str, previous: str, *, bare: bo
         return str(value)
     assert isinstance(value, str)
     reads_back = identical_values(_infer(value), value) and not value.startswith("'") and not value.endswith("'")
+    # *bare* means the text ends a line, where a closing "/" would end the entry instead, so
+    # a string ending with one has to be quoted.
     if _single_quoted(previous) or not reads_back or (bare and value.endswith("/")):
         return f"'{value}'"
     return value
@@ -322,23 +257,15 @@ def _record_parts(token: str) -> tuple[str, str, str]:
 def _control_segments(control: str) -> list[tuple[str, list[str]]]:
     """Return each parameter of a control with the texts of its values, padding and all.
 
-    A segment holding no equals sign continues the list of values of the parameter before
-    it, as the field manager reads it, so ``a=1,2`` is ``a`` holding two values.
-
-    Args:
-        control (str): The control, without its quotes.
-
-    Returns:
-        list[tuple[str, list[str]]]: The name of each parameter as written, and its values.
-
-    Raises:
-        ValueError: If a comma comes before the first equals sign, which the field manager
-            refuses, or a segment holds two equals signs.
+    Raise ``ValueError`` for a comma before the first equals sign, which the field manager
+    refuses, or for a segment holding two equals signs.
     """
     segments: list[tuple[str, list[str]]] = []
     for segment in control.split(",") if control else []:
         if segment.count("=") > 1:
             raise ValueError(f"A parameter with two equals signs: {segment!r}")
+        # The field manager reads a segment with no equals sign as one more value of the
+        # parameter before it, so ``a=1,2`` is ``a`` holding two values.
         if "=" in segment:
             name, _, text = segment.partition("=")
             segments.append((name, [text]))
@@ -352,15 +279,8 @@ def _control_segments(control: str) -> list[tuple[str, list[str]]]:
 def _read_record(token: str) -> dict[str, Any]:
     """Return the record a token writes: the name under ``"value"``, then each parameter.
 
-    Args:
-        token (str): The token, ``"name", "control"``.
-
-    Returns:
-        dict[str, Any]: The record. A parameter of several values holds a list of them.
-
-    Raises:
-        ValueError: If the control is malformed, names no parameter, names one twice or
-            names one ``value``, which is where the name goes.
+    A parameter of several values holds a list. Raise ``ValueError`` for a malformed control
+    or a parameter with no name, named twice or named ``value``, where the name goes.
     """
     name, _, control = _record_parts(token)
     record: dict[str, Any] = {"value": name}
@@ -376,15 +296,8 @@ def _read_record(token: str) -> dict[str, Any]:
 def _is_record(value: Any) -> bool:
     """Report whether *value* is a record a control can hold.
 
-    A ``dict`` with a string name under ``"value"`` and at least one parameter, each a
-    value ``_is_inferable`` accepts or a list of two or more of them, under a name holding
-    nothing a control parts on.
-
-    Args:
-        value (Any): The value to check.
-
-    Returns:
-        bool: True if *value* can be written as a name and a control.
+    A ``dict`` with a string name under ``"value"`` and at least one parameter, each an
+    inferable value or a list of two or more, under a key with nothing a control parts on.
     """
     if type(value) is not dict or len(value) < 2:
         return False
@@ -405,17 +318,8 @@ def _is_record(value: Any) -> bool:
 def _write_record(value: dict[str, Any], token: str) -> str:
     """Write a record over the token it replaces, changing only what changed.
 
-    A parameter left as it was keeps its text, padding and all. One whose value changed
-    keeps the padding and notation of each value it replaces, and one that is new is
-    written after the others, parted from them as the last one was. A parameter the record
-    no longer holds is left out.
-
-    Args:
-        value (dict[str, Any]): The record.
-        token (str): The token it replaces.
-
-    Returns:
-        str: The token text.
+    An unchanged parameter keeps its text, a changed one the padding and notation of each
+    value it replaces. A new one goes last, and one the record lacks is dropped.
     """
     _, between, control = _record_parts(token)
     parameters = _control_segments(control)
@@ -494,12 +398,6 @@ class ValueTypeHandler:
         ``to_token`` needs the text of the token being replaced in order to preserve
         notation, but a key that does not exist yet has no such token. This supplies a seed
         instead, so that there is only one serialisation path.
-
-        Args:
-            value (Any): The value to serialise.
-
-        Returns:
-            str: The token text.
         """
         return self.to_token(value, self.seed(value) if callable(self.seed) else self.seed)
 
@@ -510,13 +408,6 @@ class ValueTypeHandler:
         elements that did not change written exactly as they were -- ``1.0d0`` stays
         ``1.0d0`` -- and a value that cannot be written anew, such as a NaN, can still be
         written over itself.
-
-        Args:
-            value (Any): The new value.
-            token_text (str): The text of the token being replaced.
-
-        Returns:
-            str: The token text.
 
         Raises:
             TypeError: If *value* is not of this type.
@@ -623,8 +514,7 @@ VALUE_TYPE_HANDLER_REGISTRY: dict[str, ValueTypeHandler] = {
 """Registry mapping value-type rule names to their ``ValueTypeHandler``.
 
 Value-type rules are the grammar rules that appear as alternatives of the ``value`` rule
-(e.g. ``"integer"``, ``"float"``, ``"logical"``). Each rule name maps to a handler that
-knows how to check, parse, and serialise the corresponding Python type.
+(e.g. ``"integer"``, ``"float"``, ``"logical"``).
 """
 
 
@@ -632,14 +522,8 @@ def select_value_rule(value: Any, admitted: Collection[str]) -> str | None:
     """Choose the value-type rule to use when writing *value* into a new entry.
 
     The first admitted rule that accepts the value, in the order of the registry, which is
-    the order of preference; the comment above it says why.
-
-    Args:
-        value (Any): The Python value to be written.
-        admitted (Collection[str]): Names of the value-type rules the format has.
-
-    Returns:
-        str | None: The chosen rule name, or ``None`` if no admitted rule accepts *value*.
+    the order of preference; the comment above it says why. Return ``None`` if no admitted
+    rule accepts the value.
     """
     for rule_name, handler in VALUE_TYPE_HANDLER_REGISTRY.items():
         if rule_name in admitted and handler.type_check(value):
@@ -654,12 +538,5 @@ def identical_values(first: Any, second: Any) -> bool:
     though each is a different value to write, and a NaN compares unequal even to itself,
     though writing it over itself changes nothing. Comparing the type and the ``repr``
     settles both.
-
-    Args:
-        first (Any): A value.
-        second (Any): Another value.
-
-    Returns:
-        bool: True if the two are indistinguishable.
     """
     return type(first) is type(second) and repr(first) == repr(second)

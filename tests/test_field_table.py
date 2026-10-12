@@ -438,8 +438,7 @@ class TestAddingAnEntry:
     def test_a_new_field_of_a_model(self, parser) -> None:
         """Test the header after the last of its type and model, spelled the way it is.
 
-        The entry above it is followed by comments, which stay with it. The methods are
-        spaced like those of the entry above.
+        Comments after the entry above stay with it; the methods are spaced like its own.
         """
         config = parser.parse(OM2)
         atmosphere = config["tracer"]["atmos_mod"]
@@ -549,8 +548,7 @@ class TestDeleting:
 def test_a_whole_table_edited(parser) -> None:
     """Test the edits an experiment makes, together, on the OM2 table.
 
-    A restart file renamed, a rayleigh record removed and another changed, and an age
-    tracer added after the temperature and salinity ones.
+    A restart file renamed, a rayleigh record removed and changed, an age tracer added.
     """
     config = parser.parse(OM2)
     ocean = config["prog_tracers"]["ocean_mod"]

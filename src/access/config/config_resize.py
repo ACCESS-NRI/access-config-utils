@@ -51,16 +51,10 @@ def resize_entry(
 ) -> EntryRef:
     """Write a list of a different length into the entry *ref* names, where it stands.
 
-    Args:
-        ref (EntryRef): The ``key_list`` entry to rewrite.
-        ctx (ParseContext): The compiled grammar and the per-parser settings.
-        key (str): The normalised key, used to check what a candidate reads back as.
-        values (Sequence[Any]): The values the list is to hold.
-        origins (Sequence[int | None]): For each value, the position of the old element it
-            stands in for, or ``None`` for a new one. Old positions in increasing order.
-
-    Returns:
-        EntryRef: The reference to the rewritten entry.
+    *ref* is a ``key_list`` entry, and the reference returned has the value nodes of the
+    rewritten entry. *key* is the normalised key a candidate has to read back as. *origins*
+    gives, for each value, the position of the old element it stands in for, in increasing
+    order, or ``None`` for a new one.
 
     Raises:
         ValueError: If fewer than two values are asked for, or the entry's values are not
@@ -88,18 +82,7 @@ def resize_entry(
 
 
 def _resizable_entry(ref: EntryRef, key: str) -> Tree:
-    """Return the one entry node writing *ref*'s values one per node, or refuse.
-
-    Args:
-        ref (EntryRef): The entry to rewrite.
-        key (str): The key, for the error message.
-
-    Returns:
-        Tree: The entry node.
-
-    Raises:
-        ValueError: If the values are not written one per node in a single entry.
-    """
+    """Return the entry node writing *ref*'s values one per node, or raise ValueError."""
     reason = None
     if len(ref.entry_nodes) != 1:
         reason = "the file assigns it more than once"
@@ -117,16 +100,8 @@ def _resizable_entry(ref: EntryRef, key: str) -> Tree:
 def _marked_text(ctx: ParseContext, container: Tree, line: Tree, path: Sequence[int], *, blank: bool) -> str:
     """Write out a copy of *line* with a marker in place of each value of its entry.
 
-    Args:
-        ctx (ParseContext): Supplies the reconstructor.
-        container (Tree): The container the line is in.
-        line (Tree): The line holding the entry.
-        path (Sequence[int]): The way down from the line to the entry.
-        blank (bool): Whether to write every comment as nothing, so that the text between
-            values can be copied without copying someone else's comment.
-
-    Returns:
-        str: The text of the line.
+    With *blank*, every comment is written as nothing, so that the text between the values
+    can be copied without copying someone else's comment.
     """
     marked = copy.deepcopy(line)
     entry = node_at(marked, path)
@@ -144,24 +119,8 @@ def _value_texts(
 ) -> list[str]:
     """Return the token text to write each new value with.
 
-    A value standing in for an old element keeps that element's token if it is the same
-    value, and is written in its notation otherwise. A new value takes the notation of its
-    nearest neighbour that stays, so a list of quoted strings gains quoted strings, and
-    otherwise the format's own preference.
-
-    Args:
-        ref (EntryRef): The entry being rewritten.
-        ctx (ParseContext): The compiled grammar and the per-parser settings.
-        key (str): The key, for the error message.
-        values (Sequence[Any]): The new values.
-        origins (Sequence[int | None]): The old position each new value stands in for.
-
-    Returns:
-        list[str]: One token text per value.
-
-    Raises:
-        TypeError: If a value standing in for an old element is of another type.
-        UnsupportedEntryError: If no value type the format admits can hold a new value.
+    A value that stays keeps its token if unchanged, else is written in its old notation.
+    A new one takes the notation of its nearest old neighbour, else the format's own.
     """
     texts = []
     for index, (value, origin) in enumerate(zip(values, origins, strict=True)):
@@ -170,6 +129,7 @@ def _value_texts(
             assert node is not None
             texts.append(rewritten_text(node, value))
             continue
+        # Copy a neighbour's notation, so a list of quoted strings gains quoted strings.
         neighbour = _nearest_old(origins, index)
         if neighbour is not None:
             node = ref.value_nodes[neighbour]
@@ -188,12 +148,7 @@ def _value_texts(
 def _nearest_old(origins: Sequence[int | None], index: int) -> int | None:
     """Return the old position of the nearest value that stays, searching backwards first.
 
-    Args:
-        origins (Sequence[int | None]): The old position each new value stands in for.
-        index (int): The position of a new value.
-
-    Returns:
-        int | None: An old position, or ``None`` when no value stays at all.
+    The result is ``None`` when no value stays at all.
     """
     before = (origins[at] for at in range(index - 1, -1, -1))
     after = (origins[at] for at in range(index + 1, len(origins)))
@@ -211,18 +166,8 @@ def _read_candidate(
 ) -> Tree | None:
     """Return the entry a candidate text parses into, if it is the one asked for.
 
-    Args:
-        ctx (ParseContext): The compiled grammar and the per-parser settings.
-        container (Tree): The container the line is in.
-        line (Tree): The line as it is.
-        path (Sequence[int]): The way down from the line to the entry.
-        candidate (str): The candidate text of the line.
-        key (str): The normalised key.
-        values (Sequence[Any]): The values asked for.
-
-    Returns:
-        Tree | None: The freshly parsed entry node, or ``None`` if the candidate does not
-            parse, reads back as something else, or changes the line outside the entry.
+    The result is ``None`` if the candidate does not parse, reads back as something else, or
+    changes the line outside the entry.
     """
     try:
         nodes = parse_entry_nodes(ctx.lark, str(container.data), candidate)

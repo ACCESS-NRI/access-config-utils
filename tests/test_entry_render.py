@@ -73,8 +73,7 @@ class TestValueChoice:
     def test_offers_every_accepting_rule_most_preferred_first(self) -> None:
         """Test that the preferred rendering comes first but the others still follow.
 
-        The caller validates each candidate, so a preferred form that reads back as the
-        wrong type has to be followed by an alternative rather than being the only offer.
+        A preferred form that reads back as the wrong type must not be the only offer.
         """
         texts = snippets("key_value", ("K",), "word", EntryStyle(), self.LINE, frozenset({"identifier", "string"}))
 
@@ -95,8 +94,7 @@ class TestValueChoice:
     def test_writes_a_list_whose_elements_differ_in_type(self) -> None:
         """Test the per-value fallback, for a list no single rule covers.
 
-        No one rule accepts both an integer and a string, so each element is given the rule
-        its own type needs.
+        No one rule accepts both an integer and a string, so each element gets its own.
         """
         texts = snippets("key_list", ("K",), [1, "two"], EntryStyle(), self.LIST)
 
@@ -117,10 +115,9 @@ class TestDeclaredTemplate:
         assert snippets("key_value", ("K",), 1, EntryStyle(), self.DECLARED) == [" K: 1\n"]
 
     def test_takes_the_indent_of_the_entry_above_and_then_its_own(self) -> None:
-        """Test that the file's indentation is tried first, and the template's own after it.
+        """Test that the file's indent is tried first, and the template's own after it.
 
-        A grammar that allows no indentation there refuses the first, and the second is the
-        one that parses.
+        A grammar that allows no indentation there refuses the first; the second parses.
         """
         style = EntryStyle(indent="    ")
 

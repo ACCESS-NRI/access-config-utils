@@ -101,8 +101,7 @@ class TestCompileTemplate:
     def test_rejects_markers_that_do_not_fit_the_category(self, text, category, message) -> None:
         """Test that a template is checked against what its category requires.
 
-        A list needs two value markers because the text between them is what identifies the
-        element separator, and every template needs a key.
+        A list needs two value markers (their gap is the separator), and all need a key.
         """
         with pytest.raises(ValueError, match=message):
             compile_template(text, category, 1, None)

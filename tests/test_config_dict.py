@@ -156,9 +156,7 @@ class TestAddingAKey:
     def test_a_new_block_is_given_a_style_and_then_filled(self) -> None:
         """Test the two things that only happen for a block.
 
-        It arrives empty, because nothing in it can say how its contents should be spaced
-        until it has some; it is handed the style of its nearest sibling and then filled
-        through this same path, one key at a time, so nesting to any depth works.
+        It arrives empty: it is handed its nearest sibling's style, then filled key by key.
         """
         inner = FakeStore({}, added={"x": ref("key_value", "x")})
         store = FakeStore({}, added={"blk": ref("key_block", "blk")})
@@ -176,19 +174,14 @@ class TestAddingAKey:
 class TestAddingBelowABlockWithNoBody:
     """A key added to a block the file writes one component per line, or merged.
 
-    Such a block has no body of its own in the file, so the line is written by the nearest
-    configuration holding it, carrying the whole key path, and the configurations on the
-    path are read again in place.
+    The nearest holder writes the whole key path, and the configurations on it re-read.
     """
 
     @staticmethod
     def _nested(outer_refs: dict, inner_refs: dict, **outer_kwargs):
-        """Return a parent config over *outer_refs* whose block reads as *inner_refs*.
+        """Return the parent config over *outer_refs*, its store, and the block's store.
 
-        The block's store has no body for an entry; it reads every key it is asked about.
-
-        Returns:
-            The parent configuration, its store and the block's store.
+        The block reads as *inner_refs* and has no body for an entry; it answers every key.
         """
         inner = FakeStore({key: inner_refs[key] for key in list(inner_refs)[:1]}, reread=inner_refs)
         inner.addable = False
@@ -215,8 +208,7 @@ class TestAddingBelowABlockWithNoBody:
     def test_a_dict_the_format_cannot_hold_goes_one_level_down(self) -> None:
         """Test the Fortran ``t%a = 1`` written for ``t = {"a": 1, "b": 2}``.
 
-        The format has no block of its own for ``t``, so its first item is written as one
-        line carrying both keys, and the rest is added to the block that line created.
+        There is no block for ``t``, so its first item is one line carrying both keys.
         """
         inner_refs = {"a": ref("key_value", "a"), "b": ref("key_value", "b")}
         config, outer, _ = self._nested(
@@ -309,15 +301,9 @@ class TestResyncAfterDeleting:
 
     @staticmethod
     def _nested(block_rule: str, repetition: bool, reread: dict[str, EntryRef] | None = None):
-        """Return a parent config whose one key is a block held by *block_rule*.
+        """Return a parent config and the stores of it and its block, held by *block_rule*.
 
-        Args:
-            block_rule: The rule holding the block's contents.
-            repetition: Whether the grammar reports that rule a plain repetition.
-            reread: What the parent reports when read again; unchanged when not given.
-
-        Returns:
-            The parent configuration, its store and the block's store.
+        *repetition*: is that rule a plain repetition; *reread*: what the parent re-reads.
         """
 
         class Info:
@@ -334,8 +320,7 @@ class TestResyncAfterDeleting:
     def test_a_block_the_tree_no_longer_has_leaves_the_dict(self) -> None:
         """Test the derived type that goes when its last component does.
 
-        It is spelled a component per line; once the last one goes there is nothing left
-        to write, the lines are already out of the tree, and the parent no longer reads it.
+        Its lines are out of the tree once the last goes, so the parent no longer reads it.
         """
         config, outer, _ = self._nested("dtype_body", repetition=False, reread={})
         block = config["blk"]
@@ -419,9 +404,8 @@ class TestKeyCase:
 class TestRemainingMappingProtocol:
     """The methods ``dict`` implements in C, which have to be overridden.
 
-    Inheriting any of them would skip both the key normalisation and the tree update. A
-    ``pop`` followed by an assignment is the damaging case: the removed entry would stay in
-    the tree and a second one would be added, writing a file with the key twice.
+    Inherited, they would skip key normalisation and the tree update: a ``pop`` then an
+    assignment would leave the removed entry in the tree and write the key twice.
     """
 
     @pytest.fixture
@@ -779,8 +763,7 @@ class TestConfigBlockList:
     def test_refuses_to_add_remove_or_replace_a_whole_block(self, blocks, operation) -> None:
         """Test that only the entries of an occurrence are editable, not the list itself.
 
-        Where a new occurrence would go, and how it should be spaced, is not something the
-        list can answer, so these would leave it and the file disagreeing.
+        Where a new occurrence goes, and how it is spaced, the list cannot answer.
         """
         with pytest.raises(NotImplementedError, match="occurrence of a repeated block"):
             operation(blocks)

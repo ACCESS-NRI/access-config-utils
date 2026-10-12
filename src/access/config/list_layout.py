@@ -18,10 +18,20 @@ last value). Two layouts are told apart:
   comment and blank lines above it, its indent, and the rest of its own line -- a comment
   there included. An element that stays keeps all three, and a new element takes the indent
   of the deeper of its neighbours and the line ending most of the list uses.
+  The neighbours are the nearest elements that stay on either side, so a row added inside a
+  nested loop is indented like the loop's body, not like the line opening it. The lines
+  above a deleted element go to the next one that stays, so that removing an element removes
+  its line but not the comments heading the lines that follow; those above a deleted last
+  element have no element left to head, and go with it. While the first element shares its
+  line with the key it owns no indent: whichever element is first has none, and the old
+  first, moved off that line, takes the indent of the one after it.
 - **Inline mode**, otherwise. Two elements that stay next to each other keep the separator
   between them. A gap that closes over deleted elements keeps the separator with the most
   line breaks among those it replaces, so a line structure is not lost, and every other gap
   copies the nearest separator that holds no line break.
+  The last gap of a run of new values between two that stay follows that rule too, so a line
+  break that ended the first one's line still does, rather than moving to before the new
+  values.
 
 Which element owns the line ending that closes a list is a genuine ambiguity -- it depends
 on whether the grammar puts the separator after the element or before the next one -- so
@@ -69,13 +79,8 @@ class ListText:
     def from_marked(cls, raw: str, clean: str, count: int) -> ListText:
         """Take apart the text of a list whose values were replaced by ``VALUE_MARKER``.
 
-        Args:
-            raw (str): The text with markers in place of the values.
-            clean (str): The same text with every comment removed as well.
-            count (int): How many values the list holds.
-
-        Returns:
-            ListText: The parts.
+        *raw* has a marker in place of each of the *count* values, and *clean* is the same
+        text with every comment removed as well.
 
         Raises:
             ValueError: If either text does not hold the markers 0 to *count* - 1, in order.
@@ -88,15 +93,7 @@ class ListText:
 def _split(text: str, count: int) -> tuple[str, tuple[str, ...], str]:
     """Split a marked text into the text before, between and after its markers.
 
-    Args:
-        text (str): The marked text.
-        count (int): How many markers it should hold.
-
-    Returns:
-        tuple[str, tuple[str, ...], str]: The prefix, the separators and the suffix.
-
-    Raises:
-        ValueError: If the markers are not 0 to *count* - 1, in order.
+    Raises ``ValueError`` if the markers are not 0 to *count* - 1, in order.
     """
     pieces = _MARKER_PATTERN.split(text)
     indices = [int(piece) for piece in pieces[1::2]]
@@ -106,20 +103,12 @@ def _split(text: str, count: int) -> tuple[str, tuple[str, ...], str]:
 
 
 def align_values(old: Sequence[Any], new: Sequence[Any]) -> list[int | None]:
-    """Return, for each new value, the position of the old one it stands in for.
+    """Return the position of the old value each new one stands in for, or ``None`` if new.
 
     Values that are the same, in type and in value, are matched up in order. Where the old
     and the new lists differ, the values on either side are paired by position as far as
     both go, so a changed value keeps the place -- and the line -- the old one had; the
     rest are new or gone.
-
-    Args:
-        old (Sequence[Any]): The values the list holds.
-        new (Sequence[Any]): The values it is to hold.
-
-    Returns:
-        list[int | None]: One entry per new value: an old position, or ``None`` for a value
-            with nothing to stand in for.
     """
     matcher = SequenceMatcher(None, [_identity(value) for value in old], [_identity(value) for value in new], False)
     origins: list[int | None] = []
@@ -141,14 +130,9 @@ def _identity(value: Any) -> tuple[type, str]:
 def layout_candidates(text: ListText, value_texts: Sequence[str], origins: Sequence[int | None]) -> list[str]:
     """Return candidate texts for a list holding *value_texts*, most preferred first.
 
-    Args:
-        text (ListText): The text of the list as it is.
-        value_texts (Sequence[str]): The token text of each new value.
-        origins (Sequence[int | None]): For each new value, the old position it stands in
-            for, or ``None``. The old positions have to be in increasing order.
-
-    Returns:
-        list[str]: The candidates, without repetitions.
+    *value_texts* is the token text of each new value, and *origins* the old position each
+    stands in for, or ``None`` for a new one; those have to be in increasing order. No
+    candidate is repeated.
     """
     if all("\n" in separator for separator in text.separators):
         candidates = _line_mode(text, value_texts, origins)
@@ -161,16 +145,7 @@ def layout_candidates(text: ListText, value_texts: Sequence[str], origins: Seque
 
 
 def _inline_mode(text: ListText, value_texts: Sequence[str], origins: Sequence[int | None]) -> str:
-    """Return the text of the list laid out inline.
-
-    Args:
-        text (ListText): The text of the list as it is.
-        value_texts (Sequence[str]): The token text of each new value.
-        origins (Sequence[int | None]): The old position each new value stands in for.
-
-    Returns:
-        str: The text.
-    """
+    """Return the text of the list laid out inline."""
     gaps = _inline_gaps(text.separators, origins)
     pieces = [text.prefix, value_texts[0]]
     for gap, value in zip(gaps, value_texts[1:], strict=True):
@@ -181,17 +156,9 @@ def _inline_mode(text: ListText, value_texts: Sequence[str], origins: Sequence[i
 def _inline_gaps(separators: Sequence[str], origins: Sequence[int | None]) -> list[str]:
     """Return the separator for each gap between two consecutive new values.
 
-    A run of new values between two that stay is spaced with copies of the nearest
-    separator holding no line break, except for its last gap, which takes the separator the
-    two that stay had between them -- so a line break that ended the first one's line still
-    does, rather than moving to before the new values.
-
-    Args:
-        separators (Sequence[str]): The separators of the list as it is.
-        origins (Sequence[int | None]): The old position each new value stands in for.
-
-    Returns:
-        list[str]: One separator per gap.
+    A run of new values between two that stay is spaced with copies of the nearest separator
+    holding no line break, except for its last gap, which takes the one the two had between
+    them.
     """
     gaps: list[str] = []
     previous: int | None = None  # The old position of the last value that stayed, if any.
@@ -201,7 +168,8 @@ def _inline_gaps(separators: Sequence[str], origins: Sequence[int | None]) -> li
             previous = left
         if right is not None and previous is not None:
             # The gap just before a value that stays, after one that stayed earlier: the
-            # text the two had between them, keeping its line breaks.
+            # text the two had between them, keeping its line breaks, so one that ended the
+            # first's line still does, rather than moving to before the new values.
             gaps.append(max(separators[previous:right], key=lambda separator: separator.count("\n")))
         else:
             gaps.append(_nearest_inline(separators, previous if previous is not None else (right or 1) - 1))
@@ -209,18 +177,10 @@ def _inline_gaps(separators: Sequence[str], origins: Sequence[int | None]) -> li
 
 
 def _nearest_inline(separators: Sequence[str], at: int) -> str:
-    """Return the separator holding no line break that is nearest to position *at*.
+    """Return the separator holding no line break nearest to position *at*, backwards first.
 
-    Searched backwards from *at* first, then forwards, since a new value is usually written
-    after the ones it follows. There is always one: the list is laid out inline only when
-    some separator holds no line break.
-
-    Args:
-        separators (Sequence[str]): The separators of the list as it is.
-        at (int): The position to search from.
-
-    Returns:
-        str: The separator.
+    A new value is usually written after the ones it follows. There is always one: the list
+    is laid out inline only when some separator holds no line break.
     """
     at = min(max(at, 0), len(separators) - 1)
     order = [*range(at, -1, -1), *range(at + 1, len(separators))]
@@ -246,16 +206,7 @@ class _Line:
 
 
 def _line_mode(text: ListText, value_texts: Sequence[str], origins: Sequence[int | None]) -> list[str]:
-    """Return the candidate texts of the list laid out a line per element.
-
-    Args:
-        text (ListText): The text of the list as it is.
-        value_texts (Sequence[str]): The token text of each new value.
-        origins (Sequence[int | None]): The old position each new value stands in for.
-
-    Returns:
-        list[str]: The candidates.
-    """
+    """Return the candidate texts of the list laid out a line per element, best first."""
     head, lines, rest, on_key_line = _owned_lines(text)
     common_end = Counter(_line_break_head(separator) for separator in text.clean_separators).most_common(1)[0][0]
     last = len(lines) - 1
@@ -278,13 +229,9 @@ def _line_break_head(separator: str) -> str:
 def _owned_lines(text: ListText) -> tuple[str, list[_Line], str, bool]:
     """Take a list laid out a line per element apart into the lines its elements own.
 
-    Args:
-        text (ListText): The text of the list.
-
-    Returns:
-        tuple[str, list[_Line], str, bool]: The text before the first element's own line,
-            each element's line, the text after the last element's line, and whether the
-            first element shares its line with the key -- and so owns no indent of its own.
+    Return the text before the first element's own line, each element's line, the text after
+    the last element's line, and whether the first element shares its line with the key, and
+    so owns no indent.
     """
     on_key_line = "\n" not in text.prefix
     cut = 0 if on_key_line else text.prefix.rindex("\n") + 1
@@ -311,21 +258,11 @@ def _render_lines(
     on_key_line: bool,
     position_owned: int | None,
 ) -> str:
-    """Write the list a line per element.
+    """Write the list a line per element, from the parts ``_owned_lines`` took apart.
 
-    Args:
-        head (str): Text before the first element's own line.
-        lines (Sequence[_Line]): The lines the old elements own.
-        rest (str): Text after the last element's line.
-        value_texts (Sequence[str]): The token text of each new value.
-        origins (Sequence[int | None]): The old position each new value stands in for.
-        common_end (str): The line ending most elements use, for a new element's line.
-        on_key_line (bool): Whether the first element shares its line with the key.
-        position_owned (int | None): The old position whose line ending passes to whatever
-            is last now, or ``None`` to leave every ending with its element.
-
-    Returns:
-        str: The text.
+    *position_owned* is the old position whose line ending passes to whatever is last now,
+    or ``None`` to leave every ending with its element; *common_end* is the ending most
+    elements use, which a new element's line takes.
     """
     carried = _carried_above(lines, origins)
     indents = _indents(lines, origins, on_key_line)
@@ -343,19 +280,10 @@ def _render_lines(
 
 
 def _carried_above(lines: Sequence[_Line], origins: Sequence[int | None]) -> dict[int, str]:
-    """Return the comment lines each new position carries above it.
+    """Return the comment lines carried above each new position, for the elements that stay.
 
     An element that stays keeps the lines above it, and gains those above any elements
-    deleted just before it, so that removing an element removes its line but not the
-    comments heading the lines that follow. Lines above a deleted last element have no
-    element left to head, and go with it.
-
-    Args:
-        lines (Sequence[_Line]): The lines the old elements own.
-        origins (Sequence[int | None]): The old position each new value stands in for.
-
-    Returns:
-        dict[int, str]: The lines to write above each new position that has any.
+    deleted just before it. Lines above a deleted last element go with it.
     """
     carried: dict[int, str] = {}
     previous = -1
@@ -370,19 +298,8 @@ def _carried_above(lines: Sequence[_Line], origins: Sequence[int | None]) -> dic
 def _indents(lines: Sequence[_Line], origins: Sequence[int | None], on_key_line: bool) -> list[str]:
     """Return the indent of each new position.
 
-    An element that stays keeps its own indent, except for one moving onto the key's line,
-    which needs none, and the old first element moving off it, which takes the indent of
-    the element after it. A new element takes the deeper indent of the nearest elements
-    that stay on either side, so one added inside a nested loop is indented like the loop's
-    body rather than like the line opening it.
-
-    Args:
-        lines (Sequence[_Line]): The lines the old elements own.
-        origins (Sequence[int | None]): The old position each new value stands in for.
-        on_key_line (bool): Whether the first element shares its line with the key.
-
-    Returns:
-        list[str]: One indent per new position.
+    An element that stays keeps its own, except the one on the key's line, which needs none.
+    A new element takes the deeper indent of the nearest elements that stay on either side.
     """
     own = [_own_indent(lines, origin, on_key_line) for origin in origins]
     indents = []
@@ -399,16 +316,7 @@ def _indents(lines: Sequence[_Line], origins: Sequence[int | None], on_key_line:
 
 
 def _own_indent(lines: Sequence[_Line], origin: int | None, on_key_line: bool) -> str | None:
-    """Return the indent an old element brings with it, or ``None`` for a new element.
-
-    Args:
-        lines (Sequence[_Line]): The lines the old elements own.
-        origin (int | None): The old position, or ``None``.
-        on_key_line (bool): Whether the first element shares its line with the key.
-
-    Returns:
-        str | None: The indent.
-    """
+    """Return the indent an old element brings with it, or ``None`` for a new element."""
     if origin is None:
         return None
     if origin == 0 and on_key_line:

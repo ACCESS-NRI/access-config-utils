@@ -72,13 +72,8 @@ class EntryStyle:
     def donor(self, depth: int, category: str) -> EntryTemplate | None:
         """Return the template copied from an existing entry for a new one of this kind.
 
-        Args:
-            depth (int): How many keys the new entry chains together; 1 for a plain entry.
-            category (str): The category of the innermost entry.
-
-        Returns:
-            EntryTemplate | None: The template, or ``None`` if no entry of the kind was
-                found to copy.
+        A kind is a *depth* and a *category*, as in ``DonorSignature``. The result is
+        ``None`` if no entry of the kind was found to copy.
         """
         return next((template for signature, template in self.donors if signature == (depth, category)), None)
 
@@ -94,24 +89,17 @@ def probe_entry_style(container: Tree, reconstructor: Reconstructor, upto: int |
     first; see ``donor_template``. Only an entry on a line of its own is copied, since a
     line holding several is laid out for all of them.
 
+    An unusually spaced neighbour is matched rather than normalised: a key added beside
+    ``A   =   1`` is written ``B   =   2``, since a minimal diff matters more than tidiness.
+
+    *upto* is where the new entry is to go, as an index into the children of *container*:
+    only the entries above it are read, so the nearest of them is the one written just
+    before it. ``None`` reads them all.
+
     Falls back to a style with no indentation when the container holds no entries at all,
     which is the case for a block that was empty in the file. A block that was *just
     created* has nothing to copy either, but is not left bare: see
     ``probe_sibling_block_style``.
-
-    Args:
-        container (Tree): The container rule node the new entry will be added to.
-        reconstructor (Reconstructor): Writes a parse tree out as text, to copy whole
-            entries with.
-        upto (int | None): Where the new entry is to go, as an index into the children of
-            *container*: only the entries above it are read, so the nearest of them is the
-            one written just before it. ``None`` reads them all.
-
-    Returns:
-        EntryStyle: The layout to copy, or a style with no indentation.
-
-    An unusually spaced neighbour is matched rather than normalised: a key added beside
-    ``A   =   1`` is written ``B   =   2``, since a minimal diff matters more than tidiness.
     """
     lines = container.children[:upto]
     entries = [entry for line in lines if isinstance(line, Tree) for entry in entry_nodes(line)]
@@ -135,20 +123,10 @@ def probe_sibling_block_style(container: Tree, reconstructor: Reconstructor, upt
     of a block. For an entry that chains others, such as an FMS field table's
     ``"tracer", "ocean_mod", "age"``, that entry is the innermost, ``age``.
 
-    Args:
-        container (Tree): The container rule node the new block was added to.
-        reconstructor (Reconstructor): Writes a parse tree out as text, to copy whole
-            entries with.
-        upto (int | None): The index of the child of *container* the new block is written
-            in, so that the search starts at the block just above it. ``None`` searches
-            them all, from the last.
-
-    Returns:
-        EntryStyle: The layout to copy, or a style with no indentation when no sibling
-            block holds an entry -- including the new block itself, which is empty.
-
-    A new block is laid out like the block next to it, not like a fresh file: if the block
-    above indents its entries, so does this one.
+    *upto* is the index of the child of *container* the new block is written in, so that
+    the search starts at the block just above it. ``None`` searches them all, from the
+    last. The result is a style with no indentation when no sibling block holds an entry,
+    which includes the new block itself, since it is empty.
     """
     lines = container.children[:upto]
     for entry in reversed([entry for line in lines if isinstance(line, Tree) for entry in entry_nodes(line)]):
@@ -193,14 +171,6 @@ def _donors(
 
     The search runs from the last line upwards, so only one entry of each kind is copied
     unless an entry cannot be, when the one above it is tried.
-
-    Args:
-        lines (Sequence[Tree | Token]): Children of a container rule node.
-        reconstructor (Reconstructor): Writes a parse tree out as text.
-
-    Returns:
-        tuple[tuple[DonorSignature, EntryTemplate], ...]: Each kind found, with its
-            template.
     """
     found: dict[DonorSignature, EntryTemplate] = {}
     for line in reversed(lines):
@@ -234,19 +204,13 @@ def donor_template(line: Tree, entry: Tree, reconstructor: Reconstructor) -> Ent
     anything in the file.
 
     The line break comes too. In most formats it is part of the entry; where a line wraps
-    the entry instead, it is taken from the line, and only it: a separator after the entry
-    is part of how that line is written, not of how an entry is.
+    the entry instead, it is taken from *line*, the container child *entry* is written in
+    (which may be *entry* itself), and only it: a separator after the entry is part of how
+    that line is written, not of how an entry is.
 
-    Args:
-        line (Tree): The container child *entry* is written in, which may be *entry*.
-        entry (Tree): The entry to copy, with any entries chained inside it.
-        reconstructor (Reconstructor): Writes a parse tree out as text.
-
-    Returns:
-        EntryTemplate | None: The template, or ``None`` for an entry that cannot be copied:
-            one writing a repeat count or skipping a list position, which a new entry has
-            no reason to copy, a list broken after its first value, or an entry holding
-            several entries.
+    The result is ``None`` for an entry that cannot be copied: one writing a repeat count
+    or skipping a list position, which a new entry has no reason to copy, a list broken
+    after its first value, or an entry holding several entries.
     """
     copied = copy.deepcopy(entry)
     notations: list[tuple[str, str]] = []
@@ -266,15 +230,8 @@ def donor_template(line: Tree, entry: Tree, reconstructor: Reconstructor) -> Ent
 def _mark(node: Tree, depth: int, level: int, notations: list[tuple[str, str]]) -> bool:
     """Put markers in place of the keys and the values below *node*, in a copied entry.
 
-    Args:
-        node (Tree): The rule node to mark, changed in place.
-        depth (int): How many entries the chain *node* is in holds.
-        level (int): Which of them *node* is in.
-        notations (list[tuple[str, str]]): Collects the rule and the token text of each
-            value replaced, in the order written.
-
-    Returns:
-        bool: False if the entry is not one to copy.
+    *node* is link *level* of a chain of *depth* entries; the rule and token text of each
+    value replaced go to *notations*. The result is False if the entry is not to be copied.
     """
     node.children = [child for child in node.children if not (isinstance(child, Tree) and child.data == INDEX_RULE)]
     return all(_mark_child(child, depth, level, notations) for child in node.children if isinstance(child, Tree))
@@ -309,12 +266,8 @@ def _write_token(node: Tree, text: str) -> str:
 def _line_break_after(line: Tree, entry: Tree) -> str:
     """Return the line break ending the line *entry* is in, if the entry leaves it out.
 
-    Args:
-        line (Tree): The container child *entry* is written in.
-        entry (Tree): The entry.
-
-    Returns:
-        str: The line break, or nothing if the entry holds its own or the line has none.
+    *line* is the container child *entry* is written in. The result is empty if the entry
+    holds its own line break or the line has none.
     """
     written = ""
     for text in _written_after(line, entry):
@@ -342,13 +295,7 @@ def _written_after(node: Tree, entry: Tree) -> Iterator[str]:
 def _fragments(text: str, notations: Sequence[tuple[str, str]]) -> EntryTemplate:
     """Split the text of a marked entry into fixed text and placeholders.
 
-    Args:
-        text (str): The text, with markers in place of the keys and the values.
-        notations (Sequence[tuple[str, str]]): The rule and token text of each value
-            marker, in order.
-
-    Returns:
-        EntryTemplate: The fragments.
+    *notations* is the rule and token text of each value marker, in order.
     """
     remaining = iter(notations)
     fragments = []

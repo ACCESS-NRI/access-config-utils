@@ -81,8 +81,8 @@ class TestLineMode:
     def test_appending_offers_both_owners_of_the_closing_line_end(self) -> None:
         """Test the two readings of who owns the line ending that closes the list.
 
-        Fortran puts its separator after an element, so only the second reads back; a run
-        sequence has no separator, and the first keeps a trailing space where it was.
+        Fortran's separator follows an element, so only the second reads back; a run
+        sequence has none, and the first keeps a trailing space where it was.
         """
         candidates = layout_candidates(ONE_PER_LINE, ["1", "2", "3", "4"], [0, 1, 2, None])
 

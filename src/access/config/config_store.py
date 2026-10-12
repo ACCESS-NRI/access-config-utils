@@ -15,6 +15,10 @@ nothing about ``dict``; ``Config`` knows nothing about ``Tree``.
 
 A block gets a store of its own, made by ``child``, which is also where the created-block
 whitespace is handed down. That is the only reason a store knows about its neighbours.
+
+Every *key* a method takes is a normalised one, the form ``refs`` is keyed by. ``add_path``
+is the exception: it takes the path as the caller wrote it, which is what the text of the
+new entry spells, and normalises it itself.
 """
 
 from __future__ import annotations
@@ -74,14 +78,9 @@ class ConfigStore:
     def child(self, ref: EntryRef, index: int = 0) -> ConfigStore:
         """Return the store for the contents of a block held by this container.
 
-        Args:
-            ref (EntryRef): A ``key_block`` reference read from this container.
-            index (int): Which occurrence to open, for a block the file writes more than
-                once and this format reads as separate records. Zero for every other block,
-                which has exactly one.
-
-        Returns:
-            ConfigStore: A store over that block's own contents.
+        *ref* is a ``key_block`` reference read from this container. *index* picks the
+        occurrence to open of a block the file writes more than once and this format reads
+        as separate records; it is zero for every other block, which has exactly one.
         """
         return ConfigStore(ref.block_nodes[index], self.ctx, addable=ref.addable)
 
@@ -94,19 +93,16 @@ class ConfigStore:
         file writes one entry per record, changes length by gaining and losing entries; see
         ``_resize_records``.
 
-        Args:
-            key (str): The normalised key.
-            value (Any): The new value: a scalar, or a whole list.
-            origins (Sequence[int | None] | None): For a list of a different length, the
-                position of the old element each new value stands in for, or ``None`` for
-                a new one; worked out by aligning the two lists where the caller does not
-                know.
+        For a list of a different length, *origins* gives the position of the old element
+        each new value stands in for, or ``None`` for a new one; where the caller does not
+        know, it is worked out by aligning the two lists.
 
         Raises:
             TypeError: If the new value's type does not match what the entry holds, or a
                 value standing in for an old element is of another type.
-            ValueError: If fewer than two values are asked for, or the entry's values are
-                not written one per node in a single entry.
+            ValueError: If fewer than two values are asked for (none, for a list of
+                records), or the entry's values are not written one per node in a single
+                entry.
             UnsupportedEntryError: If the format cannot write the list asked for.
         """
         ref = self.refs[key]
@@ -128,28 +124,13 @@ class ConfigStore:
                 self.refs[key] = resize_entry(ref, self.ctx, key, value, origins)
 
     def _resize_records(self, key: str, values: Sequence[Any], origins: Sequence[int | None]) -> None:
-        """Change how many records a key holds, an entry per record.
+        """Change how many records a key holds, an entry per record, all or nothing.
 
-        Each new record is written beside the one before it -- or, for a new first record,
-        before the old first -- as a copy of that neighbour, so it takes its spacing, its
-        spelling of the key and the notation of each parameter the two share. Then the
-        records that stay are written, and the ones that go removed. Nothing is changed
-        until every record has been checked, and a new one that cannot be written takes the
-        others written before it back out.
-
-        Args:
-            key (str): The normalised key.
-            values (Sequence[Any]): The records the list is to hold.
-            origins (Sequence[int | None]): For each record, the position of the old one it
-                stands in for, or ``None`` for a new one.
-
-        Raises:
-            ValueError: If no record is left: the key is then gone from the file, which is
-                a deletion, not an edit.
-            TypeError: If a value is not a record.
-            UnsupportedEntryError: If the block has no body in the file for a new record to
-                go in, or a new record cannot be written.
+        Each new record is written beside the one before it, or before the old first if it
+        comes first, as a copy of that neighbour; *origins* is as in ``replace``.
         """
+        # Check everything first, and have a new record that cannot be written take the ones
+        # written before it back out: a refused list must leave the file as it was.
         nodes = self._check_records(key, values, origins)
         entries = self.refs[key].entry_nodes
         written = self._insert_records(key, values, origins)
@@ -162,20 +143,10 @@ class ConfigStore:
         self.reread()
 
     def _check_records(self, key: str, values: Sequence[Any], origins: Sequence[int | None]) -> list[Tree]:
-        """Refuse a list of records that cannot be written, before anything is.
+        """Return the value node of each old record, refusing a list that cannot be written.
 
-        Args:
-            key (str): The normalised key.
-            values (Sequence[Any]): The records the list is to hold.
-            origins (Sequence[int | None]): The old position each stands in for.
-
-        Returns:
-            list[Tree]: The value node of each old record.
-
-        Raises:
-            ValueError: If no record is left.
-            TypeError: If a value is not a record.
-            UnsupportedEntryError: If a new record has no body in the file to go in.
+        It runs before anything is changed. An empty list is refused because it would delete
+        the key, and a deletion is not an edit.
         """
         if not values:
             raise ValueError(f"A list of records keeps at least one: delete '{key}' to remove them all")
@@ -190,17 +161,8 @@ class ConfigStore:
     def _insert_records(self, key: str, values: Sequence[Any], origins: Sequence[int | None]) -> list[Tree]:
         """Write each new record, and return the entry holding every record, in order.
 
-        Args:
-            key (str): The normalised key.
-            values (Sequence[Any]): The records the list is to hold.
-            origins (Sequence[int | None]): The old position each stands in for.
-
-        Returns:
-            list[Tree]: The entry of each record, old or new.
-
-        Raises:
-            ValueError: If a new record cannot be written, as ``insert_entry`` reports.
-            TypeError: The same, for a value the format cannot express.
+        A new record that cannot be written takes the ones written before it back out, and
+        the error ``insert_entry`` raised propagates.
         """
         entries = self.refs[key].entry_nodes
         written: list[Tree] = []
@@ -221,13 +183,8 @@ class ConfigStore:
     def _insert_record(self, value: Any, neighbour: Tree, *, after: bool) -> Tree:
         """Write a record beside another of the same key, as a copy of it.
 
-        Args:
-            value (Any): The record.
-            neighbour (Tree): The entry writing the record to copy and to go beside.
-            after (bool): Whether to go after it rather than before.
-
-        Returns:
-            Tree: The entry written.
+        The copy takes the neighbour's spacing, spelling of the key and notation of each
+        parameter the two share. It goes after *neighbour* if *after*, and before it if not.
         """
         line = line_index(self.tree, neighbour)
         index = entry_insertion_index(self.tree, line) if after else line
@@ -248,16 +205,9 @@ class ConfigStore:
         The layout comes from the entries above the new one, or -- when there are none, as
         in a block created this session -- from the style handed down when it was created.
 
-        Args:
-            raw_keys (Sequence[str]): The key path as the caller wrote it, for the text.
-            value (Any): The value to store under the innermost key. A ``dict`` creates an
-                empty block.
-            category (str | None): The category of entry to write, where *value* does not
-                say: ``key_value`` for a record, which is a ``dict``.
-
-        Returns:
-            EntryRef: The new entry, read on its own: for a chain, the reference to its
-                outermost key, whose block holds the rest.
+        *value* is stored under the innermost key; a ``dict`` creates an empty block, or a
+        record if *category* is ``key_value``. The reference returned is to the new entry,
+        read on its own: for a chain, to its outermost key, whose block holds the rest.
 
         Raises:
             ValueError: If a key is unusable, or *value* is a list too short to write.
@@ -285,13 +235,8 @@ class ConfigStore:
     def _insertion_point(self, keys: Sequence[str]) -> tuple[int, list[str]]:
         """Return where an entry for *keys* goes, and how the keys it shares are spelled.
 
-        Args:
-            keys (Sequence[str]): The normalised key path.
-
-        Returns:
-            tuple[int, list[str]]: The index among the children of the container, and the
-                leading keys the new entry shares with the line it follows, as that line
-                spells them.
+        That is an index among the children of the container, and the leading keys shared
+        with the line the entry follows, as that line spells them.
         """
         if len(keys) == 1:
             return entry_insertion_index(self.tree), []
@@ -316,12 +261,8 @@ class ConfigStore:
         own style so that a block nested in a new block inherits it too rather than dropping
         back to the template's own indentation.
 
-        Args:
-            entry (Tree | None): The entry just written, whose block is new; ``None`` to
-                search every block of the container, from the last.
-
-        Returns:
-            EntryStyle: The style to hand to the new block's store.
+        *entry* is the entry just written, whose block is new; ``None`` searches every block
+        of the container, from the last.
         """
         upto = None if entry is None else line_index(self.tree, entry)
         sibling = probe_sibling_block_style(self.tree, self.ctx.reconstructor, upto)
@@ -333,9 +274,6 @@ class ConfigStore:
         There is more than one when the file assigned the key twice. Only the last
         assignment reached the configuration, so removing only that one would leave the
         earlier entries in the file and the key would come back the next time it was read.
-
-        Args:
-            key (str): The normalised key.
         """
         for entry_node in self.refs[key].entry_nodes:
             remove_entry_node(entry_node, self.ctx.info)
@@ -349,32 +287,26 @@ class ConfigStore:
         the one the deletion was made in may therefore have lost an entry, or hold
         references to nodes that are no longer in the tree.
 
-        Args:
-            ref (EntryRef | None): For the store of a nested configuration, the
-                ``key_block`` reference for its block, as just read from the container
-                above. A block merged from several in the file is a node the reader builds
-                rather than one in the parse tree, so reading the container above builds a
-                new one, which the store has to follow or it goes on reading the old one.
-
-        Returns:
-            dict[str, EntryRef]: The fresh references, which replace the ones held.
+        The store of a nested configuration is given *ref*, the ``key_block`` reference for
+        its block as just read from the container above. The fresh references replace
+        ``refs`` and are returned.
         """
         if ref is not None:
+            # A block merged from several in the file is a node the reader builds, not one
+            # in the parse tree, so reading the container above builds a new one: follow it,
+            # or this store goes on reading the old one.
             assert ref.block_node is not None
             self.tree, self.addable = ref.block_node, ref.addable
         self.refs = read_entries(self.tree, self.ctx)
         return self.refs
 
     def render(self) -> str:
-        """Write the tree back out as text.
+        """Write the tree back out as text, less the trailing newline ``parse`` added.
 
         A container with no entries left is still written out, because the tree may hold
         comments and blank lines that are genuinely part of the file. Only a grammar that
         cannot derive a container without entries falls back to the empty string, since for
         such a format there is no text left to write.
-
-        Returns:
-            str: The reconstructed text, with the trailing newline ``parse`` added removed.
         """
         if self.refs:
             return self._reconstruct()

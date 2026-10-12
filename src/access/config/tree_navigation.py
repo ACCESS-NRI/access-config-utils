@@ -65,11 +65,7 @@ class AddParent(Visitor):
 def entry_nodes(node: Tree) -> list[Tree]:
     """Return the entry rule nodes at or below *node*, not entering a nested block.
 
-    Args:
-        node (Tree): Any rule node.
-
-    Returns:
-        list[Tree]: The entry nodes found, in the order written.
+    They come in the order written.
     """
     if node.data in ENTRY_CATEGORIES:
         return [node]
@@ -83,11 +79,7 @@ def entry_nodes(node: Tree) -> list[Tree]:
 def entries_of(container: Tree) -> list[Tree]:
     """Return the entry rule nodes held directly by *container*, in the order written.
 
-    Args:
-        container (Tree): A container rule node: the parse tree root, or a ``block`` node.
-
-    Returns:
-        list[Tree]: The entry nodes, not descending into a nested block.
+    A container is the parse tree root or a ``block`` node; a nested block is not entered.
     """
     return [entry for child in container.children if isinstance(child, Tree) for entry in entry_nodes(child)]
 
@@ -98,14 +90,8 @@ def entry_chain(entry: Tree) -> list[Tree]:
     A block may be written one component per line, its key repeated on each: the Fortran
     ``a%b%c = 1`` is an entry for ``a`` holding one for ``b`` holding one for ``c``. Each
     level holds exactly one entry outside any ``block``, and that is what the chain follows.
-    It ends at an entry holding none -- or several, which is no chain at all.
-
-    Args:
-        entry (Tree): An entry rule node.
-
-    Returns:
-        list[Tree]: The entries, *entry* first and the innermost last; just *entry* for an
-            entry that is not a chain.
+    It ends at an entry holding none -- or several, which is no chain at all -- so an entry
+    that is not part of a chain comes back alone.
     """
     chain = [entry]
     while True:
@@ -121,14 +107,7 @@ def entry_chain(entry: Tree) -> list[Tree]:
 
 
 def contains_entry(node: Tree | Token) -> bool:
-    """Report whether a container child holds a configuration entry.
-
-    Args:
-        node (Tree | Token): A child of a container rule node.
-
-    Returns:
-        bool: True if an entry rule node is at or below *node*.
-    """
+    """Report whether a container child has an entry rule node at or below it."""
     return isinstance(node, Tree) and bool(entry_nodes(node))
 
 
@@ -146,12 +125,6 @@ def is_comment_line(node: Tree | Token) -> bool:
     whether a comment node hangs below it. A child that holds an entry is never a comment
     line, however many comments it carries: those belong to the entry's own line and travel
     with it.
-
-    Args:
-        node (Tree | Token): A child of a container rule node.
-
-    Returns:
-        bool: True if *node* is a line holding only a comment.
     """
     return isinstance(node, Tree) and not contains_entry(node) and _holds_comment(node)
 
@@ -175,16 +148,8 @@ def entry_insertion_index(container: Tree, after: int | None = None) -> int:
     on from the trailing comment of the line above -- a format may document a key that way,
     beginning on the key's own line and continuing below it -- or heads what
     follows. Either way the new entry belongs after the whole run, and stopping at a blank
-    line is what puts it *between* two comment blocks rather than inside the second one.
-
-    Args:
-        container (Tree): A container rule node: the parse tree root, or a ``"block"`` node.
-        after (int | None): The index of the child to follow, or ``None`` for the last one
-            holding an entry.
-
-    Returns:
-        int: The insertion index; ``0`` when the container holds neither an entry nor a
-            leading comment.
+    line is what puts it *between* two comment blocks rather than inside the second one. A
+    container holding no entry gives its start, after any leading comment.
     """
     if after is None:
         index = 0
@@ -202,13 +167,6 @@ def line_index(container: Tree, entry: Tree) -> int:
     """Return the index of the child of *container* that *entry* is written in.
 
     Children are matched by identity, as in ``locate_entry``.
-
-    Args:
-        container (Tree): A container rule node.
-        entry (Tree): An entry rule node written in one of its children.
-
-    Returns:
-        int: The index in ``container.children``.
     """
     return next(
         index
@@ -223,12 +181,6 @@ def key_token(entry: Tree) -> Token:
     That is the first child of the first ``key`` rule node among the entry's children. An
     entry may hold more than one -- MOM6 writes a block's key again to close it -- and the
     first is the one that names it.
-
-    Args:
-        entry (Tree): An entry rule node.
-
-    Returns:
-        Token: The key token.
 
     Raises:
         ValueError: If no ``key`` rule node is among the children.
@@ -252,16 +204,9 @@ def locate_entry(entry: Tree, containers: Collection[str]) -> tuple[Tree, Tree, 
     rule as the start symbol.
 
     Children are matched by identity: a ``Tree`` compares by its contents, so two lines
-    written the same way would otherwise be mistaken for each other.
-
-    Args:
-        entry (Tree): An entry rule node in the parse tree.
-        containers (Collection[str]): Names of the rules a line can be parsed in, the
-            parser's start symbols.
-
-    Returns:
-        tuple[Tree, Tree, tuple[int, ...]]: The container, the line, and the child indices
-            leading from the line down to the entry -- empty when the line is the entry.
+    written the same way would otherwise be mistaken for each other. The way down is the
+    child indices from the line to the entry, empty when the line is the entry; *containers*
+    names the rules a line can be parsed in, the parser's start symbols.
     """
     path: list[int] = []
     node = entry
@@ -274,13 +219,6 @@ def locate_entry(entry: Tree, containers: Collection[str]) -> tuple[Tree, Tree, 
 
 def node_at(root: Tree, path: Sequence[int]) -> Tree:
     """Return the rule node reached from *root* by the child indices of *path*.
-
-    Args:
-        root (Tree): The node to start from.
-        path (Sequence[int]): Child indices, outermost first.
-
-    Returns:
-        Tree: The node reached.
 
     Raises:
         IndexError: If *path* leads to a child that does not exist, or is not a rule node.
@@ -302,30 +240,17 @@ def node_at(root: Tree, path: Sequence[int]) -> Tree:
 
 
 def is_value_node(node: Tree | Token) -> TypeGuard[Tree]:
-    """Report whether a node holds one or more values of an entry.
+    """Report whether a child of an entry is a value node or a repeat of one.
 
     A ``TypeGuard`` rather than a plain ``bool``, because only a ``Tree`` can answer yes:
     callers filtering an entry's children on this are left holding value nodes, and the
     annotation says so instead of leaving them to assert it again.
-
-    Args:
-        node (Tree | Token): A child of an entry rule node.
-
-    Returns:
-        TypeGuard[Tree]: True for a value-type rule node or a repeat of one.
     """
     return isinstance(node, Tree) and (node.data in VALUE_TYPE_HANDLER_REGISTRY or node.data == REPEAT_RULE)
 
 
 def repeat_parts(node: Tree) -> tuple[int, Tree | None]:
-    """Split a repeat node into its count and the value-type node it repeats.
-
-    Args:
-        node (Tree): A repeat rule node.
-
-    Returns:
-        tuple[int, Tree | None]: The count, and the repeated node or ``None`` for ``n*``.
-    """
+    """Split a repeat node into its count and what it repeats, ``None`` for bare ``n*``."""
     count = int(str(node.children[0]).rstrip("*"))
     inner = node.children[1] if len(node.children) > 1 else None
     assert inner is None or isinstance(inner, Tree)
@@ -337,12 +262,6 @@ def node_values(node: Tree) -> list[Any]:
 
     One for an ordinary value-type node, and *n* for ``n*v`` -- all equal, and all ``None``
     when the repeat names no value.
-
-    Args:
-        node (Tree): A value-type rule node or a repeat node.
-
-    Returns:
-        list[Any]: The values.
     """
     if node.data == REPEAT_RULE:
         count, inner = repeat_parts(node)
@@ -356,23 +275,17 @@ def token_value(node: Tree) -> Any:
 
 
 def index_positions(node: Tree | None, count: int) -> list[int] | None:
-    """Return the position each of *count* values takes, or ``None`` if they follow on.
+    """Return the position of each of *count* values, ``None`` without a usable qualifier.
 
-    Reads the qualifier's own text: ``(3)`` names where the values start, ``(2:5)`` a range,
-    and ``(1:7:2)`` a strided one, which leaves gaps between the values it places. An
+    *node* is the ``index`` rule node, ``None`` for an unqualified assignment, which follows
+    on. Reads the qualifier's own text: ``(3)`` names where the values start, ``(2:5)`` a
+    range, and ``(1:7:2)`` a strided one, which leaves gaps between the values it places. An
     implicit bound (``(2:)``, ``(:5)``, ``(:)``) is filled in from how many values there
     are. Positions are as written, so they may start anywhere, including at zero or below.
+    A qualifier this does not model, a multidimensional one, gives ``None`` too.
 
     A qualifier names where an entry's values *begin*, not how many it may have:
     ``v(3) = 1, 2, 3`` fills three positions from the third.
-
-    Args:
-        node (Tree | None): The index rule node, or ``None`` for an unqualified assignment.
-        count (int): How many values the entry holds.
-
-    Returns:
-        list[int] | None: The position of each value, or ``None`` when there is no qualifier
-            or it is one this does not model.
     """
     if node is None:
         return None
@@ -409,15 +322,10 @@ def place_indexed(
 ) -> None:
     """Record where an entry's values sit in the array its key names.
 
-    Args:
-        slots (dict[int, tuple[Any, Tree | None]]): Value and backing node by position,
-            added to in place. A position already taken is overwritten, as the later
-            assignment wins.
-        positions (list[int] | None): Where the values go, or ``None`` to follow on from
-            the first position the format numbers.
-        values (Sequence[Any]): The entry's values.
-        refs (Sequence[Tree | None]): The node backing each value, ``None`` where the entry
-            wrote the position without a value.
+    *slots* maps a position to its value and backing node, and is added to in place: a
+    position already taken is overwritten, as the later assignment wins. *positions* is
+    ``None`` to follow on from the first position the format numbers; *refs* holds ``None``
+    where the entry wrote the position without a value.
     """
     if positions is None:
         # An unqualified assignment to an array otherwise written with indices starts at
@@ -428,17 +336,11 @@ def place_indexed(
 
 
 def flatten_slots(slots: dict[int, tuple[Any, Tree | None]]) -> tuple[list[Any], list[Tree | None]]:
-    """Lay the recorded positions out as a list, filling any gap with a null.
+    """Lay the recorded positions out as the values in order and the node behind each.
 
     Positions are as the file wrote them, so they can start at any number and a stride or a
     sparse set of indices leaves holes. The holes become ``None``, backed by no node at all,
     which is what makes them unwritable.
-
-    Args:
-        slots (dict[int, tuple[Any, Tree | None]]): Value and backing node by position.
-
-    Returns:
-        tuple[list[Any], list[Tree | None]]: The values in order, and the node behind each.
     """
     order = range(min(slots), max(slots) + 1)
     filled = [slots.get(position, (None, None)) for position in order]

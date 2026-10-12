@@ -89,8 +89,7 @@ class TestStartSymbols:
     def test_a_grammar_with_a_block_rule_can_parse_one(self) -> None:
         """Test that an entry can be parsed in the container it will live in.
 
-        This is what makes adding a key to a block possible at all: the synthesised text is
-        handed back to Lark with ``block`` as the start symbol.
+        Synthesised text goes back to Lark with ``block`` as the start symbol.
         """
         lark = compile_grammar(WITH_BLOCK).lark
 
@@ -99,8 +98,7 @@ class TestStartSymbols:
     def test_a_grammar_without_one_has_no_block_start_symbol(self) -> None:
         """Test that ``block`` is not declared for a format that has no such rule.
 
-        Lark rejects a start symbol naming a rule that does not exist, so the probe is what
-        lets a blockless format compile at all.
+        Lark rejects a start symbol naming a missing rule, hence the probe.
         """
         lark = compile_grammar(WITHOUT_BLOCK).lark
 
@@ -246,8 +244,7 @@ def test_from_lark_groups_the_rules_and_finds_the_value_types() -> None:
 def test_compared_by_identity() -> None:
     """Test that two views over the same grammar are distinct keys.
 
-    A caller memoising something per grammar keys it on the instance, so equality has to be
-    identity or two grammars would share a cache entry.
+    Memoising per grammar keys on the instance, or two grammars would share a cache entry.
     """
     compiled = compile_grammar(INFO_GRAMMAR)
     first, second = GrammarInfo.from_lark(compiled.lark), GrammarInfo.from_lark(compiled.lark)
@@ -287,8 +284,7 @@ class TestValueRules:
     def test_the_value_types_every_rule_mentions(self, info) -> None:
         """Test that a value type counts wherever it appears in an expansion.
 
-        ``integer`` and ``float`` appear in a choice, ``integer`` also in a repetition and
-        on its own; ``key`` and ``equal`` are rules of the grammar but no value type.
+        ``integer`` counts in a choice, a repetition and alone; ``key`` is no value type.
         """
         assert info.value_rules == frozenset({"integer", "float"})
 

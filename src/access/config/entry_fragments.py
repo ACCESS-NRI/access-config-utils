@@ -70,18 +70,11 @@ EntryTemplate = tuple[Fragment, ...]
 
 
 def expand_value_slots(template: EntryTemplate, count: int) -> EntryTemplate:
-    """Grow a two-value list template so that it holds *count* values.
+    """Grow a template with exactly two value placeholders to hold *count* (>= 2) values.
 
     The fragments between the two value placeholders are the element separator, so repeating
     them along with the placeholder produces a list of any length using the grammar's own
     separator.
-
-    Args:
-        template (EntryTemplate): A template with exactly two value placeholders.
-        count (int): Number of values wanted, at least two.
-
-    Returns:
-        EntryTemplate: The grown template.
 
     Examples:
         >>> template = (Fragment("key"), Fragment("literal", " = "), Fragment("value"),
@@ -109,18 +102,9 @@ def compile_template(text: str, category: str, depth: int, indent: str | None) -
     text between them is the element separator, which longer lists repeat.
 
     The whitespace the line of the first key starts with is the indentation the template
-    declares. *indent* replaces it, so that an entry is indented like the one above it.
-
-    Args:
-        text (str): The template text.
-        category (str): The entry category it is for.
-        depth (int): How many keys the entry chains together; 1 for a plain entry.
-        indent (str | None): The indentation the file shows, or ``None`` to keep the
-            template's own.
-
-    Returns:
-        EntryTemplate | None: The compiled template, or ``None`` if it writes one key and
-            *depth* is not 1.
+    declares. *indent*, unless ``None``, replaces it, so that an entry is indented like the
+    one above it. The result is ``None`` for a template that writes one key when *depth* is
+    not 1.
 
     Raises:
         ValueError: If the markers do not match what *category* requires.

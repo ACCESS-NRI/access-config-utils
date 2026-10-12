@@ -54,8 +54,7 @@ class TestGroupDelimiters:
     def test_a_group_closes_with_a_slash_or_an_end_token(self, parser, source) -> None:
         """Test both terminators, in either case, with or without a line of their own.
 
-        ``nml_end`` is ``ws* ("/"|/&end/i) line_end``: the alternation is what admits the
-        older ``&end`` spelling, and the ``i`` flag is why its case does not matter.
+        ``&end`` is the older spelling, matched case-insensitively (``/&end/i``).
         """
         assert dict(parser.parse(source)) == {"LIST": {"TEST": "a"}}
 
@@ -71,10 +70,7 @@ class TestGroupDelimiters:
     def test_a_group_may_open_with_a_dollar(self, parser, source) -> None:
         """Test the older ``$`` delimiter, and that the one written is the one written back.
 
-        gfortran accepts ``$name`` opened and ``$end`` or ``/`` closed, in any mix with
-        ``&``. Each delimiter is a rule of its own so the reconstructor can tell them
-        apart -- an anonymous literal is filtered out of the tree, and ``$g`` would come
-        back as ``&g``.
+        Each delimiter is its own rule; an anonymous literal would come back as ``&``.
         """
         config = parser.parse(source)
 
@@ -84,8 +80,7 @@ class TestGroupDelimiters:
     def test_a_bare_dollar_does_not_close_a_group(self, parser) -> None:
         """Test that ``$name … $`` is refused, as gfortran refuses it.
 
-        Some readers take it -- f90nml's own ``dollar.nml`` is written with it -- but the
-        compiler gives iostat 5010 for it, so it is not a spelling to accept silently.
+        Some readers take it (f90nml's ``dollar.nml``), but gfortran gives iostat 5010.
         """
         with pytest.raises(UnexpectedInput):
             parser.parse("$g\n x = 1\n$\n")
@@ -131,8 +126,7 @@ class TestAssignmentForms:
     def test_two_or_more_values_are_a_list(self, parser, text) -> None:
         """Test ``key_list``, whose second value may follow a separator or a ``line_break``.
 
-        The rule requires two: one value is a ``key_value``, which is what makes a list and
-        a scalar different kinds of entry rather than the same one of different lengths.
+        One value is a ``key_value``: a scalar and a list are different kinds of entry.
         """
         source = f"&L\nA = {text}\n/\n"
         config = parser.parse(source)
@@ -149,10 +143,9 @@ class TestAssignmentForms:
         assert str(config) == source
 
     def test_a_value_may_start_on_the_line_after_its_equals(self, parser) -> None:
-        """Test ``wrapped_value`` and ``wrapped_list``.
+        """Test ``wrapped_value`` and ``wrapped_list``, which real files use for long lists.
 
-        Real files write their longer lists that way. A key with nothing after it at all is
-        still a valueless one, so this does not swallow the assignment that follows.
+        A key with nothing after it at all stays valueless: it swallows no later line.
         """
         source = "&L\n  files =\n      'a',\n      'b',\n  empty =\n  z = 1\n/\n"
         config = parser.parse(source)
@@ -175,9 +168,7 @@ class TestAssignmentForms:
     def test_a_blank_may_part_two_values(self, parser, text, expected) -> None:
         """Test that whitespace alone separates values, as Fortran says it does.
 
-        Verified against gfortran: ``v = 1 2 3 4`` reads as four elements. WW3's inputs
-        are written this way throughout -- ``MODEL(4)%FORCING = 'ocn' 'ocn' 'atm'`` -- and
-        it was the single biggest reason a namelist here failed to parse.
+        WW3's inputs are written this way throughout (``v = 1 2 3 4`` is four elements).
         """
         source = f"&L\nV = {text}\n/\n"
         config = parser.parse(source)
@@ -197,10 +188,7 @@ class TestAssignmentForms:
     def test_a_list_may_skip_a_position(self, parser, text, expected) -> None:
         """Test that nothing between two separators leaves that element unset.
 
-        gfortran reads ``v = 1, , 3, 4`` as ``[1, <unchanged>, 3, 4]``, so the skipped
-        position holds whatever the variable had. Nothing in the file backs it, which is the
-        same shape as a position no indexed entry wrote: it reads as a null and refuses to
-        be written through.
+        gfortran keeps the variable's old value there; here it reads as null, unwritable.
         """
         source = f"&L\nV = {text}\n/\n"
         config = parser.parse(source)
@@ -220,8 +208,7 @@ class TestAssignmentForms:
     def test_two_assignments_on_a_line_need_no_comma(self, parser) -> None:
         """Test that a blank between values does not swallow the key that follows.
 
-        ``BAREWORD``'s ``(?![ \\t]*=)`` lookahead is what keeps ``b`` from being read as a
-        second value of ``a`` now that a blank alone can part two values.
+        A lookahead on the bare word keeps ``b`` from being read as a value of ``a``.
         """
         source = "&L\nA = 1 B = 2\n/\n"
         config = parser.parse(source)
@@ -254,8 +241,7 @@ class TestSeveralPerLine:
     def test_where_one_assignment_ends_and_the_next_begins(self, parser, body, expected) -> None:
         """Test that a comma continues a list until a key and an "=" say otherwise.
 
-        The separator between two assignments and the one between two values of a list is
-        the same character, so which it is depends entirely on what follows it.
+        The separator between assignments and between list values is the same character.
         """
         source = f"&LIST\n{body}\n/\n"
         config = parser.parse(source)
@@ -304,11 +290,7 @@ class TestDerivedTypes:
     def test_the_components_of_one_type_merge_wherever_their_lines_are(self, parser) -> None:
         """Test that components merge into one key rather than the last one winning.
 
-        A derived type spells one component per line, and the lines need not be adjacent.
-        Each is a separate entry in the tree under the same key, so without merging only the
-        last would survive -- losing the others with no error. This is why ``dtype_body`` is
-        held apart from the ``block`` rule of a group, whose repetitions are read as
-        separate records instead.
+        Each line is its own entry under one key; without merging only the last survives.
         """
         text = "&L\n  filename%met = 'x'\n  z = 1\n  filename%out = 'y'\n/\n"
         config = parser.parse(text)
@@ -319,9 +301,7 @@ class TestDerivedTypes:
     def test_a_body_holds_exactly_one_assignment(self, parser) -> None:
         """Test that a derived type does not swallow the lines that follow it.
 
-        ``dtype_body`` holds one assignment rather than reusing the namelist's own ``block``
-        rule, which would be greedy: it takes the following lines and mis-nests them under
-        the component, and costs an order of magnitude in parse time.
+        A greedy ``block`` would mis-nest the next lines and cost an order of magnitude.
         """
         text = "&L\n  a%b = 1\n  c = 2\n  d = 3\n/\n"
         config = parser.parse(text)
@@ -332,9 +312,7 @@ class TestDerivedTypes:
     def test_a_key_used_as_both_value_and_block_is_refused(self, parser) -> None:
         """Test that a key assigned a value and also used as a block raises.
 
-        Merging the two would build a block around the value node and drop the value with no
-        error, and deleting the key afterwards left the configuration disagreeing with the
-        file.
+        Merging would build a block around the value node and drop the value with no error.
         """
         with pytest.raises(ValueError):
             parser.parse("&L\n  a = 1\n  a%b = 2\n/\n")
@@ -363,10 +341,7 @@ class TestArrayQualifiers:
     def test_indexed_assignments_make_up_one_array(self, parser, lines, expected) -> None:
         """Test that the entries are gathered rather than overwriting each other.
 
-        An index writes part of an array, wherever the lines are and in whatever order. A
-        position no entry writes -- skipped by a stride, or never named -- reads as null.
-        An unqualified assignment joins the same array, from the first position Fortran
-        numbers.
+        A position no entry writes reads as null; an unqualified entry starts at one.
         """
         source = "&L\n" + "".join(f"{line}\n" for line in lines) + "/\n"
         config = parser.parse(source)
@@ -385,8 +360,7 @@ class TestArrayQualifiers:
     def test_a_single_position_says_where_the_values_start(self, parser, line, expected) -> None:
         """Test that ``v(3) = 1, 2, 3`` fills three positions from the third.
 
-        A qualifier says where an entry's values begin, not how many it may have. Reading it
-        as one position and three values raised before the configuration was even built.
+        A qualifier says where the values begin, not how many: reading it as one raised.
         """
         source = f"&L\n  {line}\n/\n"
         config = parser.parse(source)
@@ -409,9 +383,7 @@ class TestArrayQualifiers:
     def test_an_unqualified_reassignment_overlays_what_is_there(self, parser, lines, expected) -> None:
         """Test that a second assignment writes from position one and leaves the rest.
 
-        Fortran does not reset the variable: ``x = 1, 2`` then ``x = 3`` is ``[3, 2]``.
-        Taking the later entry whole reported the scalar ``3`` and dropped the second
-        element with no error -- the overlay the qualified ``x(1) = 3`` already got right.
+        ``x = 1, 2`` then ``x = 3`` is ``[3, 2]``; the scalar ``3`` dropped an element.
         """
         source = "&L\n" + "".join(f"  {line}\n" for line in lines) + "/\n"
         config = parser.parse(source)
@@ -437,9 +409,7 @@ class TestArrayQualifiers:
     def test_a_shape_this_does_not_model_stays_in_the_key(self, parser, lines, keys) -> None:
         """Test that a multidimensional index and an indexed derived type keep their text.
 
-        Both address a shape this flat model cannot build. Leaving the qualifier in the key
-        is what stops two of them reading as one key, which would drop all but the last
-        with no error.
+        Else two of them would read as one key, dropping all but the last with no error.
         """
         source = "&L\n" + "".join(f"{line}\n" for line in lines) + "/\n"
         config = parser.parse(source)
@@ -488,8 +458,7 @@ class TestRepeatCounts:
     def test_a_repeat_expands_and_a_bare_count_is_null(self, parser, text, expected) -> None:
         """Test that "n*v" reads as v repeated n times, and a bare "n*" as n nulls.
 
-        A repeat is written where one value goes but means several, so even "x = 3*1" is a
-        list. CABLE's parameter files are written almost entirely this way.
+        It is written where one value goes, so even "x = 3*1" is a list.
         """
         source = f"&L\nX = {text}\n/\n"
         config = parser.parse(source)
@@ -519,9 +488,7 @@ class TestValueTypes:
     def test_each_value_type_reads_and_writes_back_unchanged(self, parser, text, expected) -> None:
         """Test integer, float, double, complex, double_complex, string, logical, bare word.
 
-        ``double`` and ``double_complex`` are separate rules from ``float`` and ``complex``
-        because Fortran's ``d`` exponent is not something Python spells, so the notation has
-        to survive as text even though the value is an ordinary float.
+        ``double`` keeps Fortran's ``d`` exponent, which Python does not spell, as text.
         """
         source = f"&L\nA = {text}\n/\n"
         config = parser.parse(source)
@@ -560,9 +527,7 @@ class TestValueTypes:
     def test_the_exponent_letter_may_be_left_out(self, parser, text, expected) -> None:
         """Test ``BARE_EXPONENT``: a signed exponent needs no ``e`` before it.
 
-        ``1+0`` is 1.0 and ``5-1`` is 0.5, confirmed against gfortran. Python's ``float``
-        does not accept the spelling, so the handler puts the letter back before converting
-        -- while the token keeps the text the file had, so the round trip is unaffected.
+        ``1+0`` is 1.0 (gfortran); the handler adds the ``e`` to convert, the text is kept.
         """
         source = f"&L\n  x = {text}\n/\n"
         config = parser.parse(source)
@@ -636,14 +601,8 @@ class TestLogicals:
     def test_a_logical_does_not_claim_the_start_of_a_key(self, parser, name) -> None:
         """Test the ``(?![A-Za-z0-9_])`` lookahead on both logical terminals.
 
-        A trailing comma leaves the parser expecting another value where the next line
-        actually starts a new assignment. Without the lookahead the key ``f_icedir`` is a
-        second value ``.false.`` followed by the leftover key ``_icedir`` -- so the file
-        parses, with a value invented and a key renamed, and no error anywhere.
-
-        The word has to be *the key of the assignment that follows*: written as a value it
-        is the last thing on its line, nothing can follow it, and the parse is unambiguous
-        with or without the lookahead.
+        Without it, after a trailing comma, ``f_icedir`` reads as the value ``.false.`` and
+        a key ``_icedir``: the file parses with a value invented and no error.
         """
         source = f"&L\nA = 'x',\n{name} = 1\n/\n"
         config = parser.parse(source)
@@ -670,8 +629,7 @@ class TestBareWords:
     def test_a_word_is_a_string_unless_another_type_claims_it(self, parser, text, expected) -> None:
         """Test the ``-1`` priority: the logical spellings and numbers still win.
 
-        Real files write bare words: CICE has "runtype=continue" and the CESM data models
-        have "import_data_fields = none".
+        CICE has "runtype=continue"; the CESM data models "import_data_fields = none".
         """
         source = f"&L\n  X = {text}\n/\n"
         config = parser.parse(source)
@@ -680,11 +638,9 @@ class TestBareWords:
         assert str(config) == source
 
     def test_a_word_cannot_be_read_as_the_key_that_follows_it(self, parser) -> None:
-        """Test the ``(?![ \\t]*=)`` lookahead.
+        """Test the lookahead that stops a bare word being the key of the next assignment.
 
-        A continuation comma leaves the parser expecting another value where the next line
-        starts with a key, so without it "a = 'x',\\n b = 1" reads "b" as a second value of
-        "a".
+        After a continuation comma, "b" in "b = 1" would otherwise read as a value of "a".
         """
         source = "&L\n  a = 'x',\n  b = 1\n/\n"
         config = parser.parse(source)
@@ -709,8 +665,7 @@ class TestCommentsAndBlankLines:
     def test_a_comment_or_a_blank_line_survives_untouched(self, parser, source) -> None:
         """Test every position a comment may take, and the blank line that carries none.
 
-        A blank line and a comment-only line are the same rule, told apart by whether a
-        comment node hangs below it.
+        A blank line and a comment-only line are one rule, told apart by a comment node.
         """
         assert str(parser.parse(source)) == source
 
@@ -734,11 +689,9 @@ class TestFreeTextBetweenGroups:
         assert str(config) == source
 
     def test_a_line_starting_with_an_ampersand_is_never_free_text(self, parser) -> None:
-        """Test the ``(?![ \\t]*&)`` lookahead in ``ANYTHING``.
+        """Test that a line opening a group is never free text.
 
-        Without it a group whose body did not fit the grammar was quietly read as more free
-        text, and the file round-tripped byte for byte with the whole group missing from the
-        configuration -- no error, no sign anything was wrong.
+        Else a group the grammar cannot derive was read as text and silently dropped.
         """
         with pytest.raises(UnexpectedInput):
             parser.parse("&A\n  x = 1\n&B\n  y = 2\n/\n")
@@ -746,8 +699,7 @@ class TestFreeTextBetweenGroups:
     def test_a_dollar_group_is_not_free_text_either(self, parser) -> None:
         """Test the second lookahead, which closes the same hole for the older delimiter.
 
-        This file used to parse, return only ``OTHER``, and round-trip byte for byte with
-        ``MYGRP`` missing entirely -- the exact failure the ``&`` lookahead was added for.
+        A file like this used to lose ``MYGRP`` and still round-trip byte for byte.
         """
         source = "$mygrp\n  x = 1\n$end\n&other\n  y = 2\n/\n"
         config = parser.parse(source)
@@ -759,8 +711,7 @@ class TestFreeTextBetweenGroups:
     def test_a_bare_dollar_still_starts_free_text(self, parser, comment) -> None:
         """Test that the lookahead needs a name after the ``$`` before it stops being text.
 
-        WW3 writes its comments this way, 884 lines of them in the namelists on hand, so
-        excluding every ``$`` line would refuse files that have nothing wrong with them.
+        WW3 writes comments this way (884 lines in the namelists on hand).
         """
         source = f"{comment}\n&g\n  x = 1\n/\n"
         config = parser.parse(source)
@@ -789,10 +740,7 @@ class TestRejected:
     def test_malformed_input_raises(self, parser, source) -> None:
         """Test that each of these raises rather than parsing.
 
-        Which ``UnexpectedInput`` Lark raises depends on how far it got, and that is not a
-        promise the parser makes. Notable cases: a group has to be closed rather than ended
-        by the next "&", and a list may be parted by blanks on one line but not carried onto
-        the next without a separator -- ``a=1 \\n2`` would swallow the line below it.
+        Which ``UnexpectedInput`` Lark raises is not a promise the parser makes.
         """
         with pytest.raises(UnexpectedInput):
             parser.parse(source)
@@ -819,10 +767,7 @@ class TestRoundTripFidelity:
     def test_the_shape_of_the_file_survives(self, parser, name, source) -> None:
         """Test the line and whitespace forms the terminals admit.
 
-        ``NEWLINE`` is ``CR? LF``, so a file written on Windows has to come back with its
-        carriage returns. ``parse`` appends a newline to simplify the grammar, so a file
-        without one is the case where that has to be undone on the way out. ``ws`` is
-        ``WS_INLINE``, which is tabs as well as spaces.
+        CRLF files keep their carriage returns, and a missing final newline stays missing.
         """
         assert str(parser.parse(source)) == source
 
@@ -852,10 +797,7 @@ class TestAssignmentSpacing:
     def test_whitespace_stays_on_its_own_side(self, parser, source) -> None:
         """Test that the position of a single whitespace run survives.
 
-        The "=" is an anonymous literal, so Lark filters it out of the parse tree. With a
-        bare "ws*" on each side, the tree records that a run exists but not which side of
-        the "=" it fell on, and the reconstructor guesses -- writing "A= 1" as "A =1". The
-        "eq" rule binds the leading whitespace to the "=" so the position survives.
+        The ``eq`` rule binds the leading whitespace to "=", else "A= 1" comes back "A =1".
         """
         assert str(parser.parse(source)) == source
 
@@ -896,8 +838,7 @@ class TestEditingAValue:
     def test_a_string_holding_both_quote_characters(self, parser) -> None:
         """Test that doubling the quote puts every string within reach.
 
-        A format that wraps a value verbatim has to refuse this, since neither quote can
-        delimit it.
+        A format that wraps a value verbatim has to refuse such a string.
         """
         config = parser.parse("&L\nA = 'x'\n/\n")
 
@@ -910,9 +851,7 @@ class TestEditingAValue:
     def test_a_bare_word_refuses_a_value_that_would_change_type(self, parser, value) -> None:
         """Test that ``true`` written into an unquoted value is a logical, not a string.
 
-        An unquoted value has nothing marking where it starts and ends. A value the grammar
-        cannot write unquoted at all, such as a non-ASCII word, is refused for the same
-        reason.
+        Nothing delimits an unquoted value, so what would change its type is refused.
         """
         config = parser.parse("&L\n  w = continue\n/\n")
 
@@ -935,8 +874,7 @@ class TestEditingAValue:
     ) -> None:
         """Test that a refused list is refused as a whole.
 
-        The elements ahead of the one that cannot be written must not have been written by
-        the time that is found out, or the file would hold a list the dict does not.
+        No element ahead of the refused one may be written, or file and dict disagree.
         """
         config = parser.parse(f"&L\n  {text}\n/\n")
         before = list(config["L"]["X"])
@@ -967,8 +905,7 @@ class TestEditingAValue:
     def test_one_element_of_a_repeat_is_not_written_on_its_own(self, parser) -> None:
         """Test that a run is not split: "6*9.0" is six values written once.
 
-        The caller is told to delete the key and assign it again, which is what a caller
-        that cannot do without the change does.
+        The caller is told to delete the key and assign it again.
         """
         config = parser.parse("&L\n  X = 6*9.0, 4.0   ! keep me\n/\n")
 
@@ -1044,8 +981,7 @@ class TestEditingAValue:
     def test_a_slice_may_be_assigned_from_a_one_shot_iterable(self, parser) -> None:
         """Test that the values are not taken twice.
 
-        They were: once to write the file and once to store, and the second got nothing,
-        leaving the list shorter than the nodes behind it.
+        A second read of the iterable got nothing, leaving the list shorter than its nodes.
         """
         config = parser.parse("&L\n  x = 1.0, 2.0, 3.0, 4.0\n/\n")
         values = config["L"]["X"]
@@ -1091,9 +1027,7 @@ class TestEditingAValue:
     def test_entries_whose_positions_interleave(self, parser) -> None:
         """Test writing an array whose entries alternate with each other.
 
-        ``v(1:3:2)`` holds positions 1 and 3 and ``v(2)`` position 2, so the elements of
-        one entry are not next to each other in the list. A repeat is written as a whole, so
-        its two positions have to be given the same value.
+        ``v(1:3:2)`` and ``v(2)`` interleave, and a repeat is written as a whole.
         """
         config = parser.parse("&L\n  v(1:3:2) = 2*1\n  v(2) = 7\n/\n")
         assert config["L"]["V"] == [1, 7, 1]
@@ -1107,10 +1041,9 @@ class TestEditingAValue:
             config["L"]["V"] = [9, 8, 7]
 
     def test_entries_whose_positions_overlap_are_written_through_what_survives(self, parser) -> None:
-        """Test an entry partly overridden by a later one, of which the list holds the rest.
+        """Test an entry partly overridden by a later one, whose rest the list holds.
 
-        Only the nodes the list reads from are written, so the overridden position is left
-        as the file has it.
+        Only the nodes the list reads from are written; the overridden position stays.
         """
         config = parser.parse("&L\n  a = 1, 3*7\n  a(1) = 0\n/\n")
         assert config["L"]["A"] == [0, 7, 7, 7]
@@ -1122,8 +1055,7 @@ class TestEditingAValue:
     def test_a_merged_derived_type_is_editable_in_place(self, parser) -> None:
         """Test that writing through a merged block reaches the line that holds the value.
 
-        The merged block is a node the parse tree does not contain, but its children are the
-        real ones, so only that line is rewritten -- including the comment on a sibling.
+        The merged node is not in the tree, but its children are the real ones.
         """
         text = "&L\n  filename%met = 'x.nc'   ! met file\n  z = 1\n  filename%out = 'y.nc'\n/\n"
         config = parser.parse(text)
@@ -1156,8 +1088,7 @@ class TestAddingAnEntry:
     def test_the_spacing_of_a_neighbour_is_copied_to_the_right_side(self, parser, donor, added) -> None:
         """Test that a new entry puts the whitespace where its neighbour put it.
 
-        A single run is ambiguous -- ``x =1`` and ``x= 1`` both have one -- so the style has
-        to record which side of the assignment it fell on.
+        A single run is ambiguous: ``x =1`` and ``x= 1`` each have one.
         """
         config = parser.parse(f"&L\n{donor}\n/\n")
 
@@ -1190,8 +1121,7 @@ class TestAddingAnEntry:
     def test_a_new_entry_is_written_like_its_neighbour(self, parser, source, key, value, expected) -> None:
         """Test that the nearest entry of the same kind is copied, notation and all.
 
-        The quote character, the spelling of a logical and the line ending all come from
-        the entry above, as does a group written on one line staying on one line.
+        Quotes, logical spelling, line ending, and a one-line group staying on one line.
         """
         config = parser.parse(source)
 
@@ -1212,8 +1142,7 @@ class TestAddingAnEntry:
     def test_a_new_key_lands_after_a_comment_run(self, parser) -> None:
         """Test that a comment continuing below an assignment is not written into.
 
-        The comment on the assignment's own line is held by the ``nml_line`` the index is
-        measured past, so the position one past it is the second line of that comment.
+        One past the entry is the second line of a comment begun on the entry's own line.
         """
         config = parser.parse("&L\n  X = 1  ! what X is\n  ! ...continued\n/\n")
 
@@ -1246,9 +1175,7 @@ class TestAddingAnEntry:
     def test_a_new_group_indents_its_contents_like_the_groups_already_there(self, parser, source, expected) -> None:
         """Test that a group created by an assignment copies its neighbour's indentation.
 
-        It is created empty, so it holds no entry of its own to copy a style from and its
-        contents would otherwise be written flush left. Nothing is invented either: a file
-        that indents nothing gets an unindented group.
+        Created empty, it has no entry to copy; an unindented file gets an unindented group.
         """
         config = parser.parse(source)
 
@@ -1270,9 +1197,7 @@ class TestAddingAnEntry:
     def test_a_new_group_goes_above_a_trailing_comment(self, parser) -> None:
         """Test the known limitation of free text between groups.
 
-        Between groups a comment is not a node of its own: the grammar lumps every line
-        there into one ``random_text`` blob, so a new group still goes above it. That is a
-        limitation of this format, not of the placement rule.
+        Between groups the grammar lumps every line into one ``random_text`` blob.
         """
         config = parser.parse("&L\n  X = 1\n/\n! a top-level comment\n")
 
@@ -1304,8 +1229,7 @@ class TestAddingAnEntry:
 class TestAddingADerivedTypeComponent:
     """A key added to a derived type, which is written one component per line.
 
-    A derived type has no body of its own to write a line in, so the line goes in the
-    group, carrying the type's name and the component's, after the last line of the type.
+    No body of its own: the line goes in the group, after the last line of the type.
     """
 
     @pytest.mark.parametrize(
@@ -1459,8 +1383,7 @@ class TestDeleting:
     def test_a_derived_type_component_then_the_type(self, parser) -> None:
         """Test that the group no longer names the line a component deletion removed.
 
-        Deleting ``a%b`` takes its whole line out of the group, and the group's own
-        reference to ``a`` has to drop it, or deleting ``a`` next tries to unlink it again.
+        Else deleting ``a`` next tries to unlink the line of ``a%b`` again.
         """
         config = parser.parse("&L\n  a%b = 1\n  a%c = 2\n  x = 3\n/\n")
 
@@ -1492,9 +1415,7 @@ class TestDeleting:
     def test_an_entry_alone_on_its_line_takes_the_line_with_it(self, parser) -> None:
         """Test that the trailing comment goes too: it described the line that has gone.
 
-        A namelist line is an assignment followed by an optional comment, so the line rule
-        cannot derive what is left once the assignment goes. A line holding two assignments
-        keeps the one that remains.
+        A namelist line is an assignment plus an optional comment: it cannot derive less.
         """
         config = parser.parse("&L\n  X = 1  ! note\n  Y = 2\n/\n")
         del config["L"]["X"]
@@ -1509,8 +1430,7 @@ class TestDeleting:
     def test_every_entry_that_wrote_a_key_is_removed(self, parser) -> None:
         """Test that a key written twice does not reappear the next time the file is read.
 
-        Only the last assignment survives in the configuration, so removing only that one
-        left the key behind in the file.
+        Only the last assignment is in the dict; removing only it left the key in the file.
         """
         config = parser.parse("&L\n  x = 1\n  x = 2\n/\n")
 
@@ -1531,8 +1451,7 @@ class TestDeleting:
     def test_a_derived_type_goes_when_it_loses_its_last_component(self, parser) -> None:
         """Test that a key with nothing left to write goes from the configuration too.
 
-        A derived type is written a component per line, so removing the last one leaves
-        nothing. An empty namelist group is still a namelist group, so that one stays.
+        An empty namelist group is still a group, so that one stays.
         """
         config = parser.parse("&L\n  grid%nx = 96\n  grid%ny = 72\n  z = 1\n/\n")
 
@@ -1558,10 +1477,7 @@ class TestDeleting:
     def test_a_whole_group_can_go_and_the_text_around_it_is_rejoined(self, parser) -> None:
         """Test that removing a group leaves the comments and free text that surrounded it.
 
-        A namelist and the text around it alternate in the grammar, so removing one leaves
-        two runs of text side by side. They are rejoined, keeping the tree in a shape the
-        grammar derives. A namelist file needs at least one group, so once they are all gone
-        there is no text left to write.
+        Groups and text alternate in the grammar, so runs left side by side are rejoined.
         """
         config = parser.parse(SAMPLE)
 
@@ -1585,10 +1501,7 @@ class TestRepeatedGroups:
     def test_each_occurrence_is_its_own_block(self, parser) -> None:
         """Test that a group named twice is not merged into one.
 
-        Fortran's ``READ`` scans forward and stops at the first group of the name, so a
-        program reading the group once sees the first occurrence and one in a loop
-        sees each in turn. Neither of those is the merge, and only the occurrences produce
-        both.
+        ``READ`` stops at the first group of a name, so no single read sees a merge.
         """
         source = "&L\n V = 1\n/\n&L\n W = 2\n/\n"
         config = parser.parse(source)
@@ -1599,8 +1512,7 @@ class TestRepeatedGroups:
     def test_a_key_in_both_stays_with_its_own_group(self, parser) -> None:
         """Test that neither occurrence's value is lost when both assign the same key.
 
-        Merging reported the last value for such a key while keeping the keys only the first
-        one set, which is a combination no single ``READ`` returns.
+        A merge mixes the last value with keys only the first set: no ``READ`` returns that.
         """
         source = "&L\n V = 1\n P = 9\n/\n&L\n V = 2\n/\n"
         config = parser.parse(source)
@@ -1625,8 +1537,7 @@ class TestRepeatedGroups:
     def test_an_occurrence_accepts_a_new_key(self, parser) -> None:
         """Test that each occurrence is a real block node, so it has a body to add to.
 
-        A merged block is a node the parse tree does not contain, so nothing can be spliced
-        into it.
+        A merged block is not in the parse tree, so nothing can be spliced into it.
         """
         config = parser.parse("&L\n V = 1\n/\n&L\n W = 2\n/\n")
 
@@ -1734,15 +1645,9 @@ A = 1
 def test_a_whole_file_parses_edits_and_round_trips(parser):
     """Test that the rules above compose, over a file carrying all of them at once.
 
-    Each focused test pins one construct in isolation. This one is the anchor: comments,
-    blank lines, free text, a list continued over three lines and an empty group, all in one
-    file that is read, changed, added to and written back with one byte-exact expectation.
-
-    What it covers that no focused test can: where each new entry lands relative to the
-    trailing blank lines and the group terminator, that editing one group leaves the others
-    alone, and that a group created from nothing follows the layout of the file it joins --
-    ``LIST_C`` is empty, so it has no style to copy and its new key is written canonically,
-    and ``NEWNML`` then copies that.
+    It pins what no focused test can: where each new entry lands relative to blank lines
+    and terminators, that editing one group leaves the others alone, and that a group
+    created from nothing copies the layout of the file it joins.
     """
     config = parser.parse(SAMPLE)
     assert dict(config) == SAMPLE_VALUES
@@ -1766,8 +1671,7 @@ def test_a_whole_file_parses_edits_and_round_trips(parser):
 def test_canonical_entry_text(parser, container, category, expected) -> None:
     """Test the text this format writes for a new entry with no neighbour to copy from.
 
-    Byte-exact, and re-parsed in the container it was generated for. These rows are the
-    statement of what this grammar can express and how it spells it.
+    Byte-exact, and re-parsed in the container it was written for.
     """
     assert_canonical_entry(parser, container, category, expected)
 

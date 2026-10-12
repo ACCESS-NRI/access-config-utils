@@ -95,8 +95,7 @@ TEXT_VALUES = {"key_value": "ATM", "key_list": ["@3600", "ATM", "@"], "key_null"
 def canonical_rows(grammar: str) -> list[tuple[str, str, str]]:
     """Return ``(container, category, expected)`` for one grammar's rows of ``CANONICAL``.
 
-    Each format's test module parametrises over its own rows, so the table stays stated once
-    while the assertions live with the format they describe.
+    Each format's test module parametrises over its own rows.
     """
     return [(container, category, text) for (name, container, category), text in CANONICAL.items() if name == grammar]
 
@@ -120,18 +119,9 @@ def assert_canonical_entry(
 ) -> None:
     """Assert the entry text a parser writes for a kind of entry the file has none of.
 
-    The first candidate that parses in that container has to be the expected text, which
-    pins the template the parser declares, the choice of a value type and the rendering
-    against a real grammar. A candidate that does not parse is passed over, as the caller
-    passes it over.
-
-    Args:
-        parser: The parser, which declares the template and supplies the grammar.
-        container: Name of the container rule the entry is written in.
-        category: The entry category, of the innermost entry for a chain.
-        expected: The exact text expected.
-        values: The value to write per category, for a format that cannot hold the usual.
-        keys: The key path, one key per entry of the chain.
+    The first candidate that parses in *container* has to be *expected*, which pins the
+    template, the value type chosen and the rendering against a real grammar. *values*
+    gives the value to write per category where the usual cannot be held; *keys* the path.
     """
     compiled = compile_grammar(parser.grammar)
     candidates = iter_entry_snippets(
@@ -280,10 +270,7 @@ def key_node(name: str = "a") -> Tree:
 def entry_node(category: str, key: str = "a", *children: Tree | Token) -> Tree:
     """Return an entry rule node: a ``key`` child followed by whatever the entry holds.
 
-    Args:
-        category: One of ``ENTRY_CATEGORIES``, used as the node's rule name.
-        key: The key name.
-        *children: The rest of the entry -- value nodes, a ``block``, whitespace.
+    *category* names the rule; *children* are value nodes, a ``block``, whitespace.
     """
     return Tree(category, [key_node(key), *children])
 
@@ -304,9 +291,7 @@ def ws_node(text: str = " ") -> Tree:
 class RepetitionInfo:
     """Stands in for ``GrammarInfo``, reporting every rule a plain repetition.
 
-    That is what a namelist group's block is, so a deletion inside a fake nested
-    configuration stays there, as it does inside a real group. It has no value type, unless
-    a test gives it some.
+    As a namelist group's block is, so a deletion in a fake nested config stays put.
     """
 
     value_rules: frozenset[str] = frozenset()

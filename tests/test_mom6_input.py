@@ -62,8 +62,7 @@ class TestAssignmentForms:
     def test_two_or_more_values_are_a_list(self, parser, text, expected) -> None:
         """Test ``key_list``, whose values are parted by commas.
 
-        The rule requires two: one value is a ``key_value``, which is what makes a list and
-        a scalar different kinds of entry rather than the same one of different lengths.
+        One value is a ``key_value``: a scalar and a list are different kinds of entry.
         """
         config = parser.parse(text)
 
@@ -113,8 +112,7 @@ class TestBlocks:
     def test_a_block_does_not_nest(self, parser) -> None:
         """Test that ``block`` admits only assignments and blank lines, never a block.
 
-        MOM6 has one level of grouping, so a block inside a block is refused rather than
-        read as something else.
+        MOM6 has one level of grouping: a block inside a block is refused, not misread.
         """
         with pytest.raises(UnexpectedInput):
             parser.parse("B%\nC%\nx=1\n%C\n%B\n")
@@ -122,10 +120,7 @@ class TestBlocks:
     def test_the_closing_name_is_not_checked_against_the_opening_one(self, parser) -> None:
         """Test the leniency in ``key_block``: the closing ``key`` is unconstrained.
 
-        The rule is ``key "%" line_end block "%" key line_end`` -- two independent ``key``
-        nodes -- so ``B% … %C`` parses and the block takes the opening name. MOM6 itself
-        requires the two to match, so this is leniency rather than a decision; nothing is
-        lost, since the text round-trips and no entry goes missing.
+        ``B% … %C`` parses with the opening name: leniency, and nothing is lost.
         """
         source = "B%\nx=1\n%C\n"
         config = parser.parse(source)
@@ -156,8 +151,7 @@ class TestValueTypes:
     def test_each_value_type_reads_and_writes_back_unchanged(self, parser, text, expected) -> None:
         """Test one case per value type.
 
-        The booleans are ``True`` and ``False`` only, and a string may hold a ``*`` -- both
-        spellings a format with logicals and repeat counts would read as something else.
+        Booleans are ``True``/``False`` only, and a string may hold a ``*``.
         """
         source = f"A = {text}\n"
         config = parser.parse(source)
@@ -203,8 +197,7 @@ class TestCommentsAndBlankLines:
     def test_a_comment_or_a_blank_line_survives_untouched(self, parser, source) -> None:
         """Test every position a comment may take, and a file that is nothing but comment.
 
-        A blank line and a comment-only line are the same rule, told apart by whether a
-        comment node hangs below it, so a file holding neither entry nor text is valid.
+        A blank line and a comment-only line are one rule, told apart by a comment node.
         """
         assert str(parser.parse(source)) == source
 
@@ -230,10 +223,7 @@ class TestRejected:
     def test_malformed_input_raises(self, parser, source) -> None:
         """Test that each of these raises rather than parsing.
 
-        Notable cases: an assignment cannot be indented, a bare word is not a value, and the
-        booleans are capitalised. The last two are documented limitations rather than
-        malformed files -- the ``#override`` directive is not implemented, and the C-style
-        comments the module docstring reports in CESM's files are not part of the format.
+        Assignments cannot be indented; ``#override`` and C-style comments are unsupported.
         """
         with pytest.raises(UnexpectedInput):
             parser.parse(source)
@@ -261,9 +251,7 @@ class TestRoundTripFidelity:
     def test_the_shape_of_the_file_survives(self, parser, name, source) -> None:
         """Test the line and whitespace forms the terminals admit.
 
-        ``NEWLINE`` is ``CR? LF``, so a file written on Windows has to come back with its
-        carriage returns. ``parse`` appends a newline to simplify the grammar, so a file
-        without one is the case where that has to be undone on the way out.
+        CRLF files keep their carriage returns, and a missing final newline stays missing.
         """
         assert str(parser.parse(source)) == source
 
@@ -275,9 +263,7 @@ class TestAssignmentSpacing:
     def test_whitespace_stays_on_its_own_side(self, parser, source) -> None:
         """Test that the position of a single whitespace run survives.
 
-        The "=" is an anonymous literal, so Lark filters it out of the parse tree. With a
-        bare "ws*" on each side, the tree records that a run exists but not which side of
-        the "=" it fell on, and the reconstructor guesses -- writing "A= 1" back as "A =1".
+        Lark drops the "=" literal, so the reconstructor guessed: "A= 1" came back "A =1".
         """
         assert str(parser.parse(source)) == source
 
@@ -332,8 +318,7 @@ class TestAddingAnEntry:
     def test_a_new_key_is_never_indented(self, parser) -> None:
         """Test that the indentation of a blank line is not copied.
 
-        The file ends with a whitespace-only line, which is the trap: copying that line's
-        indentation would produce a line the grammar cannot parse.
+        The file ends with a whitespace-only line; copying its indent would not parse.
         """
         config = parser.parse("BOOL = True\n  \n")
 
@@ -355,9 +340,7 @@ class TestAddingAnEntry:
     def test_a_new_block_copies_the_spacing_of_the_block_above(self, parser) -> None:
         """Test what carries over to a block created by an assignment.
 
-        MOM6 cannot indent an assignment at all, so the indentation a new block inherits
-        is always empty. The spacing around "=" is what carries over instead, and this file
-        writes it tight.
+        MOM6 cannot indent assignments, so only the spacing around ``=`` carries over.
         """
         config = parser.parse("BLK%\nX=1\n%BLK\n")
 
@@ -369,10 +352,7 @@ class TestAddingAnEntry:
     def test_a_new_key_lands_after_a_parameter_s_documentation(self, parser) -> None:
         """Test that a new key does not land inside a comment run.
 
-        This is the format where it matters most: a MOM6 parameter file documents nearly
-        every parameter in a comment that starts on the parameter's own line and carries on
-        below it. That trailing comment belongs to the entry, so the position one past the
-        entry is the second line of its documentation.
+        MOM6 documents nearly every parameter in a comment that carries on below its line.
         """
         config = parser.parse("DT = 900.0  ! [s]\n            ! The dynamics time step.\n")
 
@@ -433,8 +413,7 @@ class TestDeleting:
     def test_every_entry_that_wrote_a_key_is_removed(self, parser) -> None:
         """Test that a key assigned twice does not reappear the next time it is read.
 
-        Only the last assignment survives in the configuration, so removing just the entry
-        it came from left the earlier ones in the file.
+        Only the last assignment is in the dict; removing only its entry left the others.
         """
         config = parser.parse("A = 1\nA = 2\nB = 3\n")
         assert dict(config) == {"A": 2, "B": 3}
@@ -506,14 +485,8 @@ X = 1
 def test_a_whole_file_parses_edits_and_round_trips(parser):
     """Test that the rules above compose, over a file carrying all of them at once.
 
-    Each focused test pins one construct in isolation. This one is the anchor: comments,
-    blank lines, a block with a comment inside it, and keys differing only in case, all in
-    one file that is read, changed, added to and written back with one byte-exact
-    expectation.
-
-    What it covers that no focused test can: where each new entry lands relative to the
-    block that precedes it and the trailing text, and that editing one entry leaves every
-    other line alone.
+    It pins what no focused test can: where each new entry lands, and that editing one
+    entry leaves every other line alone.
     """
     config = parser.parse(SAMPLE)
     assert dict(config) == SAMPLE_VALUES
@@ -537,7 +510,6 @@ def test_a_whole_file_parses_edits_and_round_trips(parser):
 def test_canonical_entry_text(parser, container, category, expected) -> None:
     """Test the text this format writes for a new entry with no neighbour to copy from.
 
-    Byte-exact, and re-parsed in the container it was generated for. These rows are the
-    statement of what this grammar can express and how it spells it.
+    Byte-exact, and re-parsed in the container it was written for.
     """
     assert_canonical_entry(parser, container, category, expected)

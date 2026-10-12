@@ -42,16 +42,10 @@ from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY, select_val
 
 
 def render(template: EntryTemplate, keys: Sequence[str], value_texts: Sequence[str]) -> str:
-    """Render a template into the text of an entry.
+    """Render a template, grown to its number of values, into the text of an entry.
 
-    Args:
-        template (EntryTemplate): The template, already grown to the right number of values.
-        keys (Sequence[str]): The key names, outermost first, written as given. One for a
-            plain entry; a chain such as ``a%b = 1`` takes one per level.
-        value_texts (Sequence[str]): Token text for each value, in order.
-
-    Returns:
-        str: The entry text.
+    *keys* are written as given, outermost first: one for a plain entry, one per level for a
+    chain such as ``a%b = 1``. *value_texts* hold the token text of each value, in order.
 
     Examples:
         >>> from access.config.entry_fragments import Fragment
@@ -94,21 +88,9 @@ def iter_entry_snippets(
     how the first entry of a kind is written when the file has none to copy.
 
     Neither is more than a preference: if one does not parse, or reads back as something
-    else, the caller simply moves on.
-
-    Args:
-        category (str): One of ``ENTRY_CATEGORIES``.
-        keys (Sequence[str]): The key names, outermost first, written as given: one for a
-            plain entry, one per level for a chain such as ``a%b = 1``.
-        value (object): The value; a sequence of values for ``key_list``, unused for
-            ``key_block`` and ``key_null``.
-        style (EntryStyle): The layout of the neighbouring entries.
-        declared (str | None): The text the parser declares for this container and
-            category, if it does.
-        admitted (frozenset[str]): The value-type rules the format has.
-
-    Yields:
-        str: Candidate entry text, to be validated by parsing.
+    else, the caller simply moves on. *keys* are written as given, outermost first, one per
+    level of a chain; *value* is a sequence for ``key_list`` and unused for ``key_block``
+    and ``key_null``; *declared* is the parser's text for this container and category.
     """
     depth = len(keys)
     templates = [style.donor(depth, category)]
@@ -128,20 +110,11 @@ def _values_for(category: str, value: object) -> list[object]:
 
 
 def _rule_choices(values: Sequence[object], admitted: frozenset[str]) -> Iterator[list[str]]:
-    """Yield ways of writing *values*, a value-type rule per value, most preferred first.
+    """Yield ways of writing *values*, a rule name per value, most preferred first.
 
-    Every admitted rule accepting all the values is offered, not just the most preferred
-    one, because the preferred rendering is not always readable back as the same type: a
-    grammar with a bare-word value type reads ``True`` as a boolean, so a string of that
-    text has to be written quoted instead. The caller validates each candidate and moves on,
-    so the order of preference is a preference and never a restriction.
-
-    Args:
-        values (Sequence[object]): The values to write.
-        admitted (frozenset[str]): The value-type rules the format has.
-
-    Yields:
-        list[str]: One rule name per value.
+    Every admitted rule accepting all the values is offered, not just the most preferred:
+    the preferred rendering may read back as another type (a bare ``True`` is a boolean, so
+    a string of that text must be quoted), and the caller validates each and moves on.
     """
     offered: list[list[str]] = []
     for rule_name, handler in VALUE_TYPE_HANDLER_REGISTRY.items():
@@ -178,18 +151,9 @@ def _render_candidates(
 def _value_text(rule: str, value: object, slot: Fragment) -> str:
     """Return the token text writing *value* with *rule* into *slot*.
 
-    A slot copied from an existing entry knows how that entry wrote its value, and a value
-    written with the same rule takes on its notation: the quote character, the spelling of a
-    logical, the exponent letter. Where that notation cannot hold the value, it is written
-    the way a brand-new value is.
-
-    Args:
-        rule (str): The value-type rule chosen.
-        value (object): The value.
-        slot (Fragment): The value placeholder.
-
-    Returns:
-        str: The token text.
+    A slot copied from an entry takes on that entry's notation (quote character, spelling of
+    a logical, exponent letter) for a value written with the same rule, and where it cannot
+    hold the value the text is that of a brand-new value.
     """
     handler = VALUE_TYPE_HANDLER_REGISTRY[rule]
     if slot.notation is not None and slot.notation[0] == rule:
