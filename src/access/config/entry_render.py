@@ -82,7 +82,6 @@ def iter_entry_snippets(
     style: EntryStyle,
     declared: str | None,
     admitted: frozenset[str],
-    priority: Sequence[str],
 ) -> Iterator[str]:
     """Yield candidate texts for a new entry, most preferred first.
 
@@ -107,7 +106,6 @@ def iter_entry_snippets(
         declared (str | None): The text the parser declares for this container and
             category, if it does.
         admitted (frozenset[str]): The value-type rules the format has.
-        priority (Sequence[str]): Order in which to try the admitted value-type rules.
 
     Yields:
         str: Candidate entry text, to be validated by parsing.
@@ -117,7 +115,7 @@ def iter_entry_snippets(
     if declared is not None:
         templates += [compile_template(declared, category, depth, indent) for indent in (style.indent, None)]
     for template in dict.fromkeys(template for template in templates if template is not None):
-        yield from _render_candidates(template, keys, value, category, admitted, priority)
+        yield from _render_candidates(template, keys, value, category, admitted)
 
 
 def _values_for(category: str, value: object) -> list[object]:
@@ -129,32 +127,30 @@ def _values_for(category: str, value: object) -> list[object]:
     return []
 
 
-def _rule_choices(values: Sequence[object], admitted: frozenset[str], priority: Sequence[str]) -> Iterator[list[str]]:
+def _rule_choices(values: Sequence[object], admitted: frozenset[str]) -> Iterator[list[str]]:
     """Yield ways of writing *values*, a value-type rule per value, most preferred first.
 
     Every admitted rule accepting all the values is offered, not just the most preferred
     one, because the preferred rendering is not always readable back as the same type: a
     grammar with a bare-word value type reads ``True`` as a boolean, so a string of that
     text has to be written quoted instead. The caller validates each candidate and moves on,
-    so the priority order expresses a preference and never a restriction.
+    so the order of preference is a preference and never a restriction.
 
     Args:
         values (Sequence[object]): The values to write.
         admitted (frozenset[str]): The value-type rules the format has.
-        priority (Sequence[str]): Order in which to consider rules.
 
     Yields:
         list[str]: One rule name per value.
     """
     offered: list[list[str]] = []
-    for rule_name in priority:
-        handler = VALUE_TYPE_HANDLER_REGISTRY.get(rule_name)
-        if rule_name in admitted and handler is not None and all(handler.type_check(item) for item in values):
+    for rule_name, handler in VALUE_TYPE_HANDLER_REGISTRY.items():
+        if rule_name in admitted and all(handler.type_check(item) for item in values):
             offered.append([rule_name] * len(values))
             yield offered[-1]
 
     # A list may hold values of different types, which no single rule covers.
-    per_value = [select_value_rule(item, admitted, priority) for item in values]
+    per_value = [select_value_rule(item, admitted) for item in values]
     if all(name is not None for name in per_value) and per_value not in offered:
         yield [name for name in per_value if name is not None]
 
@@ -165,7 +161,6 @@ def _render_candidates(
     value: object,
     category: str,
     admitted: frozenset[str],
-    priority: Sequence[str],
 ) -> Iterator[str]:
     """Yield renderings of *template*, one per way of writing the value."""
     values = _values_for(category, value)
@@ -175,7 +170,7 @@ def _render_candidates(
     if not slots:
         yield render(template, keys, [])
     else:
-        for rule_names in _rule_choices(values, admitted, priority):
+        for rule_names in _rule_choices(values, admitted):
             texts = [_value_text(*choice) for choice in zip(rule_names, values, slots, strict=True)]
             yield render(template, keys, texts)
 

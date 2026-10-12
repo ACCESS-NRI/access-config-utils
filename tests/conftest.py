@@ -141,7 +141,6 @@ def assert_canonical_entry(
         EntryStyle(),
         parser.entry_templates.get((container, category)),
         compiled.info.value_rules,
-        tuple(parser.value_rule_priority),
     )
     for text in candidates:
         try:
@@ -226,10 +225,6 @@ class Parser(ConfigParser):
     """Parser using the grammar defined above, with case sensitive keys."""
 
     @property
-    def case_sensitive_keys(self) -> bool:
-        return True
-
-    @property
     def entry_templates(self) -> Mapping[tuple[str, str], str]:
         return TOY_TEMPLATES
 
@@ -248,8 +243,8 @@ class CaseParser(ConfigParser):
     """Parser using the grammar defined above, with case insensitive keys."""
 
     @property
-    def case_sensitive_keys(self) -> bool:
-        return False
+    def key_case(self) -> str:
+        return "upper"
 
     @property
     def entry_templates(self) -> Mapping[tuple[str, str], str]:
@@ -327,19 +322,16 @@ class FakeContext:
     def __init__(
         self,
         *,
-        case_sensitive: bool = True,
         info: Any = None,
         lark: Any = None,
         block_rules: tuple[str, ...] = ("block",),
         repeated_blocks: str = "merge",
-        key_case: str = "upper",
+        key_case: str = "keep",
     ) -> None:
-        self.case_sensitive_keys = case_sensitive
         self.key_case = key_case
         self.info = info if info is not None else RepetitionInfo()
         self.lark = lark
         self.entry_templates: dict[tuple[str, str], str] = {}
-        self.value_rule_priority: tuple[str, ...] = ()
         self.block_rules = block_rules
         self.repeated_blocks = repeated_blocks
 
@@ -349,9 +341,7 @@ class FakeContext:
 
     def normalise_key(self, key: str) -> str:
         """Normalise as a real ``ParseContext`` would."""
-        if self.case_sensitive_keys:
-            return key
-        return key.lower() if self.key_case == "lower" else key.upper()
+        return {"keep": key, "upper": key.upper(), "lower": key.lower()}[self.key_case]
 
 
 class FakeStore:
@@ -394,26 +384,22 @@ class FakeStore:
         self.calls.append(("child", (ref, index) if index else ref))
         return FakeStore(ctx=self.ctx)
 
-    def replace(self, key: str, value: Any) -> tuple[Tree, ...]:
-        """Record the replacement and return the entry's value nodes."""
-        self.calls.append(("replace", (key, value)))
-        return self.refs[key].value_nodes
+    def replace(self, key: str, value: Any, origins: Any = None) -> None:
+        """Record the replacement, and the old element each new value stands in for."""
+        call = (key, value)
+        self.calls.append(("replace", call if origins is None else (*call, list(origins))))
 
-    def resize(self, key: str, values: Any, origins: Any) -> tuple[Tree, ...]:
-        """Record the resize, with the mapping from new elements to old ones."""
-        self.calls.append(("resize", (key, list(values), list(origins))))
-        return ()
-
-    def add_path(self, keys: Sequence[str], raw_keys: Sequence[str], value: Any, category: Any = None) -> EntryRef:
+    def add_path(self, raw_keys: Sequence[str], value: Any, category: Any = None) -> EntryRef:
         """Record the addition and return the reference declared for it, or refuse it.
 
         The category is recorded only when one is given, as it is for a record.
         """
-        call = (tuple(keys), tuple(raw_keys), value)
+        call = (tuple(raw_keys), value)
         self.calls.append(("add_path", call if category is None else (*call, category)))
-        if tuple(keys) in self._refused:
+        keys = tuple(self.ctx.normalise_key(key) for key in raw_keys)
+        if keys in self._refused:
             raise UnsupportedEntryError(f"Refused {list(keys)}")
-        self.refs[keys[0]] = self._added[keys[0] if len(keys) == 1 else tuple(keys)]
+        self.refs[keys[0]] = self._added[keys[0] if len(keys) == 1 else keys]
         return self.refs[keys[0]]
 
     def created_block_style(self, entry: Tree | None = None) -> EntryStyle:
@@ -426,16 +412,12 @@ class FakeStore:
         self.calls.append(("remove", key))
         del self.refs[key]
 
-    def reread(self) -> dict[str, EntryRef]:
-        """Record the request and report the references declared for it."""
-        self.calls.append(("reread", None))
+    def reread(self, ref: EntryRef | None = None) -> dict[str, EntryRef]:
+        """Record the request, and the reference the store was pointed at, if any."""
+        self.calls.append(("reread", ref))
         if self._reread is not None:
             self.refs = self._reread
         return self.refs
-
-    def retarget(self, ref: EntryRef) -> None:
-        """Record which reference the store was pointed at."""
-        self.calls.append(("retarget", ref))
 
     def render(self) -> str:
         """Return the canned text."""

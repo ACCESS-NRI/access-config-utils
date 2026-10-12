@@ -68,10 +68,6 @@ class FieldTableParser(ConfigParser):
     """FMS legacy field table parser."""
 
     @property
-    def case_sensitive_keys(self) -> bool:
-        return False
-
-    @property
     def key_case(self) -> str:
         """str: ``"lower"``, the case the field manager reads every name in."""
         return "lower"

@@ -60,13 +60,13 @@ GRAMMAR = """
 @pytest.fixture(scope="module")
 def ctx() -> ParseContext:
     """Return a context over the grammar above, with a real reconstructor."""
-    return ParseContext(compile_grammar(GRAMMAR), True, {}, ("integer", "string", "named_assignments"))
+    return ParseContext(compile_grammar(GRAMMAR), {})
 
 
 @pytest.fixture(scope="module")
 def chain_ctx() -> ParseContext:
     """Return a context reading ``link`` as a block too, with keys that ignore case."""
-    return ParseContext(compile_grammar(GRAMMAR), False, {}, ("integer", "string"), ("block", "link"))
+    return ParseContext(compile_grammar(GRAMMAR), {}, ("block", "link"), key_case="upper")
 
 
 @pytest.fixture
@@ -106,10 +106,9 @@ class TestReplace:
     """Writing a new value into an entry that already exists."""
 
     def test_a_scalar(self, store) -> None:
-        """Test the ordinary edit, and that the node holding the value is handed back."""
-        nodes = store.replace("a", 42)
+        """Test the ordinary edit."""
+        store.replace("a", 42)
 
-        assert nodes == store.refs["a"].value_nodes
         assert store.render() == "a = 42\nb = 2"
 
     def test_a_whole_list(self, ctx) -> None:
@@ -145,16 +144,15 @@ class TestReplace:
         AddParent().visit(tree)
         store = ConfigStore(tree, ctx)
 
-        nodes = store.replace("a", value)
+        store.replace("a", value)
 
         assert store.render() == written
-        assert nodes == store.refs["a"].value_nodes
-        assert len(nodes) == len(value)
+        assert len(store.refs["a"].value_nodes) == len(value)
 
     def test_resizing_an_entry_that_is_not_a_list(self, store) -> None:
         """Test that only a list has a length to change."""
         with pytest.raises(TypeError, match="change the type"):
-            store.resize("a", [1, 2], [0, None])
+            store.replace("a", [1, 2], [0, None])
 
 
 class TestAdd:
@@ -167,8 +165,8 @@ class TestAdd:
         node = entry_node("key_value", "z", value_node())
         ref = EntryRef("key_value", (node,), (node.children[1],))
 
-        def fake_insert(container, ctx, keys, raw_keys, value, style, index, category):
-            calls.append({"container": container, "keys": keys, "raw_keys": raw_keys, "value": value, "style": style})
+        def fake_insert(container, ctx, raw_keys, value, style, index, category):
+            calls.append({"container": container, "raw_keys": raw_keys, "value": value, "style": style})
             return ref
 
         with patch.object(config_store, "insert_entry", fake_insert):
@@ -178,16 +176,16 @@ class TestAdd:
         """Test that the new entry joins the store's own references."""
         _, ref = spy
 
-        assert store.add_path(("z",), ("z",), 3) is ref
+        assert store.add_path(("z",), 3) is ref
         assert store.refs["z"] is ref
 
     def test_passes_the_container_and_the_key_as_written(self, store, spy) -> None:
-        """Test that both spellings travel: the normalised key, and the one for the file."""
+        """Test that the key travels as the caller spelled it, for the text of the entry."""
         calls, _ = spy
-        store.add_path(("Z",), ("z",), 3)
+        store.add_path(("z",), 3)
 
         assert calls[0]["container"] is store.tree
-        assert (calls[0]["keys"], calls[0]["raw_keys"]) == (("Z",), ["z"])
+        assert calls[0]["raw_keys"] == ["z"]
 
     def test_offers_the_indent_of_the_entries_already_there(self, ctx, spy) -> None:
         """Test that a container with entries dictates how the new one is indented."""
@@ -195,14 +193,14 @@ class TestAdd:
         tree = ctx.lark.parse("  a = 1\n    b = 2\n", start="start")
         AddParent().visit(tree)
 
-        ConfigStore(tree, ctx).add_path(("z",), ("z",), 3)
+        ConfigStore(tree, ctx).add_path(("z",), 3)
 
         assert calls[0]["style"].indent == "    "
 
     def test_offers_a_copy_of_the_entries_already_there(self, store, spy) -> None:
         """Test that the store passes its reconstructor on, so whole entries are copied."""
         calls, _ = spy
-        store.add_path(("z",), ("z",), 3)
+        store.add_path(("z",), 3)
 
         assert calls[0]["style"].donor(1, "key_value") is not None
 
@@ -219,7 +217,7 @@ class TestAdd:
         block = store.child(store.refs["blk"])
         block.fallback_style = EntryStyle(indent="    ")
 
-        block.add_path(("z",), ("z",), 3)
+        block.add_path(("z",), 3)
 
         assert calls[0]["style"].indent == "    "
 
@@ -238,7 +236,7 @@ class TestAddingAChain:
         """Test that a component joins the others, spelling the type the way they do."""
         store = self.store_of(chain_ctx, "a%b = 1\na%c = 2\nx = 3\n")
 
-        ref = store.add_path(("A", "D"), ("A", "d"), 4)
+        ref = store.add_path(("A", "d"), 4)
 
         assert store.render() == "a%b = 1\na%c = 2\na%d = 4\nx = 3"
         # The new line on its own; the store reads it together with the other two.
@@ -249,7 +247,7 @@ class TestAddingAChain:
         """Test that a line sharing two keys wins over a later one sharing only one."""
         store = self.store_of(chain_ctx, "a%b%c = 1\na%d = 2\n")
 
-        store.add_path(("A", "B", "E"), ("A", "B", "e"), 3)
+        store.add_path(("A", "B", "e"), 3)
 
         assert store.render() == "a%b%c = 1\na%b%e = 3\na%d = 2"
 
@@ -257,7 +255,7 @@ class TestAddingAChain:
         """Test a component of a type the file does not write yet."""
         store = self.store_of(chain_ctx, "a%b = 1\nx = 3\n")
 
-        store.add_path(("N", "A"), ("n", "a"), 1)
+        store.add_path(("n", "a"), 1)
 
         assert store.render() == "a%b = 1\nx = 3\nn%a = 1"
 
@@ -281,7 +279,7 @@ class TestResizingRecords:
         """Test that the new line is spaced and punctuated like its neighbour."""
         store = self.store_of(ctx, 'r:  "f","a=1"\nr:  "f","a=2"\nx = 1\n')
 
-        store.resize("r", [rec(1), rec(2), rec(3)], [0, 1, None])
+        store.replace("r", [rec(1), rec(2), rec(3)], [0, 1, None])
 
         assert store.render() == 'r:  "f","a=1"\nr:  "f","a=2"\nr:  "f","a=3"\nx = 1'
         assert len(store.refs["r"].entry_nodes) == 3
@@ -290,7 +288,7 @@ class TestResizingRecords:
         """Test a record put at the front of the list."""
         store = self.store_of(ctx, 'x = 1\nr: "f", "a=1"\n')
 
-        store.resize("r", [rec(0), rec(1)], [None, 0])
+        store.replace("r", [rec(0), rec(1)], [None, 0])
 
         assert store.render() == 'x = 1\nr: "f", "a=0"\nr: "f", "a=1"'
 
@@ -298,7 +296,7 @@ class TestResizingRecords:
         """Test a list shrinking to one record, which also changes."""
         store = self.store_of(ctx, 'r: "f", "a=1"\nr: "f", "a=2"\nx = 1\n')
 
-        store.resize("r", [rec(5)], [1])
+        store.replace("r", [rec(5)], [1])
 
         assert store.render() == 'r: "f", "a=5"\nx = 1'
 
@@ -314,7 +312,7 @@ class TestResizingRecords:
         store = self.store_of(ctx, 'r: "f", "a=1"\n')
 
         with pytest.raises(error):
-            store.resize("r", values, origins)
+            store.replace("r", values, origins)
 
         assert store.render() == 'r: "f", "a=1"'
 
@@ -324,7 +322,7 @@ class TestResizingRecords:
         store.addable = False
 
         with pytest.raises(UnsupportedEntryError, match="no body"):
-            store.resize("r", [rec(1), rec(2)], [0, None])
+            store.replace("r", [rec(1), rec(2)], [0, None])
 
     def test_takes_back_the_records_it_wrote_when_one_cannot_be(self, ctx) -> None:
         """Test that a list the file cannot take leaves it as it was."""
@@ -339,7 +337,7 @@ class TestResizingRecords:
             return real(self, *args, **kwargs)
 
         with patch.object(ConfigStore, "_insert_record", second_fails), pytest.raises(UnsupportedEntryError):
-            store.resize("r", [rec(1), rec(2), rec(3)], [0, None, None])
+            store.replace("r", [rec(1), rec(2), rec(3)], [0, None, None])
 
         assert store.render() == 'r: "f", "a=1"\nx = 1'
 
@@ -354,7 +352,7 @@ class TestUnaddableBlocks:
         store = ConfigStore(tree, ctx, addable=False)
 
         with pytest.raises(UnsupportedEntryError, match="no body in the file"):
-            store.add_path(("z",), ("z",), 1)
+            store.add_path(("z",), 1)
 
     def test_a_child_inherits_the_flag_from_its_reference(self, ctx) -> None:
         """Test that ``child`` passes on what the reader decided about the block."""
@@ -455,7 +453,7 @@ class TestReread:
         assert list(refs) == ["b"]
         assert store.refs is refs
 
-    def test_retarget_follows_the_block_a_reference_names(self, ctx) -> None:
+    def test_follows_the_block_a_reference_names(self, ctx) -> None:
         """Test that a nested store is pointed at the block just read for it."""
         tree = ctx.lark.parse("blk<\n  x = 1\n>\n", start="start")
         AddParent().visit(tree)
@@ -463,7 +461,7 @@ class TestReread:
         child = store.child(store.refs["blk"])
         merged = replace(store.refs["blk"], block_nodes=(Tree("block", []),), addable=False)
 
-        child.retarget(merged)
+        child.reread(merged)
 
         assert child.tree is merged.block_node
         assert child.addable is False

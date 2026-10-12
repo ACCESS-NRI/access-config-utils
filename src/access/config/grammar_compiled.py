@@ -12,15 +12,15 @@ repetition, which value types does the format have -- so ``GrammarInfo`` indexes
 once and answers both. It is held on an instance rather than in a module-level cache so
 that it dies with the compiled grammar it describes.
 
-``ParseContext`` pairs those artefacts with the settings the parser class declares -- key
-case-sensitivity, hand-written entry templates, value-rule priority. It is what a parsed
-configuration carries around so that it can still edit itself long after ``parse`` returned.
+``ParseContext`` pairs those artefacts with the settings the parser class declares -- how
+keys are cased, hand-written entry templates. It is what a parsed configuration carries
+around so that it can still edit itself long after ``parse`` returned.
 """
 
 from __future__ import annotations
 
 import functools
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -132,34 +132,33 @@ class CompiledGrammar:
     info: GrammarInfo
 
 
+# How each ``ParseContext.key_case`` writes a key as the dict key.
+_KEY_CASES: dict[str, Callable[[str], str]] = {"keep": lambda key: key, "upper": str.upper, "lower": str.lower}
+
+
 @dataclass(frozen=True)
 class ParseContext:
     """Everything a parsed configuration needs in order to edit itself, beyond its tree.
 
     Args:
         grammar (CompiledGrammar): The compiled grammar and its derived artefacts.
-        case_sensitive_keys (bool): Are the dict keys case-sensitive?
         entry_templates (Mapping[tuple[str, str], str]): The text of a new entry, keyed by
             container rule name and entry category. Used where the file has no entry of the
             kind to copy.
-        value_rule_priority (tuple[str, ...]): Order in which value-type rules are tried for
-            a new value.
         block_rules (tuple[str, ...]): Names of the rules holding block contents, the one
             new entries are written into first.
         repeated_blocks (str): What a file writing the same block twice means, ``"merge"``
             or ``"separate"``. Applies only to the first of *block_rules*; see
             ``ConfigParser.repeated_blocks``.
-        key_case (str): The case keys are stored in when they are not case-sensitive,
-            ``"upper"`` or ``"lower"``; see ``ConfigParser.key_case``.
+        key_case (str): The case keys are stored in: ``"keep"``, ``"upper"`` or
+            ``"lower"``; see ``ConfigParser.key_case``.
     """
 
     grammar: CompiledGrammar
-    case_sensitive_keys: bool
     entry_templates: Mapping[tuple[str, str], str]
-    value_rule_priority: tuple[str, ...]
     block_rules: tuple[str, ...] = (BLOCK_RULE,)
     repeated_blocks: str = "merge"
-    key_case: str = "upper"
+    key_case: str = "keep"
 
     @property
     def lark(self) -> Lark:
@@ -200,9 +199,9 @@ class ParseContext:
     def normalise_key(self, key: str) -> str:
         """Return the form of *key* used as the dict key.
 
-        A case-insensitive format stores its keys in one case, upper unless the parser says
-        lower, so that two spellings of one key are the same entry. The spelling the caller
-        used is kept only for the file text of a brand-new entry.
+        A case-insensitive format stores its keys in one case, so that two spellings of one
+        key are the same entry. The spelling the caller used is kept only for the file text
+        of a brand-new entry.
 
         Args:
             key (str): The key as written.
@@ -210,9 +209,7 @@ class ParseContext:
         Returns:
             str: The normalised key.
         """
-        if self.case_sensitive_keys:
-            return key
-        return key.lower() if self.key_case == "lower" else key.upper()
+        return _KEY_CASES[self.key_case](key)
 
 
 @functools.cache

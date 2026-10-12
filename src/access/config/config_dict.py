@@ -89,10 +89,7 @@ class ConfigList(list):
                 one. ``None`` for a list of the same length, written position by position.
         """
         plain = [_plain(value) for value in values]
-        if origins is None:
-            self._store.replace(self._key, plain)
-        else:
-            self._store.resize(self._key, plain, origins)
+        self._store.replace(self._key, plain, origins)
         self._hold(plain, origins)
 
     def _hold(self, values: list[Any], origins: Sequence[int | None] | None = None) -> None:
@@ -153,20 +150,15 @@ class ConfigList(list):
 
     def append(self, value: Any) -> None:
         """Override to add the element to the parse tree too."""
-        self._write([*self, value], [*range(len(self)), None])
+        self[len(self) :] = [value]
 
     def extend(self, values: Iterable[Any]) -> None:
         """Override to add the elements to the parse tree too."""
-        added = list(values)
-        self._write([*self, *added], [*range(len(self)), *[None] * len(added)])
+        self[len(self) :] = values
 
     def insert(self, index: SupportsIndex, value: Any) -> None:
         """Override to add the element to the parse tree too."""
-        updated = list(self)
-        updated.insert(index, value)
-        origins: list[int | None] = list(range(len(self)))
-        origins.insert(index, None)
-        self._write(updated, origins)
+        self[index:index] = [value]
 
     def pop(self, index: SupportsIndex = -1) -> Any:
         """Override to remove the element from the parse tree too."""
@@ -487,9 +479,7 @@ class Config(dict):
         records = isinstance(value, list) and len(value) > 0 and all(isinstance(item, dict) for item in value)
         anchor, path = self._nearest_addable()
         first = _plain(value[0]) if records else value
-        keys, ref, written, rest = anchor._write_path(
-            [*path, key], [*path, raw_key], first, KEY_VALUE if records else None
-        )
+        keys, ref, written, rest = anchor._write_path([*path, raw_key], first, KEY_VALUE if records else None)
         if len(keys) == 1:
             dict.__setitem__(self, key, self._wrap(key, ref))
         else:
@@ -528,25 +518,24 @@ class Config(dict):
         return anchor, path[::-1]
 
     def _write_path(
-        self, keys: list[str], raw_keys: list[str], value: Any, category: str | None = None
+        self, raw_keys: list[str], value: Any, category: str | None = None
     ) -> tuple[list[str], EntryRef, Any, _Leftovers]:
-        """Write *value* at the key path *keys* below this configuration, deeper if need be.
+        """Write *value* at a key path below this configuration, deeper if need be.
 
         A non-empty ``dict`` the format refuses as a block is written as its first item one
         level down instead, and so on, until something is written or there is nothing left
         to go down into. A record, written with a *category* of its own, never is.
 
         Args:
-            keys (list[str]): The normalised key path.
-            raw_keys (list[str]): The same keys as the caller wrote them.
+            raw_keys (list[str]): The key path as the caller wrote it.
             value (Any): The value to store.
             category (str | None): The category of entry to write, where *value* does not
                 say: ``key_value`` for a record, which is a ``dict``.
 
         Returns:
-            tuple[list[str], EntryRef, Any, _Leftovers]: The key path written, the new
-                entry, the value written at the end of it, and the items of each dict gone
-                down through that are still to add.
+            tuple[list[str], EntryRef, Any, _Leftovers]: The key path written, normalised,
+                the new entry, the value written at the end of it, and the items of each
+                dict gone down through that are still to add.
 
         Raises:
             UnsupportedEntryError: The refusal of the path first asked for, if no level
@@ -556,14 +545,15 @@ class Config(dict):
         refusal = None
         while True:
             try:
-                return keys, self._store.add_path(keys, raw_keys, value, category), value, rest
+                ref = self._store.add_path(raw_keys, value, category)
+                return [self._store.ctx.normalise_key(raw) for raw in raw_keys], ref, value, rest
             except UnsupportedEntryError as error:
                 refusal = refusal or error
                 if category is not None or not isinstance(value, dict) or not value:
                     raise refusal from None
             (raw, inner), *others = value.items()
-            rest.append((len(keys), others))
-            keys, raw_keys, value = [*keys, self._store.ctx.normalise_key(raw)], [*raw_keys, raw], inner
+            rest.append((len(raw_keys), others))
+            raw_keys, value = [*raw_keys, raw], inner
 
     def _at(self, path: Sequence[str]) -> Any:
         """Return what the keys of *path* lead to from this configuration."""
@@ -613,7 +603,7 @@ class Config(dict):
         if path:
             anchor._reread(path[::-1])
 
-    def _reread(self, path: Sequence[str]) -> None:
+    def _reread(self, path: Sequence[str], ref: EntryRef | None = None) -> None:
         """Read this configuration again after the tree changed below it, then down *path*.
 
         What the file no longer has leaves the dict. The configurations already on the path
@@ -625,8 +615,10 @@ class Config(dict):
         Args:
             path (Sequence[str]): Keys leading down to the configuration the change was made
                 in, starting with a key of this one; for an entry just added, down to it.
+            ref (EntryRef | None): The reference its parent read afresh for this block, to
+                point this configuration at; ``None`` for the one the reading starts from.
         """
-        refs = self._store.reread()
+        refs = self._store.reread(ref)
         for vanished in [key for key in self if key not in refs]:
             child = dict.__getitem__(self, vanished)
             if isinstance(child, Config):
@@ -636,8 +628,7 @@ class Config(dict):
             key = path[0]
             child = dict.get(self, key)
             if isinstance(child, Config):
-                child._store.retarget(refs[key])
-                child._reread(path[1:])
+                child._reread(path[1:], refs[key])
             elif key not in self:
                 dict.__setitem__(self, key, self._wrap(key, refs[key]))
 

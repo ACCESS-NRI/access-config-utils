@@ -29,10 +29,6 @@ class MOM6InputParser(ConfigParser):
     """
 
     @property
-    def case_sensitive_keys(self) -> bool:
-        return True
-
-    @property
     def entry_templates(self) -> Mapping[tuple[str, str], str]:
         """Mapping[tuple[str, str], str]: The text of a new parameter and of a new block."""
         return {

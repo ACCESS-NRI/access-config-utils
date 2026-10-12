@@ -48,8 +48,9 @@ class FortranNMLParser(ConfigParser):
     """
 
     @property
-    def case_sensitive_keys(self) -> bool:
-        return False
+    def key_case(self) -> str:
+        """str: ``"upper"``, the case a namelist reads every name in."""
+        return "upper"
 
     @property
     def block_rules(self) -> Sequence[str]:

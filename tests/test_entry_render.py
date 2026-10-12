@@ -19,7 +19,6 @@ from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY, ValueTypeH
 
 KEY = Fragment("key")
 NUMERIC = frozenset({"integer", "float", "string", "logical", "identifier"})
-PRIORITY = ("logical", "integer", "float", "string", "identifier")
 
 
 def literal(text: str) -> Fragment:
@@ -27,9 +26,9 @@ def literal(text: str) -> Fragment:
     return Fragment("literal", text)
 
 
-def snippets(category, keys, value, style, declared=None, admitted=NUMERIC, priority=PRIORITY) -> list[str]:
+def snippets(category, keys, value, style, declared=None, admitted=NUMERIC) -> list[str]:
     """Return every candidate ``iter_entry_snippets`` yields, in order."""
-    return list(iter_entry_snippets(category, keys, value, style, declared, admitted, priority))
+    return list(iter_entry_snippets(category, keys, value, style, declared, admitted))
 
 
 def copied(signature: tuple[int, str], *fragments: Fragment) -> EntryStyle:
@@ -77,19 +76,19 @@ class TestValueChoice:
         The caller validates each candidate, so a preferred form that reads back as the
         wrong type has to be followed by an alternative rather than being the only offer.
         """
-        texts = snippets("key_value", ("K",), "word", EntryStyle(), self.LINE, priority=("identifier", "string"))
+        texts = snippets("key_value", ("K",), "word", EntryStyle(), self.LINE, frozenset({"identifier", "string"}))
 
-        assert texts == ["K = word\n", 'K = "word"\n']
+        assert texts == ['K = "word"\n', "K = word\n"]
 
     def test_yields_nothing_when_no_admitted_rule_accepts_the_value(self) -> None:
         """Test that an unrepresentable value yields no candidate, not a bad one."""
-        texts = snippets("key_value", ("K",), "text", EntryStyle(), self.LINE, frozenset({"integer"}), ("integer",))
+        texts = snippets("key_value", ("K",), "text", EntryStyle(), self.LINE, frozenset({"integer"}))
 
         assert texts == []
 
     def test_writes_a_list_of_one_type_with_the_declared_separator(self) -> None:
         """Test that the template is grown using the text between its placeholders."""
-        texts = snippets("key_list", ("K",), [1, 2, 3], EntryStyle(), self.LIST, priority=("integer",))
+        texts = snippets("key_list", ("K",), [1, 2, 3], EntryStyle(), self.LIST)
 
         assert texts == ["K = 1, 2, 3\n"]
 
@@ -99,7 +98,7 @@ class TestValueChoice:
         No one rule accepts both an integer and a string, so each element is given the rule
         its own type needs.
         """
-        texts = snippets("key_list", ("K",), [1, "two"], EntryStyle(), self.LIST, priority=("integer", "string"))
+        texts = snippets("key_list", ("K",), [1, "two"], EntryStyle(), self.LIST)
 
         assert texts == ['K = 1, "two"\n']
 
@@ -133,7 +132,7 @@ class TestDeclaredTemplate:
 
     def test_writes_every_key_of_a_chain(self) -> None:
         """Test that ``{keys:SEP}`` serves a key path of any depth."""
-        texts = snippets("key_value", ("A", "B"), 1, EntryStyle(), "{keys:%} = {value}\n", priority=("integer",))
+        texts = snippets("key_value", ("A", "B"), 1, EntryStyle(), "{keys:%} = {value}\n")
 
         assert texts == ["A%B = 1\n"]
 
@@ -157,7 +156,7 @@ class TestCopiedTemplate:
         """Test that the copy comes first, its value quoted as the neighbour's was."""
         style = copied((1, "key_value"), *self.COPIED)
 
-        texts = snippets("key_value", ("K",), "x", style, self.DECLARED, priority=("string",))
+        texts = snippets("key_value", ("K",), "x", style, self.DECLARED, frozenset({"string"}))
 
         assert texts == ["K: 'x'\n", 'K = "x"\n']
 
@@ -165,7 +164,7 @@ class TestCopiedTemplate:
         """Test that the copy admits what the format does, not what its neighbour had."""
         style = copied((1, "key_value"), *self.COPIED)
 
-        texts = snippets("key_value", ("K",), 1, style, None, frozenset({"integer"}), ("integer",))
+        texts = snippets("key_value", ("K",), 1, style, None, frozenset({"integer"}))
 
         assert texts == ["K: 1\n"]
 
@@ -177,7 +176,7 @@ class TestCopiedTemplate:
         """Test that a list does not dictate how a scalar is written, nor a chain a key."""
         style = copied(signature, *self.COPIED)
 
-        texts = snippets("key_value", ("K",), "x", style, self.DECLARED, priority=("string",))
+        texts = snippets("key_value", ("K",), "x", style, self.DECLARED, frozenset({"string"}))
 
         assert texts == ['K = "x"\n']
 
@@ -186,7 +185,7 @@ class TestCopiedTemplate:
         template = (KEY, literal("%"), Fragment("key", level=1), literal(" = "), Fragment("value"), literal("\n"))
         style = copied((2, "key_value"), *template)
 
-        assert snippets("key_value", ("A", "B"), 1, style, None, priority=("integer",)) == ["A%B = 1\n"]
+        assert snippets("key_value", ("A", "B"), 1, style, None) == ["A%B = 1\n"]
 
     def test_falls_back_where_the_notation_cannot_hold_the_value(self) -> None:
         """Test that a value the copied notation refuses is written as new ones are."""
@@ -204,6 +203,6 @@ class TestCopiedTemplate:
         style = copied((1, "key_value"), KEY, literal(": "), Fragment("value", notation=("particular", "old")))
 
         with patch.dict(VALUE_TYPE_HANDLER_REGISTRY, {"particular": handler}):
-            texts = snippets("key_value", ("K",), "x", style, None, frozenset({"particular"}), ("particular",))
+            texts = snippets("key_value", ("K",), "x", style, None, frozenset({"particular"}))
 
         assert texts == ["K: x"]

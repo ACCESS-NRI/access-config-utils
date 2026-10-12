@@ -178,7 +178,7 @@ def _value_texts(
             if handler.type_check(value):
                 texts.append(handler.to_token(value, str(node.children[0])))
                 continue
-        rule = select_value_rule(value, ctx.info.value_rules, ctx.value_rule_priority)
+        rule = select_value_rule(value, ctx.info.value_rules)
         if rule is None:
             raise UnsupportedEntryError(f"This format cannot store {value!r} in the list '{key}'")
         texts.append(VALUE_TYPE_HANDLER_REGISTRY[rule].to_new_token(value))

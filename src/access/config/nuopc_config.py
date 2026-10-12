@@ -94,10 +94,6 @@ class NUOPCParser(ConfigParser):
     """NUOPC config parser."""
 
     @property
-    def case_sensitive_keys(self) -> bool:
-        return True
-
-    @property
     def entry_templates(self) -> Mapping[tuple[str, str], str]:
         """The text of a new entry, at the top level and in a table.
 

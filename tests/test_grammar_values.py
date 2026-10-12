@@ -16,7 +16,6 @@ from pathlib import Path
 import pytest
 
 from access.config.grammar_values import (
-    VALUE_RULE_PRIORITY,
     VALUE_TYPE_HANDLER_REGISTRY,
     UnsupportedEntryError,
     identical_values,
@@ -271,29 +270,24 @@ class TestSelectValueRule:
     """Choosing the rule to write a value with, among those the format has."""
 
     def test_takes_the_first_admitted_rule_that_accepts_the_value(self) -> None:
-        """Test that the priority order decides, filtered by what the grammar allows."""
+        """Test that the order of the registry decides, among the rules the grammar has."""
         admitted = {"logical", "bool", "integer"}
 
-        assert select_value_rule(True, admitted, VALUE_RULE_PRIORITY) == "logical"
-        assert select_value_rule(1, admitted, VALUE_RULE_PRIORITY) == "integer"
+        assert select_value_rule(True, admitted) == "logical"
+        assert select_value_rule(1, admitted) == "integer"
 
     def test_a_format_without_the_preferred_rule_gets_the_next(self) -> None:
         """Test the effect that makes ``True`` a namelist ``.true.`` but a MOM6 ``True``."""
-        assert select_value_rule(True, {"bool", "integer"}, VALUE_RULE_PRIORITY) == "bool"
+        assert select_value_rule(True, {"bool", "integer"}) == "bool"
 
     def test_reports_nothing_when_no_admitted_rule_accepts_the_value(self) -> None:
         """Test the case that becomes ``UnsupportedEntryError`` further up."""
-        assert select_value_rule("text", {"integer", "float"}, VALUE_RULE_PRIORITY) is None
-        assert select_value_rule(object(), set(VALUE_TYPE_HANDLER_REGISTRY), VALUE_RULE_PRIORITY) is None
+        assert select_value_rule("text", {"integer", "float"}) is None
+        assert select_value_rule(object(), set(VALUE_TYPE_HANDLER_REGISTRY)) is None
 
     def test_an_admitted_name_that_is_not_a_value_rule_is_skipped(self) -> None:
         """Test that a name absent from the registry cannot be chosen."""
-        assert select_value_rule(1, {"not_a_value_rule"}, ("not_a_value_rule", "integer")) is None
-
-    def test_a_caller_may_reverse_the_order(self) -> None:
-        """Test that the priority is an argument, which is how a parser overrides it."""
-        assert select_value_rule("word", {"identifier", "string"}, VALUE_RULE_PRIORITY) == "string"
-        assert select_value_rule("word", {"identifier", "string"}, ("identifier", "string")) == "identifier"
+        assert select_value_rule(1, {"not_a_value_rule"}) is None
 
 
 class TestRewrite:
@@ -546,13 +540,13 @@ class TestNamedAssignments:
         ]
 
 
-def test_priority_states_the_ambiguous_pairs() -> None:
+def test_the_registry_order_states_the_ambiguous_pairs() -> None:
     """Test the order of the six pairs whose members accept the same Python type.
 
     These are the whole reason the order exists: without it the choice would fall to
     whichever grammar rule happened to match first.
     """
-    order = list(VALUE_RULE_PRIORITY)
+    order = list(VALUE_TYPE_HANDLER_REGISTRY)
 
     assert order.index("logical") < order.index("bool")
     assert order.index("float") < order.index("double")

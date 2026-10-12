@@ -85,73 +85,47 @@ class ConfigStore:
         """
         return ConfigStore(ref.block_nodes[index], self.ctx, addable=ref.addable)
 
-    def replace(self, key: str, value: Any) -> tuple[Tree | None, ...]:
-        """Write a new value into the nodes of an entry that already exists.
+    def replace(self, key: str, value: Any, origins: Sequence[int | None] | None = None) -> None:
+        """Write a new value into an entry that already exists.
 
-        A list of a different length is laid out afresh by ``resize``, with each new value
-        matched to the old one it stands in for, so that what stays keeps its place.
+        A scalar, or a list of the length it has, is written in place, node by node. A list
+        of a different length is laid out afresh, with each new value matched to the old one
+        it stands in for, so that what stays keeps its place. A list of records, which the
+        file writes one entry per record, changes length by gaining and losing entries; see
+        ``_resize_records``.
 
         Args:
             key (str): The normalised key.
             value (Any): The new value: a scalar, or a whole list.
-
-        Returns:
-            tuple[Tree | None, ...]: The value-type rule nodes now holding the value.
-                ``None`` where an array position no entry wrote has no node to hold one,
-                as in ``EntryRef.value_nodes``.
-
-        Raises:
-            TypeError: If the new value's type does not match what the entry holds.
-            ValueError: If a list of a different length cannot be written; see ``resize``.
-        """
-        ref = self.refs[key]
-        if isinstance(value, list):
-            if ref.category != KEY_LIST:
-                raise TypeError(f"Trying to change the type of variable '{key}'")
-            if len(ref.value_nodes) != len(value):
-                return self.resize(key, value, align_values(entry_value(ref), value))
-            write_values(ref.value_nodes, value)
-            return ref.value_nodes
-        else:
-            if ref.category != KEY_VALUE:
-                raise TypeError(f"Trying to change the type of variable '{key}'")
-            node = ref.value_nodes[0]
-            # A None node means an array position the file never wrote, which only a
-            # key_list entry can have; a key_value always has the one node it names.
-            assert node is not None
-            update_node_value(node, value)
-        return ref.value_nodes
-
-    def resize(self, key: str, values: Sequence[Any], origins: Sequence[int | None]) -> tuple[Tree | None, ...]:
-        """Write a list of a different length into an entry that already exists.
-
-        A list of records, which the file writes one entry per record, changes length by
-        gaining and losing entries; see ``_resize_records``.
-
-        Args:
-            key (str): The normalised key.
-            values (Sequence[Any]): The values the list is to hold.
-            origins (Sequence[int | None]): For each value, the position of the old element
-                it stands in for, or ``None`` for a new one.
-
-        Returns:
-            tuple[Tree | None, ...]: The value-type rule nodes now holding the list.
+            origins (Sequence[int | None] | None): For a list of a different length, the
+                position of the old element each new value stands in for, or ``None`` for
+                a new one; worked out by aligning the two lists where the caller does not
+                know.
 
         Raises:
-            TypeError: If the entry is not a list, or a value standing in for an old element
-                is of another type.
+            TypeError: If the new value's type does not match what the entry holds, or a
+                value standing in for an old element is of another type.
             ValueError: If fewer than two values are asked for, or the entry's values are
                 not written one per node in a single entry.
             UnsupportedEntryError: If the format cannot write the list asked for.
         """
         ref = self.refs[key]
-        if ref.category != KEY_LIST:
+        if ref.category != (KEY_LIST if isinstance(value, list) else KEY_VALUE):
             raise TypeError(f"Trying to change the type of variable '{key}'")
-        if ref.collected:
-            self._resize_records(key, values, origins)
+        if not isinstance(value, list):
+            node = ref.value_nodes[0]
+            # A None node means an array position the file never wrote, which only a
+            # key_list entry can have; a key_value always has the one node it names.
+            assert node is not None
+            update_node_value(node, value)
+        elif len(ref.value_nodes) == len(value):
+            write_values(ref.value_nodes, value)
         else:
-            self.refs[key] = resize_entry(ref, self.ctx, key, values, origins)
-        return self.refs[key].value_nodes
+            origins = align_values(entry_value(ref), value) if origins is None else origins
+            if ref.collected:
+                self._resize_records(key, value, origins)
+            else:
+                self.refs[key] = resize_entry(ref, self.ctx, key, value, origins)
 
     def _resize_records(self, key: str, values: Sequence[Any], origins: Sequence[int | None]) -> None:
         """Change how many records a key holds, an entry per record.
@@ -236,7 +210,7 @@ class ConfigStore:
                     written.append(entries[origin])
                 else:
                     neighbour = written[-1] if written else entries[0]
-                    written.append(self._insert_record(key, value, neighbour, after=bool(written)))
+                    written.append(self._insert_record(value, neighbour, after=bool(written)))
         except (ValueError, TypeError):
             for entry in written:
                 if not any(entry is old for old in entries):
@@ -244,11 +218,10 @@ class ConfigStore:
             raise
         return written
 
-    def _insert_record(self, key: str, value: Any, neighbour: Tree, *, after: bool) -> Tree:
+    def _insert_record(self, value: Any, neighbour: Tree, *, after: bool) -> Tree:
         """Write a record beside another of the same key, as a copy of it.
 
         Args:
-            key (str): The normalised key.
             value (Any): The record.
             neighbour (Tree): The entry writing the record to copy and to go beside.
             after (bool): Whether to go after it rather than before.
@@ -260,13 +233,10 @@ class ConfigStore:
         index = entry_insertion_index(self.tree, line) if after else line
         template = donor_template(self.tree.children[line], neighbour, self.ctx.reconstructor)
         style = EntryStyle(indent_of(neighbour), (((1, KEY_VALUE), template),)) if template else EntryStyle()
-        spelled = [str(key_token(neighbour))]
-        ref = insert_entry(self.tree, self.ctx, [key], spelled, value, style, index, KEY_VALUE)
+        ref = insert_entry(self.tree, self.ctx, [str(key_token(neighbour))], value, style, index, KEY_VALUE)
         return ref.entry_nodes[0]
 
-    def add_path(
-        self, keys: Sequence[str], raw_keys: Sequence[str], value: Any, category: str | None = None
-    ) -> EntryRef:
+    def add_path(self, raw_keys: Sequence[str], value: Any, category: str | None = None) -> EntryRef:
         """Write an entry for a key path this container does not have yet.
 
         One key is a plain entry, written after the last entry of the container. More are a
@@ -279,8 +249,6 @@ class ConfigStore:
         in a block created this session -- from the style handed down when it was created.
 
         Args:
-            keys (Sequence[str]): The normalised key path, used to check what the candidate
-                read back as.
             raw_keys (Sequence[str]): The key path as the caller wrote it, for the text.
             value (Any): The value to store under the innermost key. A ``dict`` creates an
                 empty block.
@@ -298,16 +266,15 @@ class ConfigStore:
         """
         if not self.addable:
             raise UnsupportedEntryError(
-                f"Cannot add '{keys[-1]}': this block has no body in the file for a new entry to go in. "
+                f"Cannot add '{raw_keys[-1]}': this block has no body in the file for a new entry to go in. "
                 "It is either merged from several blocks, or written one component per line"
             )
+        keys = [self.ctx.normalise_key(key) for key in raw_keys]
         index, spelled = self._insertion_point(keys)
         style = probe_entry_style(self.tree, self.ctx.reconstructor, upto=index)
         if style.indent is None:
             style = self.fallback_style
-        ref = insert_entry(
-            self.tree, self.ctx, keys, [*spelled, *raw_keys[len(spelled) :]], value, style, index, category
-        )
+        ref = insert_entry(self.tree, self.ctx, [*spelled, *raw_keys[len(spelled) :]], value, style, index, category)
         if len(keys) == 1:
             self.refs[keys[0]] = ref
         else:
@@ -374,7 +341,7 @@ class ConfigStore:
             remove_entry_node(entry_node, self.ctx.info)
         del self.refs[key]
 
-    def reread(self) -> dict[str, EntryRef]:
+    def reread(self, ref: EntryRef | None = None) -> dict[str, EntryRef]:
         """Read the entries of the container again, after the tree has changed below it.
 
         Deleting an entry can take more than the entry with it: the wrappers a grammar
@@ -382,25 +349,21 @@ class ConfigStore:
         the one the deletion was made in may therefore have lost an entry, or hold
         references to nodes that are no longer in the tree.
 
+        Args:
+            ref (EntryRef | None): For the store of a nested configuration, the
+                ``key_block`` reference for its block, as just read from the container
+                above. A block merged from several in the file is a node the reader builds
+                rather than one in the parse tree, so reading the container above builds a
+                new one, which the store has to follow or it goes on reading the old one.
+
         Returns:
             dict[str, EntryRef]: The fresh references, which replace the ones held.
         """
+        if ref is not None:
+            assert ref.block_node is not None
+            self.tree, self.addable = ref.block_node, ref.addable
         self.refs = read_entries(self.tree, self.ctx)
         return self.refs
-
-    def retarget(self, ref: EntryRef) -> None:
-        """Point this store at the block *ref* names, read afresh from its parent.
-
-        A block merged from several in the file is a node the reader builds rather than one
-        in the parse tree, so re-reading the parent builds a new one. The store of a nested
-        configuration has to follow it, or it goes on reading the old one.
-
-        Args:
-            ref (EntryRef): The ``key_block`` reference for this block, as just read.
-        """
-        assert ref.block_node is not None
-        self.tree = ref.block_node
-        self.addable = ref.addable
 
     def render(self) -> str:
         """Write the tree back out as text.
