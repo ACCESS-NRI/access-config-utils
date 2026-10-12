@@ -4,10 +4,11 @@
 import copy
 import json
 import math
+import re
 
 import pytest
 
-from access.config.json_config import JSONConfig, JSONParser, JSONStyle, detect_style
+from access.config.json_config import JSONConfig, JSONParser, JSONStyle, _LayoutScanner, detect_style
 
 # A trimmed ACCESS-OM2 forcing.json, written as libaccessom2's own test inputs are: by
 # json.dumps(data, indent=2) followed by a newline.
@@ -187,7 +188,122 @@ class TestHandWritten:
         """Once edited, it is written with the indentation and separators it showed."""
         config = parser.parse(HAND_WRITTEN)
         config["b"]["c"] = 4
-        assert str(config) == '{\n    "a": [\n        1,\n        2\n    ],\n    "b": {\n        "c": 4\n    }\n}\n'
+        assert str(config) == '{\n    "a": [1, 2],\n    "b": {\n        "c": 4\n    }\n}\n'
+
+
+MIXED = """{
+    "a": [1, 2],
+    "m": [
+        1,
+        2
+    ],
+    "n": [[1, 2], [3, "x]"]],
+    "o": [{"k": [1,2]}],
+    "e": [],
+    "s": "[\\"not, a list]"
+}
+"""
+
+
+class TestListLayout:
+    """A list is written as the file wrote it, wherever the edit is."""
+
+    @pytest.fixture()
+    def mixed(self, parser: JSONParser) -> JSONConfig:
+        """Fixture returning a file with lists in several layouts."""
+        return parser.parse(MIXED)
+
+    def test_unchanged_until_edited(self, mixed: JSONConfig) -> None:
+        assert str(mixed) == MIXED
+
+    @pytest.mark.parametrize(
+        "edit",
+        [
+            pytest.param(lambda c: c.update(first=1), id="added-last"),
+            pytest.param(lambda c: c.__setitem__("s", "text"), id="changed"),
+            pytest.param(lambda c: c.pop("e"), id="removed"),
+            pytest.param(lambda c: c["o"][0].__setitem__("j", 1), id="in-a-nested-object"),
+            pytest.param(lambda c: c.__setitem__("a", c["a"] + [3]), id="list-grows"),
+        ],
+    )
+    def test_each_list_keeps_its_layout(self, mixed: JSONConfig, edit) -> None:
+        edit(mixed)
+        text = str(mixed)
+        assert json.loads(text) == dict(mixed)
+        assert '"m": [\n        1,\n        2\n    ]' in text
+        assert '"n": [[1, 2], [3, "x]"]]' in text
+        assert re.search(r'"a": \[1, 2(, 3)?\]', text)
+
+    def test_a_list_holding_an_object_is_never_on_one_line(self, mixed: JSONConfig) -> None:
+        mixed["z"] = 0
+        assert '"o": [\n        {\n            "k": [1, 2]\n        }\n    ]' in str(mixed)
+
+    def test_empty_values(self, mixed: JSONConfig) -> None:
+        mixed["z"] = {}
+        text = str(mixed)
+        assert '"e": []' in text
+        assert '"z": {}' in text
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            pytest.param(
+                '{\n  "a": [1, 2],\n  "b": [3, 4],\n  "c": [\n    5,\n    6\n  ]\n}\n', "[7, 8]", id="mostly-inline"
+            ),
+            pytest.param(
+                '{\n  "a": [1,\n 2],\n  "b": [3,\n 4],\n  "c": [5, 6]\n}\n',
+                "[\n    7,\n    8\n  ]",
+                id="mostly-wrapped",
+            ),
+        ],
+    )
+    def test_a_new_list_follows_the_majority(self, parser: JSONParser, text: str, expected: str) -> None:
+        config = parser.parse(text)
+        config["new"] = [7, 8]
+        assert str(config).endswith(f'"new": {expected}\n}}\n')
+
+    def test_a_file_with_no_lists_keeps_the_default_for_a_new_one(self, parser: JSONParser) -> None:
+        config = parser.parse('{\n "a": 1,\n    "b": {"c": 2}\n}\n')
+        config["n"] = [1, 2]
+        assert '"n": [\n' in str(config)
+
+    def test_separators_without_a_space(self, parser: JSONParser) -> None:
+        config = parser.parse('{\n  "a": [1,2],\n  "b": {"c": 1}\n}\n')
+        config["d"] = 1
+        assert '"a": [1,2]' in str(config)
+
+    @pytest.mark.parametrize(
+        ("indent", "newline", "ensure_ascii", "text"),
+        [
+            pytest.param("\t", "\n", False, '{\n\t"a": [1, 2],\n\t"b": {"c": "é"}\n}\n', id="tab"),
+            pytest.param(3, "\r\n", True, '{\r\n   "a": [1, 2],\r\n   "b": {"c": 1}\r\n}\r\n', id="crlf"),
+            pytest.param(2, "\n", False, '{\n  "a": [1, 2],\n  "é": {"c": "é"}\n}\n', id="non-ascii"),
+        ],
+    )
+    def test_other_styles(self, parser: JSONParser, indent, newline, ensure_ascii, text: str) -> None:
+        config = parser.parse(text)
+        assert config.style.indent == indent
+        config["z"] = [1.5, float("nan"), None, True]
+        written = str(config)
+        assert newline in written
+        assert '"a": [1, 2]' in written
+        assert '"z": [1.5, NaN, null, true]' in written
+        assert (config.style.ensure_ascii, config.style.newline) == (ensure_ascii, newline)
+
+    def test_the_written_text_reads_back_as_the_same_style(self, mixed: JSONConfig, parser: JSONParser) -> None:
+        mixed["z"] = [1, 2]
+        text = str(mixed)
+        again = parser.parse(text)
+        assert again.style.inline_lists == mixed.style.inline_lists | {("z",)}
+        again["y"] = 0
+        assert str(again).replace('  "y": 0,\n', "") != ""
+        assert json.loads(str(again)) == dict(again)
+
+    def test_layouts_of_the_text(self) -> None:
+        scanner = _LayoutScanner('{"a": [[1, 2], [3,\n4]], "b": {"c": [1,2]}, "d": [{}], "e": [], "f": "[,"}')
+        assert scanner.inline == {("a", 0), ("b", "c")}
+        assert scanner.wrapped == {("a",), ("a", 1)}
+        assert scanner.spaced
 
 
 class TestDetectStyle:

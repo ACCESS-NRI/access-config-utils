@@ -14,7 +14,10 @@ exactly, and writes the data back with those. An edit then changes exactly the l
 
 A hand-formatted file has no such options. It is returned exactly as read for as long as its
 data is unchanged, but once edited it is rewritten in the closest style that can be guessed
-from it.
+from it. That includes which lists it wrote on one line: ``json.dumps`` puts every element
+of a list on a line of its own, so the writer here keeps each list in the layout the file
+gave it, found by the keys and indexes leading to it, and writes a list the file did not
+have the way most of its lists are written.
 
 Unlike the other configurations this one holds plain data: nested objects are ``dict``s and
 arrays are ``list``s, edited directly with nothing to keep in step, because the text is
@@ -29,6 +32,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from json.decoder import scanstring
 from typing import Any
 
 # The candidate layouts, most likely first: the indents json.dumps is usually given, then
@@ -38,6 +42,9 @@ _SEPARATORS: tuple[tuple[str, str], ...] = ((",", ": "), (", ", ": "), (",", ":"
 
 # Whitespace as JSON defines it. str.strip() would also remove other Unicode spaces.
 _JSON_WHITESPACE = " \t\r\n"
+
+# Where a list sits: the object keys and list indexes leading to it.
+_Path = tuple[str | int, ...]
 
 
 @dataclass(frozen=True)
@@ -51,6 +58,13 @@ class JSONStyle:
         newline (str): The line terminator, ``"\\n"`` or ``"\\r\\n"``.
         leading (str): Whitespace before the top-level object.
         trailing (str): Whitespace after it, usually a single line terminator.
+        inline_lists (frozenset[tuple[str | int, ...]]): Where the text had a list on one
+            line, as the keys and indexes leading to it. Empty for a style ``json.dumps``
+            reproduces.
+        wrapped_lists (frozenset[tuple[str | int, ...]]): The same for lists with a line of
+            their own for every element.
+        inline_new_lists (bool): Whether a list in neither set is written on one line.
+        inline_separator (str): The separator between the elements of a list on one line.
     """
 
     indent: int | str | None = 2
@@ -59,6 +73,10 @@ class JSONStyle:
     newline: str = "\n"
     leading: str = ""
     trailing: str = "\n"
+    inline_lists: frozenset[_Path] = frozenset()
+    wrapped_lists: frozenset[_Path] = frozenset()
+    inline_new_lists: bool = False
+    inline_separator: str = ", "
 
     def dump(self, data: Any) -> str:
         """Write *data* in this style.
@@ -69,12 +87,59 @@ class JSONStyle:
         Returns:
             str: The JSON text.
         """
-        text = json.dumps(data, indent=self.indent, separators=self.separators, ensure_ascii=self.ensure_ascii)
+        if self.indent is not None and (self.inline_lists or self.inline_new_lists):
+            text = self._write(data, (), 0)
+        else:
+            text = json.dumps(data, indent=self.indent, separators=self.separators, ensure_ascii=self.ensure_ascii)
         # json.dumps escapes a line break inside a string, so every one in its output is a
         # line terminator.
         if self.newline != "\n":
             text = text.replace("\n", self.newline)
         return self.leading + text + self.trailing
+
+    def _write(self, value: Any, path: _Path, level: int) -> str:
+        """Write *value* as ``json.dumps`` would, except that lists keep their layout.
+
+        Args:
+            value (Any): The value to write.
+            path (tuple[str | int, ...]): The keys and indexes leading to it.
+            level (int): How deep it is nested.
+
+        Returns:
+            str: The text, with ``"\\n"`` as its line terminator.
+        """
+        item_separator, key_separator = self.separators
+        unit = " " * self.indent if isinstance(self.indent, int) else (self.indent or "")
+        if isinstance(value, dict) and value:
+            lines = [
+                unit * (level + 1)
+                + json.dumps(key, ensure_ascii=self.ensure_ascii)
+                + key_separator
+                + self._write(item, (*path, key), level + 1)
+                for key, item in value.items()
+            ]
+            return "{\n" + (item_separator + "\n").join(lines) + "\n" + unit * level + "}"
+        if isinstance(value, list) and value:
+            if _holds_no_object(value) and (
+                path in self.inline_lists or (path not in self.wrapped_lists and self.inline_new_lists)
+            ):
+                return "[" + self.inline_separator.join(self._write_inline(item) for item in value) + "]"
+            lines = [
+                unit * (level + 1) + self._write(item, (*path, index), level + 1) for index, item in enumerate(value)
+            ]
+            return "[\n" + (item_separator + "\n").join(lines) + "\n" + unit * level + "]"
+        return json.dumps(value, ensure_ascii=self.ensure_ascii)
+
+    def _write_inline(self, value: Any) -> str:
+        """Write a value on one line, the lists inside it too."""
+        if isinstance(value, list):
+            return "[" + self.inline_separator.join(self._write_inline(item) for item in value) + "]"
+        return json.dumps(value, ensure_ascii=self.ensure_ascii)
+
+
+def _holds_no_object(value: list[Any]) -> bool:
+    """Report whether a list holds no object, however deep, as a list on one line must."""
+    return all(_holds_no_object(item) if isinstance(item, list) else not isinstance(item, dict) for item in value)
 
 
 def detect_style(text: str, data: Any) -> JSONStyle:
@@ -104,6 +169,76 @@ def detect_style(text: str, data: Any) -> JSONStyle:
     return _guess_style(body, newline, leading, trailing)
 
 
+class _LayoutScanner:
+    """Finds where a JSON text writes a list on one line, and where one element a line.
+
+    A list holding an object, or nothing, says nothing about layout and is left out.
+
+    Args:
+        text (str): Valid JSON.
+
+    Attributes are set by ``scan``: ``inline`` and ``wrapped`` hold the paths of the lists
+    written on one line and over several, and ``spaced`` says whether the former put a
+    space after a comma.
+    """
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.inline: set[_Path] = set()
+        self.wrapped: set[_Path] = set()
+        self.spaced = False
+        self.scan(0, ())
+
+    def _skip(self, i: int) -> int:
+        """Return the position of the first character from *i* that is not whitespace."""
+        while self.text[i] in _JSON_WHITESPACE:
+            i += 1
+        return i
+
+    def scan(self, i: int, path: _Path) -> tuple[int, bool]:
+        """Return where the value at *i* ends, and whether it is or holds an object."""
+        i = self._skip(i)
+        opener = self.text[i]
+        if opener == '"':
+            return scanstring(self.text, i + 1)[1], False
+        if opener == "[":
+            return self._scan_array(i, path)
+        if opener == "{":
+            return self._scan_object(i, path)
+        while self.text[i] not in ",]} \t\r\n":
+            i += 1
+        return i, False
+
+    def _scan_object(self, start: int, path: _Path) -> tuple[int, bool]:
+        """Return where the object starting at *start* ends, scanning it for lists."""
+        i = self._skip(start + 1)
+        while self.text[i] != "}":
+            key, i = scanstring(self.text, i + 1)
+            i, _ = self.scan(self._skip(self._skip(i) + 1), (*path, key))
+            i = self._skip(i)
+            i = self._skip(i + 1) if self.text[i] == "," else i
+        return i + 1, True
+
+    def _scan_array(self, start: int, path: _Path) -> tuple[int, bool]:
+        """Return where the array at *start* ends, and whether it holds an object."""
+        i = self._skip(start + 1)
+        count, has_object = 0, False
+        while self.text[i] != "]":
+            i, nested = self.scan(i, (*path, count))
+            has_object |= nested
+            count += 1
+            i = self._skip(i)
+            i = self._skip(i + 1) if self.text[i] == "," else i
+        written = self.text[start:i]
+        if count and not has_object:
+            if "\n" in written or "\r" in written:
+                self.wrapped.add(path)
+            else:
+                self.inline.add(path)
+                self.spaced = self.spaced or re.search(r",[ \t]", written) is not None
+        return i + 1, has_object
+
+
 def _guess_style(body: str, newline: str, leading: str, trailing: str) -> JSONStyle:
     """Guess the style of a text no set of ``json.dumps`` options reproduces.
 
@@ -117,6 +252,8 @@ def _guess_style(body: str, newline: str, leading: str, trailing: str) -> JSONSt
         JSONStyle: The guessed style.
     """
     lines = body.splitlines()
+    layout = _LayoutScanner(body)
+    inline, wrapped = frozenset(layout.inline), frozenset(layout.wrapped)
     indent: int | str | None = None
     if len(lines) > 1:
         # The first indented line shows one level of indentation.
@@ -125,7 +262,18 @@ def _guess_style(body: str, newline: str, leading: str, trailing: str) -> JSONSt
     key_separator = ": " if re.search(r'"\s*:[ \t]', body) else ":"
     item_separator = ", " if indent is None and re.search(r",[ \t]", body) else ","
     ensure_ascii = body.isascii()
-    return JSONStyle(indent, (item_separator, key_separator), ensure_ascii, newline, leading, trailing)
+    return JSONStyle(
+        indent,
+        (item_separator, key_separator),
+        ensure_ascii,
+        newline,
+        leading,
+        trailing,
+        inline,
+        wrapped,
+        len(inline) > 0 and len(inline) >= len(wrapped),
+        ", " if layout.spaced else ",",
+    )
 
 
 def _fingerprint(data: Any) -> str:
