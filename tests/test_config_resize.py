@@ -91,8 +91,7 @@ class TestResizing:
     def test_a_list_a_line_per_element(self, ctx) -> None:
         """Test that the comment closing the list stays on its last line.
 
-        The comment is in the line ending, outside the entry, so only the reading where the
-        new last element takes the closing line end leaves the line as it was.
+        The comment is in the line ending, outside the entry; the last element must keep it.
         """
         store = store_of(ctx, "a = 1,\n    2  # two\n")
 
@@ -111,9 +110,7 @@ class TestResizing:
     def test_a_windows_line_end_survives_a_comment_before_it(self, ctx) -> None:
         """Test that a new element ends its line as the others do, carriage return and all.
 
-        The comment rule runs up to the line feed, so it holds the carriage return, and
-        blanking the comment must not take that too. The last line feed is the one the
-        store drops on writing out, as it drops the newline ``parse`` adds.
+        The comment rule holds the carriage return: blanking the comment must keep it.
         """
         store = store_of(ctx, "a = 1,  # one\r\n    2\r\n")
 
@@ -209,8 +206,8 @@ class TestCandidates:
     def test_the_first_candidate_that_passes_every_check_is_used(self, ctx) -> None:
         """Test each reason a candidate is passed over, then one that is used.
 
-        Two lines are two nodes; a blank line reads back as no list; a comment added to the
-        line ending is outside the entry, and so changes the line, not the list.
+        Passed over: two nodes; no list; or a changed line, as when a comment is added to
+        the line ending, which is outside the entry.
         """
         store = store_of(ctx, "a = 1, 2\n")
         candidates = ["a = 1, 2, 3\nb = 4, 5\n", "\n", "a = 1, 2, 3  # new\n", "a = 1, 2, 3\n"]
@@ -231,10 +228,8 @@ class TestCandidates:
     def test_no_candidate_reads_back(self, ctx, candidate) -> None:
         """Test that a list no layout can write is refused, leaving the file alone.
 
-        The last candidate reads back as the list asked for, but its comment is in the line
-        ending, outside the entry. Putting the new entry into the old line would leave that
-        comment out, so the line would not be written as the candidate says: that is refused
-        rather than written differently.
+        The last candidate reads back as the list, but its comment is in the line ending,
+        outside the entry, so the old line would drop it: refused, not written differently.
         """
         store = store_of(ctx, "a = 1, 2\n")
 

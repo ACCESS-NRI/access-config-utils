@@ -28,8 +28,7 @@ from access.config.tree_reader import EntryReader
 def test_entry_categories_are_the_four_declared() -> None:
     """Test that the categories are exactly the four entry kinds, derived not repeated.
 
-    ``ENTRY_CATEGORIES`` comes from the keys of ``VALUE_SLOT_COUNTS`` so that adding a
-    category cannot leave the two disagreeing.
+    ``ENTRY_CATEGORIES`` comes from ``VALUE_SLOT_COUNTS``, so the two cannot disagree.
     """
     assert ENTRY_CATEGORIES == (KEY_VALUE, KEY_LIST, KEY_BLOCK, KEY_NULL)
     assert tuple(VALUE_SLOT_COUNTS) == ENTRY_CATEGORIES
@@ -38,8 +37,7 @@ def test_entry_categories_are_the_four_declared() -> None:
 def test_value_slot_counts_match_what_each_category_holds() -> None:
     """Test the number of values a template for each category must have.
 
-    A list needs exactly two, not one per element: the second is what makes the element
-    separator visible, so a list of any length can be grown from the pair.
+    A list needs two, not one per element: the pair shows the separator for any length.
     """
     assert VALUE_SLOT_COUNTS[KEY_VALUE] == 1
     assert VALUE_SLOT_COUNTS[KEY_LIST] == 2
@@ -50,11 +48,8 @@ def test_value_slot_counts_match_what_each_category_holds() -> None:
 def test_the_reader_has_a_callback_per_category() -> None:
     """Test that ``EntryReader`` implements every entry category the contract declares.
 
-    This is the one duplication of the category names that cannot be removed: Lark's
-    ``Interpreter`` dispatches on a node's rule name to a method of that name, so the
-    callbacks have to be spelled out. Adding a category without its callback would leave
-    entries of that category silently unvisited, so the two lists are pinned together here
-    instead of by construction.
+    Lark dispatches on rule names, so the callbacks must be spelled out; a missing one would
+    leave entries of that category silently unvisited, hence the pin.
     """
     for category in ENTRY_CATEGORIES:
         assert callable(getattr(EntryReader, category, None)), category
@@ -63,9 +58,7 @@ def test_the_reader_has_a_callback_per_category() -> None:
 def test_the_rule_names_are_the_ones_config_lark_defines() -> None:
     """Test the names themselves, which every format grammar has to spell out.
 
-    They are an API rather than cosmetics: a grammar spelling one differently does not read
-    oddly, it silently stops working. Writing them out once here is what makes a rename
-    visible as a test change.
+    A different spelling silently stops working; a rename shows up as a test change.
     """
     assert (START_RULE, KEY_RULE, BLOCK_RULE, WS_RULE) == ("start", "key", "block", "ws")
     assert COMMENT_RULES == ("comment", "fortran_comment")
