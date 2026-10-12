@@ -18,6 +18,15 @@ from ``grammar_contract``, which states in full what a grammar has to provide an
 shapes relied on follow from it: a key rule node has a ``key`` child whose first child is
 the ``Token`` holding the key text, and a value-type rule node has a single ``Token`` child
 holding the value.
+
+An indexed assignment writes part of an array, so ``v(1) = 1`` and ``v(2) = 2`` are two
+entries making up one two-element ``v``, and a position left unwritten reads as null. An
+unqualified assignment joins the array too when the key was written with indices, or when it
+leaves part of an earlier entry standing: a format may write from the first position and
+leave the rest, so ``v = 1, 2`` then ``v = 3`` is ``[3, 2]``, not the scalar ``3``. A later
+entry at least as long covers every position, and simply wins. A qualifier this does not
+model, a multidimensional one, stays in the key, so that ``v(1,1)`` and ``v(3,3)`` are not
+read as one.
 """
 
 from __future__ import annotations
@@ -107,17 +116,11 @@ class EntryRef:
 
 
 def entry_value(ref: EntryRef) -> Any:
-    """Return the Python value an entry holds.
+    """Return the Python value an entry holds: a scalar, a list, or ``None`` if valueless.
 
     A ``key_block`` has no value of its own: its contents are the entries of ``block_node``,
     which the caller reads separately and wraps in whatever it uses for a nested
     configuration. Ask this only about the other three categories.
-
-    Args:
-        ref (EntryRef): The entry to read, of any category but ``key_block``.
-
-    Returns:
-        Any: The scalar, the list of values, or ``None`` for a valueless entry.
     """
     if ref.category == KEY_NULL:
         return None
@@ -130,15 +133,9 @@ def entry_value(ref: EntryRef) -> Any:
 def element_values(nodes: Sequence[Tree | None]) -> list[Any]:
     """Return one value per element, from the node backing each.
 
-    Two nodes do not correspond one for one with elements. A repeat appears once per element
-    it covers, so reading it once per appearance would multiply its values; and an array
+    Nodes and elements do not correspond one for one: a repeat appears once per element it
+    covers, so reading it once per appearance would multiply its values; and an array
     position no entry wrote has no node at all, which is a ``None`` value.
-
-    Args:
-        nodes (Sequence[Tree | None]): The node backing each element, in order.
-
-    Returns:
-        list[Any]: One value per element.
     """
     values: list[Any] = []
     for index, node in enumerate(nodes):
@@ -150,15 +147,10 @@ def element_values(nodes: Sequence[Tree | None]) -> list[Any]:
 
 
 def read_entries(container: Tree, ctx: ParseContext) -> dict[str, EntryRef]:
-    """Read the entries a container holds, in the order they are written.
+    """Read the entries a container holds, in the order written, as a reference per key.
 
-    Args:
-        container (Tree): The container rule node to read: the parse tree root, a ``block``
-            node, or a throwaway node wrapping candidate entry text.
-        ctx (ParseContext): Supplies the key normalisation this format uses.
-
-    Returns:
-        dict[str, EntryRef]: One reference per key, keyed by the normalised key name.
+    The container is the parse tree root, a ``block`` node, or a throwaway node wrapping
+    candidate entry text. Keys are normalised as *ctx* says this format does.
 
     Raises:
         ValueError: If an entry node holds no ``key`` rule, or the wrong number of values
@@ -196,14 +188,7 @@ class EntryReader(Interpreter):
         super().__init__()
 
     def read(self, container: Tree) -> dict[str, EntryRef]:
-        """Visit a container and return the references to the entries below it.
-
-        Args:
-            container (Tree): Container rule node to read.
-
-        Returns:
-            dict[str, EntryRef]: One reference per key, keyed by the normalised key name.
-        """
+        """Visit a container and return the references to its entries, by normalised key."""
         self._refs = {}
         self._slots = {}
         self.visit(container)
@@ -212,13 +197,8 @@ class EntryReader(Interpreter):
     def _record(self, key: str, ref: EntryRef) -> None:
         """Store *ref* for *key*, keeping the entry nodes of any earlier assignment.
 
-        A later assignment wins: its category and its value nodes are what the
-        configuration reports. What it does not do is replace the record of which entries
-        wrote the key, since deleting the key has to remove every one of them.
-
-        Args:
-            key (str): The normalised key.
-            ref (EntryRef): The reference just read.
+        The later assignment's category and value nodes are what the configuration reports,
+        but deleting the key has to remove every entry that wrote it, so all stay listed.
         """
         previous = self._refs.get(key)
         if previous is not None:
@@ -228,12 +208,8 @@ class EntryReader(Interpreter):
     def _refuse_records(self, key: str) -> None:
         """Refuse an entry for a key the file has written records for.
 
-        Args:
-            key (str): The normalised key.
-
-        Raises:
-            ValueError: If *key* has records already. Taking the entry as the key's value
-                would drop them, and as one more record would make it something it is not.
+        Raises ``ValueError``, since taking the entry as the key's value would drop the
+        records, and as one more record would make it something it is not.
         """
         previous = self._refs.get(key)
         if previous is not None and previous.collected:
@@ -242,13 +218,7 @@ class EntryReader(Interpreter):
     def _collect(self, key: str, tree: Tree, node: Tree) -> None:
         """Add a record to the list of them a key holds, in the order the file has them.
 
-        Args:
-            key (str): The normalised key.
-            tree (Tree): The entry rule node writing the record.
-            node (Tree): The value node holding it.
-
-        Raises:
-            ValueError: If *key* was written as something other than records before.
+        Raises ``ValueError`` if *key* was written as something other than records before.
         """
         previous = self._refs.get(key)
         if previous is None:
@@ -267,27 +237,8 @@ class EntryReader(Interpreter):
     def _place(self, key: str, tree: Tree, values: Sequence[Any], nodes: Sequence[Tree | None]) -> str | None:
         """Merge an indexed entry into the array its key names, or say where to store it.
 
-        An indexed assignment writes part of an array, so ``v(1) = 1`` and ``v(2) = 2`` are
-        two entries making up a single two-element ``v``. The positions are as written, and
-        any left unwritten -- by a stride, or by indices that skip -- read as null. An
-        unqualified assignment to a key already written with indices joins the same array.
-
-        An unqualified assignment over an entry that holds *more* values joins it too, and
-        for the same reason: a format may write from the first position and leave the rest,
-        so ``v = 1, 2`` then ``v = 3`` is ``[3, 2]``, not the scalar ``3``. Taking the
-        later entry whole would drop the positions it does not reach, with nothing to show
-        for it. A later entry at least as long covers every position, so it simply wins.
-
-        Args:
-            key (str): The normalised key.
-            tree (Tree): The entry rule node.
-            values (Sequence[Any]): The entry's values.
-            nodes (Sequence[Tree | None]): The node backing each value, ``None`` for a
-                position the entry wrote without one.
-
-        Returns:
-            str | None: ``None`` once the entry has been merged, or the key to store it
-                under as an ordinary entry.
+        Return ``None`` once the entry is merged, else the key to store it under as an
+        ordinary entry; the module docstring says which entries join an array.
         """
         index = self._index_node(tree)
         positions = index_positions(index, len(values))
@@ -305,18 +256,9 @@ class EntryReader(Interpreter):
         return None
 
     def _overwrites_partly(self, key: str, count: int) -> bool:
-        """Report whether an entry of *count* values leaves part of *key* standing.
+        """Report whether *key* already holds more than *count* values.
 
-        Only then does an unqualified assignment have to join the array rather than replace
-        it. Answering ``False`` for the equal-length case is what keeps ``x = 1`` then
-        ``x = 2`` the scalar ``2`` rather than the one-element list the array path builds.
-
-        Args:
-            key (str): The normalised key.
-            count (int): How many values the entry being read holds.
-
-        Returns:
-            bool: True if the key already holds more values than that.
+        ``False`` for equal lengths keeps ``x = 1`` then ``x = 2`` the scalar ``2``.
         """
         ref = self._refs.get(key)
         if ref is None or ref.category not in (KEY_VALUE, KEY_LIST):
@@ -326,15 +268,7 @@ class EntryReader(Interpreter):
     def _seed_slots(self, key: str) -> dict[int, tuple[Any, Tree | None]]:
         """Lay out what a key holds as array positions, so an indexed entry can join it.
 
-        Needed when a file writes the unqualified assignment first, as in ``v = 1`` followed
-        by ``v(2) = 2``: the values already read have to take up the positions they would
-        have occupied before the indexed one can be placed beside them.
-
-        Args:
-            key (str): The normalised key.
-
-        Returns:
-            dict[int, tuple[Any, Tree | None]]: Value and backing node by position.
+        Needed when the unqualified entry comes first: ``v = 1`` then ``v(2) = 2``.
         """
         ref = self._refs.get(key)
         if ref is None:
@@ -347,34 +281,18 @@ class EntryReader(Interpreter):
         return {1 + offset: pair for offset, pair in enumerate(zip(values, ref.value_nodes, strict=True))}
 
     def _get_key(self, tree: Tree) -> str:
-        """Given an entry rule node, extract and return the key name.
+        """Return the key an entry writes: its normalised name, then its array qualifier.
 
-        Args:
-            tree (Tree): An entry rule node (e.g. ``Tree`` with ``.data == "key_value"``).
-
-        Returns:
-            str: The key name, normalised for this format's key case-sensitivity.
-
-        Raises:
-            ValueError: If no ``"key"`` rule node is found among the children.
-            TypeError: If no ``Token`` is found as the first child of the ``"key"`` rule
-                node.
+        The result is the normalised name, as this format's key case says.
         """
         return self._ctx.normalise_key(key_token(tree).value)
 
     @staticmethod
     def _value_nodes(tree: Tree) -> tuple[Tree | None, ...]:
-        """Return the value-type rule nodes among an entry's children.
+        """Return the node backing each element of an entry, in the order written.
 
-        Args:
-            tree (Tree): A ``"key_value"`` or ``"key_list"`` rule node.
-
-        Returns:
-            tuple[Tree | None, ...]: The node backing each element, in order written,
-                and ``None`` for a position the list skipped between two separators.
-
-        Raises:
-            ValueError: If there are no values at all.
+        A repeat appears once per element it covers, and ``None`` stands for a position the
+        list skipped. Raises ``ValueError`` if the entry has no values.
         """
         found: list[Tree | None] = []
         for child in tree.children:
@@ -395,9 +313,6 @@ class EntryReader(Interpreter):
 
         A value whose type collects is one record of a list the key holds, which the file
         writes one entry per record; see ``ValueTypeHandler.collects``.
-
-        Args:
-            tree (Tree): Rule node produced by the ``"key_value"`` grammar rule.
 
         Raises:
             ValueError: If the node holds more than one value, which means the grammar
@@ -424,11 +339,7 @@ class EntryReader(Interpreter):
         self._record(stored, EntryRef(category, (tree,), nodes))
 
     def key_list(self, tree: Tree) -> None:
-        """Interpreter callback for ``"key_list"`` rule nodes.
-
-        Args:
-            tree (Tree): Rule node produced by the ``"key_list"`` grammar rule.
-        """
+        """Interpreter callback for ``"key_list"`` rule nodes."""
         nodes = self._value_nodes(tree)
         key = self._get_key(tree)
         self._refuse_records(key)
@@ -439,19 +350,8 @@ class EntryReader(Interpreter):
     def key_block(self, tree: Tree) -> None:
         """Interpreter callback for ``"key_block"`` rule nodes.
 
-        A key can name more than one block, and what that means depends on which rule holds
-        the contents. A derived type spells one component per line, so ``a%b = 1`` and
-        ``a%c = 2`` are two entries under the single key ``A``: those are merged, since
-        dropping the earlier ones loses data silently.
-
-        A format may instead read a repeated block as *separate records*, where a reader
-        stops at the first block of the name and so no single read ever sees the merge.
-        Then each occurrence is kept, and the caller is handed a list
-        of blocks. Only the format's primary block rule can repeat this way; see
-        ``ConfigParser.repeated_blocks``.
-
-        Args:
-            tree (Tree): Rule node produced by the ``"key_block"`` grammar rule.
+        A key written as a block more than once has its blocks merged or kept apart: see
+        ``_block_ref``.
 
         Raises:
             ValueError: If the key was already given a value. Merging would build a block
@@ -475,13 +375,8 @@ class EntryReader(Interpreter):
     def _block_ref(self, tree: Tree, body: Tree, previous: EntryRef | None) -> EntryRef:
         """Build the reference for a block, folding it into any earlier one for the key.
 
-        Args:
-            tree (Tree): The ``key_block`` node.
-            body (Tree): The child rule node holding the block's contents.
-            previous (EntryRef | None): The reference already recorded for this key.
-
-        Returns:
-            EntryRef: The reference to record.
+        Only a repeat of the primary block rule is kept as a record, where the format reads
+        repeats that way; any other is merged (``ConfigParser.repeated_blocks``).
         """
         primary = str(body.data) == self._ctx.block_rules[0]
         if previous is None:
@@ -489,27 +384,23 @@ class EntryReader(Interpreter):
             # can be written into: that is the only Lark start symbol.
             return EntryRef(KEY_BLOCK, (tree,), block_nodes=(body,), addable=primary)
         if primary and self._ctx.repeated_blocks == "separate":
-            # Another record of the same block. Every occurrence is a real node in the tree,
-            # so each stays addable in its own right.
+            # Another record of the same block. A reader that stops at the first block of a
+            # name never sees a merge of several, so each occurrence is kept, and as each is
+            # a real node in the tree it stays addable in its own right.
             return EntryRef(KEY_BLOCK, (tree,), block_nodes=(*previous.block_nodes, body), addable=True)
-        # Merged: a node the parse tree does not contain, holding the *real* children of
-        # both, so that updating a value through it mutates the tree and the file is written
-        # back with only that value changed. It is never given to ``AddParent``, so its
-        # children keep the ``.parent`` pointing into the real tree. Nothing can be spliced
-        # into it and have that reach the file.
+        # Merged, since dropping the earlier blocks would lose data silently: a derived type
+        # spells one component per line, so ``a%b = 1`` and ``a%c = 2`` are two entries
+        # under the single key ``A``. The merged node is not in the parse tree but holds the
+        # *real* children of both, so that updating a value through it mutates the tree and
+        # the file is written back with only that value changed. It is never given to
+        # ``AddParent``, so its children keep the ``.parent`` pointing into the real tree.
+        # Nothing can be spliced into it and have that reach the file.
         last = previous.block_nodes[-1]
         merged = Tree(last.data, [*last.children, *body.children])
         return EntryRef(KEY_BLOCK, (tree,), block_nodes=(*previous.block_nodes[:-1], merged), addable=False)
 
     def key_null(self, tree: Tree) -> None:
-        """Interpreter callback for ``"key_null"`` rule nodes.
-
-        A valueless assignment can carry an array qualifier too, and then it sets one
-        position of an array the other entries fill in.
-
-        Args:
-            tree (Tree): Rule node produced by the ``"key_null"`` grammar rule.
-        """
+        """Interpreter callback for ``"key_null"`` rule nodes."""
         key = self._get_key(tree)
         self._refuse_records(key)
         if self._index_node(tree) is not None or key in self._slots:
