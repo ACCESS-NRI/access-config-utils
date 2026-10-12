@@ -58,8 +58,7 @@ class TestResourceFileEntries:
     def test_a_list_is_parted_by_spaces(self, parser, source, expected) -> None:
         """Test ``rfile_key_list``: at this level whitespace alone separates the values.
 
-        This is the opposite of a table entry, where the separator is a colon and whitespace
-        around it is not admitted at all.
+        A table entry is the opposite: a colon separates, with no whitespace around it.
         """
         config = parser.parse(source)
 
@@ -88,8 +87,7 @@ class TestResourceFileEntries:
     def test_one_entry_does_not_swallow_the_next(self, parser, source) -> None:
         """Test that a space-parted list stops at the end of its line.
 
-        A list runs on until ``line_end``, so the risk is the key on the next line being
-        taken for one more value.
+        A list runs until ``line_end``; the risk is the next line's key read as a value.
         """
         config = parser.parse(source)
 
@@ -142,10 +140,7 @@ class TestTables:
     def test_a_table_does_not_nest(self, parser) -> None:
         """Test that ``block_line`` admits only assignments and blank lines.
 
-        This format has one level of grouping, so a table inside a table is refused rather
-        than read as something else. Written flush left, so that the only thing refusing it
-        is the missing alternative in ``block_line`` -- an indented inner table would also
-        fail on its closing delimiter, which is a different rule.
+        One level of grouping: a table inside a table is refused, not misread.
         """
         with pytest.raises(UnexpectedInput):
             parser.parse("T::\nU::\na=1\n::\n::\n")
@@ -153,9 +148,7 @@ class TestTables:
     def test_only_the_opening_delimiter_may_be_indented(self, parser) -> None:
         """Test the asymmetry in ``rfile_key_block``.
 
-        The rule is ``ws* key "::" line_end block "::" line_end``: there is a ``ws*`` before
-        the key that opens the table and none before the ``::`` that closes it. Every table
-        in a real file closes flush left, so the grammar has never had to admit otherwise.
+        ``ws*`` precedes the opening key, not the closing ``::``: real files close flush.
         """
         source = " T::\n a = 1\n::\n"
         config = parser.parse(source)
@@ -191,9 +184,7 @@ class TestTableEntries:
     def test_a_list_is_parted_by_colons(self, parser, text, expected) -> None:
         """Test ``block_key_list``: at this level a colon separates the values.
 
-        The rule is ``value (":" value)+`` with no ``ws`` in it, so the colons are tight
-        against the values. ``ocn2glc_levels`` in a real ``nuopc.runconfig`` is written this
-        way.
+        The colons are tight against the values; ``ocn2glc_levels`` is written this way.
         """
         source = f"T::\n a = {text}\n::\n"
         config = parser.parse(source)
@@ -224,10 +215,7 @@ class TestTheTwoSyntaxes:
     def test_an_entry_is_written_in_the_syntax_of_its_own_level(self, parser, source) -> None:
         """Test that a table entry is not written back in the resource-file syntax.
 
-        The two levels alias their entries to the same rule names, so what tells them apart
-        when writing out is the ``=`` a table entry keeps in the parse tree. Without it a
-        table entry can be written as ``a: 1`` -- a file that does not parse -- whenever the
-        two levels admit the same sequence of children.
+        Both levels use the same rule names; only the kept ``=`` tells them apart.
         """
         assert str(parser.parse(source)) == source
 
@@ -279,10 +267,9 @@ class TestNullEntries:
         assert dict(parser.parse(str(config))) == dict(config)
 
     def test_a_value_and_a_null_do_not_replace_each_other(self, parser) -> None:
-        """Test that a null cannot be written over a value in place, or a value over a null.
+        """Test that a null is not written over a value in place, nor a value over a null.
 
-        The two are entries of different categories, so the change is a change of type,
-        refused as in the other formats.
+        They are entries of different categories, so it is a change of type.
         """
         config = parser.parse("A:\nB: 1\n")
 
@@ -314,8 +301,7 @@ class TestValueTypes:
     def test_each_value_type_reads_and_writes_back_unchanged(self, parser, text, expected) -> None:
         """Test one case per value type, in the spellings a ``nuopc.runconfig`` uses.
 
-        The ``D`` exponent is the notable one: it is the double-precision spelling the ESMF
-        documentation this grammar was written from uses throughout.
+        The ``D`` exponent is the notable one: the ESMF documentation uses it throughout.
         """
         source = f"A: {text}\n"
         config = parser.parse(source)
@@ -395,9 +381,7 @@ class TestRejected:
     def test_malformed_input_raises(self, parser, source) -> None:
         """Test that each of these raises rather than parsing.
 
-        Notable cases: a table must be opened with ``::`` and closed, a table entry holds
-        one assignment per line, the comment character is ``#`` not ``!``, and a colon
-        list admits no whitespace around its separators.
+        Notable: tables open and close with ``::``, comments are ``#`` not ``!``.
         """
         with pytest.raises(UnexpectedInput):
             parser.parse(source)
@@ -425,9 +409,7 @@ class TestRoundTripFidelity:
     def test_the_shape_of_the_file_survives(self, parser, name, source) -> None:
         """Test the line and whitespace forms the terminals admit.
 
-        ``NEWLINE`` is ``CR? LF``, so a file written on Windows has to come back with its
-        carriage returns. ``parse`` appends a newline to simplify the grammar, so a file
-        without one is the case where that has to be undone on the way out.
+        CRLF files keep their carriage returns, and a missing final newline stays missing.
         """
         assert str(parser.parse(source)) == source
 
@@ -448,10 +430,7 @@ class TestAssignmentSpacing:
     def test_whitespace_stays_on_its_own_side(self, parser, source) -> None:
         """Test that the position of a single whitespace run survives.
 
-        The "=" is an anonymous literal, so Lark filters it out of the parse tree. With a
-        bare "ws*" on each side, the tree records that a run exists but not which side of
-        the "=" it fell on. Here that also let the reconstructor confuse this rule with the
-        resource-file rule aliased to the same name, and write "Verbosity: off" instead.
+        Else it confused this rule with the resource-file one and wrote "Verbosity: off".
         """
         assert str(parser.parse(source)) == source
 
@@ -515,8 +494,7 @@ class TestAddingAnEntry:
     def test_a_new_two_element_list_in_a_table_uses_the_table_separator(self, parser) -> None:
         """Test the length at which the two levels hold the same children.
 
-        A list of two is the shape a top-level list can also take, so it is the case where
-        the entry could be written with the top-level separator instead.
+        A list of two could also be written with the top-level separator.
         """
         config = parser.parse("TEST::\n a = 1:2:3\n::\n")
 
@@ -528,8 +506,7 @@ class TestAddingAnEntry:
     def test_a_new_key_ends_its_line_like_its_neighbour(self, parser) -> None:
         """Test a Windows line ending, which the comment before it would otherwise take.
 
-        The comment rule runs to the line feed, so the carriage return is part of it, and
-        leaving the comment out of the new line must not leave that out too.
+        The comment rule runs to the line feed, so the carriage return belongs to it.
         """
         config = parser.parse("a: 1 # one\r\n")
 
@@ -541,8 +518,7 @@ class TestAddingAnEntry:
     def test_a_new_key_lands_between_comments_rather_than_inside_one(self, parser) -> None:
         """Test that a comment run is stepped over, as far as the first blank line.
 
-        A comment on the entry's own line is held by that entry, so the position one past
-        it is the second line of the comment.
+        A comment on the entry's own line is held by that entry: one past it is inside it.
         """
         config = parser.parse("A: 1  # what A is\n# ...continued\n")
         config["NEW"] = 2
@@ -576,9 +552,7 @@ class TestAddingAnEntry:
     def test_a_new_table_body_is_indented(self, parser) -> None:
         """Test the ``entry_templates`` this parser declares.
 
-        Nothing in the grammar requires a table entry to be indented, so the text derived
-        from the grammar alone would put the first entry of a new table in column 0. Every
-        table in the ESMF documentation and in a real file indents its body.
+        Nothing in the grammar requires indenting a table entry; every real table does it.
         """
         config = parser.parse("A: 1\n")
 
@@ -617,9 +591,7 @@ class TestAddingAnEntry:
     def test_what_a_nuopc_config_cannot_express(self, parser) -> None:
         """Test the additions the format has no syntax for.
 
-        This grammar has no quoted-string value type, so a string that is not a bare word
-        cannot be written at all. A bare word that would read back as something else -- a
-        number, or a path -- is refused for the same reason.
+        No quoted-string type: what is not a bare word, or reads as a number, is refused.
         """
         config = parser.parse("A: 1\n")
 
@@ -636,8 +608,7 @@ class TestDeleting:
     def test_every_entry_that_wrote_a_key_is_removed(self, parser) -> None:
         """Test that a key assigned twice does not reappear the next time it is read.
 
-        Only the last assignment survives in the configuration, so removing just the entry
-        it came from left the earlier ones in the file.
+        Only the last assignment is in the dict; removing only its entry left the others.
         """
         config = parser.parse("A: 1\nA: 2\nB: 3\n")
         assert dict(config) == {"A": 2, "B": 3}
@@ -763,15 +734,9 @@ NEWTABLE::
 def test_a_whole_file_parses_edits_and_round_trips(parser):
     """Test that the rules above compose, over a file carrying all of them at once.
 
-    Each focused test pins one construct in isolation. This one is the anchor: two tables,
-    top-level entries between them, comments in five different positions and blank lines
-    inside a table, all read, changed, added to and written back with one byte-exact
-    expectation.
-
-    What it covers that no focused test can: that an edit at one level leaves the other
-    alone, that a new entry takes the syntax of the container it goes into rather than the
-    file's first, and that a table created from nothing copies the indentation of the tables
-    already there.
+    It pins what no focused test can: that an edit at one level leaves the other alone,
+    that a new entry takes the syntax of its own container, and that a table created from
+    nothing copies the indentation of the tables already there.
     """
     config = parser.parse(SAMPLE)
     assert dict(config) == SAMPLE_VALUES
@@ -794,7 +759,6 @@ def test_a_whole_file_parses_edits_and_round_trips(parser):
 def test_canonical_entry_text(parser, container, category, expected) -> None:
     """Test the text this format writes for a new entry with no neighbour to copy from.
 
-    Byte-exact, and re-parsed in the container it was generated for. These rows are the
-    statement of what this grammar can express and how it spells it.
+    Byte-exact, and re-parsed in the container it was written for.
     """
     assert_canonical_entry(parser, container, category, expected)

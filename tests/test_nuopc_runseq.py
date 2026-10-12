@@ -366,8 +366,7 @@ class TestAddingAndDeleting:
     def test_adding_a_table(self, parser, value, added) -> None:
         """Test that a new table is written after the last.
 
-        Neither table above is copied: the only one is a list, whose rows are indented by
-        how deep in the loops each is, which says nothing about the rows of another.
+        Nothing is copied: the one table is a list whose rows are indented by loop depth.
         """
         source = "runSeq::\n@3600\n  OCN\n@\n::\n"
         config = parser.parse(source)
