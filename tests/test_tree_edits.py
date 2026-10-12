@@ -18,6 +18,7 @@ from lark import Token, Tree
 from lark.exceptions import UnexpectedInput
 
 from access.config.grammar_compiled import compile_grammar
+from access.config.grammar_values import UnsupportedEntryError
 from access.config.tree_edits import (
     _runs_of,
     _source_token,
@@ -571,6 +572,48 @@ class TestWritingRepeats:
 
         with pytest.raises(ValueError, match="assigns some of its positions twice"):
             write_values([node, node], [1, 2], lark)
+
+    def test_a_value_the_file_refuses_leaves_every_node_as_it_was(self, lark) -> None:
+        """Test that a write is all or nothing.
+
+        The first element is fine and the second is not, and the first must not have been
+        written by the time that is found out.
+        """
+        entry = self._entry(lark, "x = 1, 2\n")
+        nodes = [child for child in entry.children if is_value_node(child)]
+
+        with pytest.raises(TypeError, match="change value type"):
+            write_values(nodes, [5, "text"], lark)
+
+        assert [str(node.children[0]) for node in nodes] == ["1", "2"]
+
+    def test_a_value_the_format_cannot_write_leaves_every_node_as_it_was(self, lark) -> None:
+        """Test that the text of every value is worked out before any node changes.
+
+        A NaN has the right type, so it passes the check on that, but no format writes one.
+        """
+        entry = self._entry(lark, "x = 1.0, 2.0\n")
+        nodes = [child for child in entry.children if is_value_node(child)]
+
+        with pytest.raises(UnsupportedEntryError):
+            write_values(nodes, [5.0, float("nan")], lark)
+
+        assert [str(node.children[0]) for node in nodes] == ["1.0", "2.0"]
+
+    def test_a_value_refused_in_a_later_entry_leaves_the_earlier_entry_as_it_was(self, lark) -> None:
+        """Test that an array spread over several entries is written whole or not at all.
+
+        The second entry holds a repeat, which is checked by another route than a node.
+        """
+        first = self._entry(lark, "x = 1\n")
+        second = self._entry(lark, "y = 2*2\n")
+        plain = next(child for child in first.children if is_value_node(child))
+        repeat = next(child for child in second.children if is_value_node(child))
+
+        with pytest.raises(TypeError, match="change value type"):
+            write_values([plain, repeat, repeat], [7, "a", "b"], lark)
+
+        assert str(plain.children[0]) == "1"
 
     def test_groups_interleaved_entries_by_the_entry_that_wrote_them(self, lark) -> None:
         """Test that an entry is rewritten once with everything it holds.

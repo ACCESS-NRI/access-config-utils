@@ -15,6 +15,7 @@ configuration carries around so that it can still edit itself long after ``parse
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -142,26 +143,15 @@ class ParseContext:
         return key.lower() if self.key_case == "lower" else key.upper()
 
 
-_GRAMMAR_CACHE: dict[str, CompiledGrammar] = {}
-"""Compiled grammars, keyed by grammar text.
-
-Keyed on the text rather than on the parser class, because ``ConfigParser.grammar`` is a
-property and so could differ between instances of one class, and because parsers sharing a
-grammar should share the compiled result. Concurrent first use may compile twice and discard
-one result, which is wasteful but harmless.
-"""
-
-
-def clear_grammar_cache() -> None:
-    """Discard every cached compiled grammar.
-
-    Only needed by tests that change a grammar between parses.
-    """
-    _GRAMMAR_CACHE.clear()
-
-
+@functools.cache
 def compile_grammar(grammar: str) -> CompiledGrammar:
-    """Compile a grammar, or return the cached result for it.
+    """Compile a grammar, or return the result already compiled for the same text.
+
+    The result is cached on the text rather than on the parser class, because
+    ``ConfigParser.grammar`` is a property and so could differ between instances of one
+    class, and because parsers sharing a grammar should share the compiled result.
+    Concurrent first use may compile twice and discard one result, which is wasteful but
+    harmless. ``compile_grammar.cache_clear()`` forgets every result.
 
     The parser is built with ``"block"`` as an additional start symbol, so the text of an
     entry can be parsed in the context it will live in. That is only possible when the
@@ -177,16 +167,12 @@ def compile_grammar(grammar: str) -> CompiledGrammar:
     Returns:
         CompiledGrammar: The compiled parser and the artefacts derived from it.
     """
-    compiled = _GRAMMAR_CACHE.get(grammar)
-    if compiled is None:
-        lark = _build(grammar, [START_RULE])
-        defined = {str(rule.origin.name) for rule in lark.rules}
-        extra = [name for name in OPTIONAL_START_RULES if name in defined]
-        if extra:
-            lark = _build(grammar, [START_RULE, *extra])
-        compiled = CompiledGrammar(lark, Reconstructor(lark), GrammarInfo.from_lark(lark))
-        _GRAMMAR_CACHE[grammar] = compiled
-    return compiled
+    lark = _build(grammar, [START_RULE])
+    defined = {str(rule.origin.name) for rule in lark.rules}
+    extra = [name for name in OPTIONAL_START_RULES if name in defined]
+    if extra:
+        lark = _build(grammar, [START_RULE, *extra])
+    return CompiledGrammar(lark, Reconstructor(lark), GrammarInfo.from_lark(lark))
 
 
 def _build(grammar: str, start: list[str]) -> Lark:

@@ -20,7 +20,6 @@ from access.config.grammar_compiled import (
     GRAMMAR_DIR,
     CompiledGrammar,
     ParseContext,
-    clear_grammar_cache,
     compile_grammar,
 )
 from access.config.grammar_info import GrammarInfo
@@ -52,9 +51,9 @@ WITHOUT_BLOCK = """
 @pytest.fixture(autouse=True)
 def _isolate_the_cache():
     """Give every test a cache of its own, so none can see another's compiled grammar."""
-    clear_grammar_cache()
+    compile_grammar.cache_clear()
     yield
-    clear_grammar_cache()
+    compile_grammar.cache_clear()
 
 
 class TestCompileGrammar:
@@ -81,13 +80,6 @@ class TestCompileGrammar:
     def test_different_text_gets_its_own_result(self) -> None:
         """Test that the key is the grammar text, so two formats do not share a parser."""
         assert compile_grammar(WITHOUT_BLOCK) is not compile_grammar(WITH_BLOCK)
-
-    def test_clearing_the_cache_forces_a_recompile(self) -> None:
-        """Test the escape hatch a test needs when it changes a grammar between parses."""
-        first = compile_grammar(WITHOUT_BLOCK)
-        clear_grammar_cache()
-
-        assert compile_grammar(WITHOUT_BLOCK) is not first
 
 
 class TestStartSymbols:

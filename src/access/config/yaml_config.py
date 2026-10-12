@@ -73,20 +73,6 @@ def _line_content(line: str) -> tuple[int, str]:
     return column, _TRAILING_COMMENT.sub("", stripped).rstrip()
 
 
-def _is_bare_key(content: str) -> bool:
-    """Whether a line's content is a key with nothing after the colon.
-
-    Only such a key can have a nested mapping or block sequence below it.
-
-    Args:
-        content (str): The content of a line, as returned by ``_line_content``.
-
-    Returns:
-        bool: True for ``key:``, False for ``key: value`` and anything else.
-    """
-    return content.endswith(":") and ": " not in content
-
-
 def guess_indent(text: str) -> dict[str, int]:
     """Read the indentation a YAML text uses for its mappings and block sequences.
 
@@ -118,7 +104,8 @@ def guess_indent(text: str) -> dict[str, int]:
                 found["mapping"] = column - key_column
         if len(found) == len(DEFAULT_INDENT):
             break
-        key_column = column if _is_bare_key(content) else None
+        # Only a key with nothing after its colon can have a mapping or sequence below it.
+        key_column = column if content.endswith(":") and ": " not in content else None
 
     return {**DEFAULT_INDENT, **found}
 

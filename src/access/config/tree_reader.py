@@ -106,28 +106,6 @@ class EntryRef:
         return self.block_nodes[0] if self.block_nodes else None
 
 
-def merge_blocks(first: Tree, second: Tree) -> Tree:
-    """Combine two block nodes into one that reads as though they were written together.
-
-    The result is a node the parse tree does not contain, holding the *real* children of
-    both. That is what makes it safe: the entries inside it are the ones Lark built, so
-    updating a value through this node mutates the original tree, and the file is written
-    back with only that value changed. Nothing is copied, and the two source blocks stay
-    exactly where they were.
-
-    It is deliberately never given to ``AddParent``: its children keep the ``.parent`` they
-    already had, pointing into the real tree, so an edit through this node reaches the file.
-
-    Args:
-        first (Tree): Block node seen first, or a merged node built from earlier ones.
-        second (Tree): Block node to merge into it.
-
-    Returns:
-        Tree: A block node holding the children of both, in order.
-    """
-    return Tree(first.data, [*first.children, *second.children])
-
-
 def entry_value(ref: EntryRef) -> Any:
     """Return the Python value an entry holds.
 
@@ -514,9 +492,13 @@ class EntryReader(Interpreter):
             # Another record of the same block. Every occurrence is a real node in the tree,
             # so each stays addable in its own right.
             return EntryRef(KEY_BLOCK, (tree,), block_nodes=(*previous.block_nodes, body), addable=True)
-        # Merged: the result is a node the parse tree does not contain, so nothing can be
-        # spliced into it and have that reach the file.
-        merged = merge_blocks(previous.block_nodes[-1], body)
+        # Merged: a node the parse tree does not contain, holding the *real* children of
+        # both, so that updating a value through it mutates the tree and the file is written
+        # back with only that value changed. It is never given to ``AddParent``, so its
+        # children keep the ``.parent`` pointing into the real tree. Nothing can be spliced
+        # into it and have that reach the file.
+        last = previous.block_nodes[-1]
+        merged = Tree(last.data, [*last.children, *body.children])
         return EntryRef(KEY_BLOCK, (tree,), block_nodes=(*previous.block_nodes[:-1], merged), addable=False)
 
     def key_null(self, tree: Tree) -> None:

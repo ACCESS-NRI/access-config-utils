@@ -21,7 +21,6 @@ normalisation and the tree update.
 
 from __future__ import annotations
 
-import copy
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any, NoReturn, SupportsIndex
 
@@ -202,16 +201,8 @@ class ConfigList(list):
         self._write(updated, origins)
         return self
 
-    def __copy__(self) -> list[Any]:
-        """Return a plain list holding the same elements, a record as a plain dict."""
-        return [_plain(value) for value in self]
-
-    def __deepcopy__(self, memo: dict[int, Any]) -> list[Any]:
-        """Return a plain list holding copies of the elements."""
-        return copy.deepcopy([_plain(value) for value in self], memo)
-
     def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[Any, ...]:
-        """Pickle as a plain list: the parse tree is not part of the data."""
+        """Copy and pickle as a plain list, a record as a plain dict: no parse tree."""
         return list, ([_plain(value) for value in self],)
 
 
@@ -298,16 +289,8 @@ class ConfigRecord(dict):
         self.update(other)
         return self
 
-    def __copy__(self) -> dict[str, Any]:
-        """Return a plain dict holding the same parameters."""
-        return dict(self)
-
-    def __deepcopy__(self, memo: dict[int, Any]) -> dict[str, Any]:
-        """Return a plain dict holding copies of the parameters."""
-        return copy.deepcopy(dict(self), memo)
-
     def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[Any, ...]:
-        """Pickle as a plain dict: the parse tree is not part of the data."""
+        """Copy and pickle as a plain dict: the parse tree is not data."""
         return dict, (dict(self),)
 
 
@@ -509,7 +492,7 @@ class Config(dict):
         if len(keys) == 1:
             dict.__setitem__(self, key, self._wrap(key, ref))
         else:
-            anchor._refresh(keys)
+            anchor._reread(keys)
 
         if records:
             if len(value) > 1:
@@ -581,26 +564,6 @@ class Config(dict):
             rest.append((len(keys), others))
             keys, raw_keys, value = [*keys, self._store.ctx.normalise_key(raw)], [*raw_keys, raw], inner
 
-    def _refresh(self, path: Sequence[str]) -> None:
-        """Read this configuration again after an entry was added below it, down *path*.
-
-        The configurations already on the path are kept, so that a caller holding one sees
-        the new key, and are pointed at their blocks as read afresh: a block merged from
-        several in the file is a node the reader builds, and reading again builds a new one.
-        Where the path leaves them, the rest is new and is wrapped whole.
-
-        Args:
-            path (Sequence[str]): Keys leading from this configuration to the new entry.
-        """
-        refs = self._store.reread()
-        key = path[0]
-        child = dict.get(self, key)
-        if isinstance(child, Config) and len(path) > 1:
-            child._store.retarget(refs[key])
-            child._refresh(path[1:])
-        else:
-            dict.__setitem__(self, key, self._wrap(key, refs[key]))
-
     def _at(self, path: Sequence[str]) -> Any:
         """Return what the keys of *path* lead to from this configuration."""
         found: Any = self
@@ -650,11 +613,17 @@ class Config(dict):
             anchor._reread(path[::-1])
 
     def _reread(self, path: Sequence[str]) -> None:
-        """Read this configuration again, then the one at *path* below it.
+        """Read this configuration again after the tree changed below it, then down *path*.
+
+        What the file no longer has leaves the dict. The configurations already on the path
+        are kept, so that a caller holding one sees the change, and are pointed at their
+        blocks as read afresh: a block merged from several in the file is a node the reader
+        builds, and reading again builds a new one. Where the path leaves them, the rest is
+        new and is wrapped whole.
 
         Args:
-            path (Sequence[str]): Keys leading down to the configuration a deletion was made
-                in, starting with a key of this one.
+            path (Sequence[str]): Keys leading down to the configuration the change was made
+                in, starting with a key of this one; for an entry just added, down to it.
         """
         refs = self._store.reread()
         for vanished in [key for key in self if key not in refs]:
@@ -662,10 +631,14 @@ class Config(dict):
             if isinstance(child, Config):
                 child._parent = None
             dict.__delitem__(self, vanished)
-        child = dict.get(self, path[0]) if path else None
-        if isinstance(child, Config):
-            child._store.retarget(refs[path[0]])
-            child._reread(path[1:])
+        if path and path[0] in refs:
+            key = path[0]
+            child = dict.get(self, key)
+            if isinstance(child, Config):
+                child._store.retarget(refs[key])
+                child._reread(path[1:])
+            elif key not in self:
+                dict.__setitem__(self, key, self._wrap(key, refs[key]))
 
     # --- Remaining mapping protocol ---
     #

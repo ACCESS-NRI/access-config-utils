@@ -55,6 +55,18 @@ def update_node_value(rule_node: Tree, value: Any) -> None:
     Raises:
         TypeError: Raises an exception if the new and old value types do not match.
     """
+    text = _updated_text(rule_node, value)
+    if text is not None:
+        token = rule_node.children[0]
+        assert isinstance(token, Token)
+        rule_node.children[0] = token.update(value=text)
+
+
+def _updated_text(rule_node: Tree, value: Any) -> str | None:
+    """Return the token text that writes *value* over a node, or ``None`` if it holds it.
+
+    Raises ``TypeError`` for a value of another type, and whatever the handler refuses.
+    """
     handler = VALUE_TYPE_HANDLER_REGISTRY.get(str(rule_node.data))
     if handler is None or not handler.type_check(value):
         raise TypeError("Trying to change value type")
@@ -62,9 +74,8 @@ def update_node_value(rule_node: Tree, value: Any) -> None:
     token = rule_node.children[0]
     assert isinstance(token, Token)
     if identical_values(handler.from_token(str(token)), value):
-        return
-    transformed_value = handler.to_token(value, str(token))
-    rule_node.children[0] = token.update(value=transformed_value)
+        return None
+    return handler.to_token(value, str(token))
 
 
 def parse_entry_nodes(lark: Lark, container: str, snippet: str) -> list[Tree | Token]:
@@ -437,6 +448,9 @@ def write_values(refs: Sequence[Tree | None], values: Sequence[Any], lark: Lark)
       and each entry has to be dealt with on its own.
     - An array can have positions no entry wrote, which have no node to write through.
 
+    The write is all or nothing: every value is checked, and every token text worked out,
+    before the first node changes.
+
     Args:
         refs (Sequence[Tree | None]): The node backing each element, a repeat appearing once
             per element it covers and ``None`` where the file wrote nothing.
@@ -449,15 +463,33 @@ def write_values(refs: Sequence[Tree | None], values: Sequence[Any], lark: Lark)
     Raises:
         ValueError: If a value was assigned to a position the file never wrote, or to an
             array position that another entry later overwrote.
+        TypeError: If a value is not of the type of the element it replaces, or the format
+            cannot write it.
     """
     for ref, value in zip(refs, values, strict=True):
         if ref is None and value is not None:
             raise ValueError("Cannot write to an array position the file leaves unset; assign a whole new list instead")
 
+    groups = _by_entry(refs)
+    # Whatever the file can refuse is refused before the first node changes, so a list it
+    # cannot take is left exactly as it was.
+    for entry, occurrences in groups:
+        _check_entry(entry, occurrences, values)
+
     written: list[Tree | None] = list(refs)
-    for entry, occurrences in _by_entry(refs):
+    for entry, occurrences in groups:
         _write_entry(entry, occurrences, values, written, lark)
     return written
+
+
+def _check_entry(entry: Tree, occurrences: list[tuple[int, Tree]], values: Sequence[Any]) -> None:
+    """Refuse, changing nothing, any value ``_write_entry`` could not write."""
+    nodes = _entry_value_nodes(entry)
+    if any(node.data == REPEAT_RULE for node in nodes):
+        _repeat_texts(nodes, occurrences, values)
+    else:
+        for position, node in occurrences:
+            _updated_text(node, values[position])
 
 
 def _write_entry(
@@ -481,26 +513,15 @@ def _write_entry(
         ValueError: If the entry writes values that no longer appear in the list, so
             rewriting it would change how many it holds.
     """
-    by_node: dict[int, list[int]] = {}
-    for position, node in occurrences:
-        by_node.setdefault(id(node), []).append(position)
-
     nodes = _entry_value_nodes(entry)
     if not any(node.data == REPEAT_RULE for node in nodes):
         for position, node in occurrences:
             update_node_value(node, values[position])
         return
 
-    held = sum(len(node_values(node)) for node in nodes)
-    if held != len(occurrences):
-        raise ValueError(
-            "Cannot write this list: the file assigns some of its positions twice, so "
-            "rewriting one entry would change how many values it holds"
-        )
-
     # An entry that held a repeat where a single value goes becomes a list entry once the
     # repeat is split, and that is a change to the entry itself rather than to one node.
-    texts_by_node = [(node, _value_texts(node, [values[at] for at in by_node[id(node)]])) for node in nodes]
+    texts_by_node = _repeat_texts(nodes, occurrences, values)
     if str(entry.data) == KEY_VALUE and sum(len(texts) for _, texts in texts_by_node) > 1:
         fresh = recategorise_entry(entry, [text for _, texts in texts_by_node for text in texts], lark)
     else:
@@ -509,6 +530,28 @@ def _write_entry(
     flat = [node for node in fresh for _ in node_values(node)]
     for (position, _), node in zip(occurrences, flat, strict=True):
         written[position] = node
+
+
+def _repeat_texts(
+    nodes: Sequence[Tree], occurrences: list[tuple[int, Tree]], values: Sequence[Any]
+) -> list[tuple[Tree, list[str]]]:
+    """Return the texts that take the place of each value node of an entry holding a repeat.
+
+    Raises:
+        ValueError: If the entry writes values that no longer appear in the list, so
+            rewriting it would change how many it holds.
+        TypeError: If a value is not of the type of the node it replaces.
+    """
+    held = sum(len(node_values(node)) for node in nodes)
+    if held != len(occurrences):
+        raise ValueError(
+            "Cannot write this list: the file assigns some of its positions twice, so "
+            "rewriting one entry would change how many values it holds"
+        )
+    by_node: dict[int, list[int]] = {}
+    for position, node in occurrences:
+        by_node.setdefault(id(node), []).append(position)
+    return [(node, _value_texts(node, [values[at] for at in by_node[id(node)]])) for node in nodes]
 
 
 def _by_entry(refs: Sequence[Tree | None]) -> list[tuple[Tree, list[tuple[int, Tree]]]]:

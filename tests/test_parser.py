@@ -21,7 +21,6 @@ from pathlib import Path
 import pytest
 from conftest import TOY_GRAMMAR
 
-from access.config.grammar_compiled import clear_grammar_cache
 from access.config.grammar_values import VALUE_RULE_PRIORITY
 from access.config.parser import ConfigParser
 
@@ -747,14 +746,10 @@ def test_config_list_operations(parser):
 
 
 def test_config_grammar_cache(parser):
-    """Test that a grammar is compiled once and that the cache can be cleared"""
+    """Test that a grammar is compiled once, since that costs far more than parsing"""
     first = parser.parse("a=1")
     second = parser.parse("a=1")
-    # Compiling costs far more than parsing, so the result is shared.
     assert first._store.ctx.grammar is second._store.ctx.grammar
-
-    clear_grammar_cache()
-    assert parser.parse("a=1")._store.ctx.grammar is not first._store.ctx.grammar
 
 
 def test_config_case_insensitive(case_parser):

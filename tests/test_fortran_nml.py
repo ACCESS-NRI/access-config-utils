@@ -24,6 +24,7 @@ from lark.exceptions import UnexpectedInput
 
 from access.config.fortran_nml import FortranNMLParser
 from access.config.grammar_compiled import compile_grammar
+from access.config.grammar_values import UnsupportedEntryError
 
 
 @pytest.fixture(scope="module")
@@ -920,6 +921,31 @@ class TestEditingAValue:
             config["L"]["W"] = value
 
         assert str(config) == "&L\n  w = continue\n/\n"
+
+    @pytest.mark.parametrize(
+        ("text", "value", "error"),
+        [
+            ("x = 1, 2", [5, "text"], TypeError),
+            ("x = 1.0, 2.0", [5.0, float("nan")], UnsupportedEntryError),
+            ("x = 1, 3*2", [5, 2, 2, "text"], TypeError),
+        ],
+    )
+    def test_a_list_the_file_cannot_take_leaves_the_file_and_the_list_as_they_were(
+        self, parser, text, value, error
+    ) -> None:
+        """Test that a refused list is refused as a whole.
+
+        The elements ahead of the one that cannot be written must not have been written by
+        the time that is found out, or the file would hold a list the dict does not.
+        """
+        config = parser.parse(f"&L\n  {text}\n/\n")
+        before = list(config["L"]["X"])
+
+        with pytest.raises(error):
+            config["L"]["X"] = value
+
+        assert str(config) == f"&L\n  {text}\n/\n"
+        assert config["L"]["X"] == before
 
     def test_one_list_element_leaves_the_others_as_written(self, parser) -> None:
         """Test that writing one element does not rewrite the notation of the rest."""
