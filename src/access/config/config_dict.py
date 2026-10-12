@@ -610,7 +610,7 @@ class Config(dict):
         if path:
             anchor._reread(path[::-1])
 
-    def _reread(self, path: Sequence[str]) -> None:
+    def _reread(self, path: Sequence[str], ref: EntryRef | None = None) -> None:
         """Read this configuration again after the tree changed below it, then down *path*.
 
         What the file no longer has leaves the dict. The configurations already on the path
@@ -622,8 +622,10 @@ class Config(dict):
         Args:
             path (Sequence[str]): Keys leading down to the configuration the change was made
                 in, starting with a key of this one; for an entry just added, down to it.
+            ref (EntryRef | None): The reference its parent read afresh for this block, to
+                point this configuration at; ``None`` for the one the reading starts from.
         """
-        refs = self._store.reread()
+        refs = self._store.reread(ref)
         for vanished in [key for key in self if key not in refs]:
             child = dict.__getitem__(self, vanished)
             if isinstance(child, Config):
@@ -633,8 +635,7 @@ class Config(dict):
             key = path[0]
             child = dict.get(self, key)
             if isinstance(child, Config):
-                child._store.retarget(refs[key])
-                child._reread(path[1:])
+                child._reread(path[1:], refs[key])
             elif key not in self:
                 dict.__setitem__(self, key, self._wrap(key, refs[key]))
 

@@ -421,16 +421,12 @@ class FakeStore:
         self.calls.append(("remove", key))
         del self.refs[key]
 
-    def reread(self) -> dict[str, EntryRef]:
-        """Record the request and report the references declared for it."""
-        self.calls.append(("reread", None))
+    def reread(self, ref: EntryRef | None = None) -> dict[str, EntryRef]:
+        """Record the request, and the reference the store was pointed at, if any."""
+        self.calls.append(("reread", ref))
         if self._reread is not None:
             self.refs = self._reread
         return self.refs
-
-    def retarget(self, ref: EntryRef) -> None:
-        """Record which reference the store was pointed at."""
-        self.calls.append(("retarget", ref))
 
     def render(self) -> str:
         """Return the canned text."""

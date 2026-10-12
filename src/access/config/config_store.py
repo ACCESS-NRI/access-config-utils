@@ -348,7 +348,7 @@ class ConfigStore:
             remove_entry_node(entry_node, self.ctx.info)
         del self.refs[key]
 
-    def reread(self) -> dict[str, EntryRef]:
+    def reread(self, ref: EntryRef | None = None) -> dict[str, EntryRef]:
         """Read the entries of the container again, after the tree has changed below it.
 
         Deleting an entry can take more than the entry with it: the wrappers a grammar
@@ -356,25 +356,21 @@ class ConfigStore:
         the one the deletion was made in may therefore have lost an entry, or hold
         references to nodes that are no longer in the tree.
 
+        Args:
+            ref (EntryRef | None): For the store of a nested configuration, the
+                ``key_block`` reference for its block, as just read from the container
+                above. A block merged from several in the file is a node the reader builds
+                rather than one in the parse tree, so reading the container above builds a
+                new one, which the store has to follow or it goes on reading the old one.
+
         Returns:
             dict[str, EntryRef]: The fresh references, which replace the ones held.
         """
+        if ref is not None:
+            assert ref.block_node is not None
+            self.tree, self.addable = ref.block_node, ref.addable
         self.refs = read_entries(self.tree, self.ctx)
         return self.refs
-
-    def retarget(self, ref: EntryRef) -> None:
-        """Point this store at the block *ref* names, read afresh from its parent.
-
-        A block merged from several in the file is a node the reader builds rather than one
-        in the parse tree, so re-reading the parent builds a new one. The store of a nested
-        configuration has to follow it, or it goes on reading the old one.
-
-        Args:
-            ref (EntryRef): The ``key_block`` reference for this block, as just read.
-        """
-        assert ref.block_node is not None
-        self.tree = ref.block_node
-        self.addable = ref.addable
 
     def render(self) -> str:
         """Write the tree back out as text.

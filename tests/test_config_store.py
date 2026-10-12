@@ -453,7 +453,7 @@ class TestReread:
         assert list(refs) == ["b"]
         assert store.refs is refs
 
-    def test_retarget_follows_the_block_a_reference_names(self, ctx) -> None:
+    def test_follows_the_block_a_reference_names(self, ctx) -> None:
         """Test that a nested store is pointed at the block just read for it."""
         tree = ctx.lark.parse("blk<\n  x = 1\n>\n", start="start")
         AddParent().visit(tree)
@@ -461,7 +461,7 @@ class TestReread:
         child = store.child(store.refs["blk"])
         merged = replace(store.refs["blk"], block_nodes=(Tree("block", []),), addable=False)
 
-        child.retarget(merged)
+        child.reread(merged)
 
         assert child.tree is merged.block_node
         assert child.addable is False

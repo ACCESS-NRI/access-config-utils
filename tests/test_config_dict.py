@@ -208,7 +208,7 @@ class TestAddingBelowABlockWithNoBody:
         block["z"] = 5
 
         assert outer.asked("add_path") == [(("blk", "z"), ("blk", "z"), 5)]
-        assert inner.asked("retarget") == [fresh]
+        assert inner.asked("reread") == [fresh]
         assert config["blk"] is block
         assert block["z"] == 1
 
@@ -354,8 +354,7 @@ class TestResyncAfterDeleting:
         del config["blk"]["x"]
 
         assert "blk" in config
-        assert inner.asked("retarget") == [fresh]
-        assert inner.asked("reread") == [None]
+        assert inner.asked("reread") == [fresh]
 
     def test_an_empty_namelist_group_stays(self) -> None:
         """Test the block whose rule *is* a repetition: an empty group is still a group."""
