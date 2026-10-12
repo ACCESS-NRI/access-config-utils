@@ -305,16 +305,18 @@ class TestEditing:
     def test_one_parameter_of_a_record(self, parser) -> None:
         """Test a rayleigh damping table index, the rest of the line left as it was."""
         config = parser.parse(OM2)
+        rayleigh = config["rayleigh_damp_table"]["ocean_mod"]["rayleigh_damp_table"]["rayleigh"]
 
-        config["rayleigh_damp_table"]["ocean_mod"]["rayleigh_damp_table"]["rayleigh"][1]["itable"] = 45
+        rayleigh[1] = {**rayleigh[1], "itable": 45}
 
         assert_written(parser, config, OM2.replace(OMBAI, OMBAI.replace("itable=44", "itable=45")))
 
     def test_the_name_of_a_record(self, parser) -> None:
         """Test the second string of the method, held under ``"value"``."""
         config = parser.parse(OM2)
+        rayleigh = config["rayleigh_damp_table"]["ocean_mod"]["rayleigh_damp_table"]["rayleigh"]
 
-        config["rayleigh_damp_table"]["ocean_mod"]["rayleigh_damp_table"]["rayleigh"][1]["value"] = "Bali"
+        rayleigh[1] = {**rayleigh[1], "value": "Bali"}
 
         assert_written(parser, config, OM2.replace(OMBAI, OMBAI.replace("Ombai", "Bali")))
 
@@ -322,9 +324,10 @@ class TestEditing:
         """Test that the control gains and loses a parameter and keeps the others."""
         config = parser.parse(OM2)
         rayleigh = config["rayleigh_damp_table"]["ocean_mod"]["rayleigh_damp_table"]["rayleigh"]
+        profile = config["tracer"]["atmos_mod"]["sphum"]["profile_type"]
 
-        del rayleigh[0]["ktable_2"]
-        config["tracer"]["atmos_mod"]["sphum"]["profile_type"][0]["extra"] = 1
+        rayleigh[0] = {name: value for name, value in rayleigh[0].items() if name != "ktable_2"}
+        profile[0] = {**profile[0], "extra": 1}
 
         expected = OM2.replace(LOMBOK, LOMBOK.replace("ktable_2=50,", "")).replace(
             '"surface_value=3.e-6"', '"surface_value=3.e-6,extra=1"'
@@ -334,9 +337,10 @@ class TestEditing:
     def test_the_notation_of_a_value_is_kept(self, parser) -> None:
         """Test a logical keeping its dots, and a real its exponent letter."""
         config = parser.parse(OM2)
+        profile = config["tracer"]["atmos_mod"]["sphum"]["profile_type"]
 
         config["tracer_packages"]["ocean_mod"]["ocean_age_tracer"]["const_init_tracer"] = False
-        config["tracer"]["atmos_mod"]["sphum"]["profile_type"][0]["surface_value"] = 1.0e-5
+        profile[0] = {**profile[0], "surface_value": 1.0e-5}
 
         expected = OM2.replace(".true.", ".false.").replace("surface_value=3.e-6", "surface_value=1e-05")
         assert_written(parser, config, expected)
@@ -407,7 +411,6 @@ class TestAddingAMethod:
         """Test that a new record copies its neighbour, and that a removed one goes."""
         config = parser.parse(OM2)
         rayleigh = config["rayleigh_damp_table"]["ocean_mod"]["rayleigh_damp_table"]["rayleigh"]
-        torres = rayleigh[2]
 
         rayleigh.append({**rayleigh[2], "value": "Timor", "itable": 70})
         rayleigh.insert(0, {**rayleigh[0], "value": "Bali", "itable": 30})
@@ -417,8 +420,6 @@ class TestAddingAMethod:
         timor = TORRES.replace("Torres", "Timor").replace("itable=62", "itable=70")
         expected = OM2.replace(LOMBOK + OMBAI + TORRES, bali + LOMBOK + TORRES.replace("/\n", "\n") + timor)
         assert_written(parser, config, expected)
-        # A record held by the caller follows its place in the list.
-        assert rayleigh[2] is torres
 
     def test_with_windows_line_endings(self, parser) -> None:
         """Test that a new line ends as the others do."""
@@ -557,7 +558,7 @@ def test_a_whole_table_edited(parser) -> None:
 
     ocean["salt"]["restart_file"] = "salt.res.nc"
     rayleigh.remove(rayleigh[0])
-    rayleigh[-1]["jtable"] = 107
+    rayleigh[-1] = {**rayleigh[-1], "jtable": 107}
     ocean["age"] = {"restart_file": "age.res.nc", "ppm_hlimiter": 3}
 
     expected = (

@@ -35,8 +35,10 @@ The configuration reads as the FMS YAML field table lays it out, its lists keyed
 The header names its three levels, and a method its key. A method of three strings is a
 record, its name under ``"value"`` and each parameter beside it, and the lines writing one
 method make a list of records, one per line: the rayleigh damping tables of ACCESS-OM2
-write dozens of lines of ``"rayleigh", "Lombok", "itable=36,jtable=112"``. Keys are matched
-in any case, and read in lower case as the field manager reads them.
+write dozens of lines of ``"rayleigh", "Lombok", "itable=36,jtable=112"``. A record is
+read only, and is changed by assigning a dict to its place in the list, as in
+``rayleigh[1] = {**rayleigh[1], "itable": 45}``. Keys are matched in any case, and read
+in lower case as the field manager reads them.
 
 Editing changes one token, and a new method or entry is written like the one above it.
 A new entry goes after the last of its type and model, and spells those the way it does.
