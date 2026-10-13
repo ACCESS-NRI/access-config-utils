@@ -9,7 +9,13 @@ A Python package providing various utilities to work with configurations for the
 ## Key Features
 
 Parsers:
-- Various parsers for configuration files used across ACCESS-NRI models
+- Various parsers for configuration files used across ACCESS-NRI models:
+  - Fortran namelists (`FortranNMLParser`)
+  - MOM6 parameter files, `MOM_input` and `MOM_override` (`MOM6InputParser`)
+  - NUOPC run configurations, `nuopc.runconfig` (`NUOPCParser`)
+  - NUOPC run sequences, `nuopc.runseq` (`NUOPCRunSeqParser`)
+  - FMS field tables in the legacy format, `field_table` (`FieldTableParser`)
+  - YAML (`YAMLParser`) and JSON (`JSONParser`)
 - Support for round-trip parsing, preserving comments and formatting
 - Simple API
 
@@ -46,8 +52,8 @@ To parse some text, one just needs to call the `parse` function of the appropria
 from access.config import FortranNMLParser
 
 text = '''&data_nml
- parameterA = 1
- parameterB = 'abc'
+parameterA = 1
+parameterB = 'abc'
 /'''
 
 config = FortranNMLParser().parse(text)
@@ -73,8 +79,9 @@ parameterB = 'abc'
 /
 ```
 
-New keys can be added too, and are written in the style of their neighbours. Each value is written
-in whichever notation the format uses, so a `bool` becomes a Fortran logical here:
+New keys can be added too, and are written like the entries around them: the same spacing,
+delimiters, quotes and line endings. Each value is written in whichever notation the format uses,
+so a `bool` becomes a Fortran logical here:
 ```python
 config["data_nml"]["parameterC"] = True
 config["data_nml"]["parameterD"] = [1, 2, 3]
@@ -127,6 +134,68 @@ A few caveats on the dict and list behaviour:
   delete the key and assign it again.
 - Replacing an existing block wholesale raises `SyntaxError` — a block can be created and edited,
   but not swapped out.
+
+Every parser works the same way; only the layout of the dict follows the format. An FMS field
+table, for instance, reads as the FMS YAML field table lays it out. A header is three levels of
+keys, and a method of three strings is a record, one of a list of the records the file writes for
+it, holding its name under `"value"`:
+```python
+from access.config import FieldTableParser
+
+config = FieldTableParser().parse('''"TRACER", "atmos_mod", "sphum"
+    "longname", "specific humidity"
+    "profile_type", "fixed", "surface_value=3.e-6" /
+''')
+print(dict(config["tracer"]["atmos_mod"]["sphum"]))
+```
+```python
+{'longname': 'specific humidity', 'profile_type': [{'value': 'fixed', 'surface_value': 3e-06}]}
+```
+A record is read only, and is changed by assigning a dict to its place in the list. A new field
+is written as a whole entry, after the last of its type and model:
+```python
+profile = config["tracer"]["atmos_mod"]["sphum"]["profile_type"]
+profile[0] = {**profile[0], "surface_value": 1e-5}
+config["tracer"]["atmos_mod"]["liq_wat"] = {"longname": "cloud liquid specific humidity"}
+print(config)
+```
+```python
+"TRACER", "atmos_mod", "sphum"
+    "longname", "specific humidity"
+    "profile_type", "fixed", "surface_value=1e-05" /
+"TRACER", "atmos_mod", "liq_wat"
+    "longname", "cloud liquid specific humidity" /
+```
+
+A JSON file holds plain data, so its dict is edited directly, and the text is written again from it
+once it changes. The file's own layout is kept, down to which lists it wrote on one line:
+```python
+from access.config import JSONParser
+
+config = JSONParser().parse('''{
+    "name": "run",
+    "levels": [1, 2, 3],
+    "files": [
+        "a.nc",
+        "b.nc"
+    ]
+}
+''')
+config["dt"] = 900
+config["levels"].append(4)
+print(config)
+```
+```python
+{
+    "name": "run",
+    "levels": [1, 2, 3, 4],
+    "files": [
+        "a.nc",
+        "b.nc"
+    ],
+    "dt": 900
+}
+```
 
 ## Development installation
 
