@@ -7,6 +7,7 @@ from io import StringIO
 import pytest
 from ruamel.yaml import YAML, CommentedMap
 
+from access.config import yaml_config
 from access.config.yaml_config import DEFAULT_INDENT, YAMLConfig, YAMLParser, guess_indent
 
 
@@ -264,6 +265,90 @@ def test_round_trip_root_merge(parser) -> None:
     config = parser.parse(text)
     assert config["a"] == 1
     assert str(config) == text
+
+
+# A payu configuration as the ACCESS ones are written: two indentations for its mappings and
+# three for its sequences, and values that ruamel.yaml spells its own way.
+MIXED_LAYOUT = """# PBS configuration
+queue: normal
+ncpus: 240   # cores
+sync:
+    enable: False   # set path below and change to true
+    path: null # rsync syntax
+manifest:
+  reproduce:
+    exe: True
+    input: True
+modules:
+    load:
+        - access-om3/2026.05.004
+        - model-tools/mppnccombine-fast/2025.07.000
+mpi:
+  flags:
+  - --mca mpi_yield_when_idle true
+submodels:
+  - name: atmosphere
+    ncpus: 1
+base_date: [ 1900, 1, 1 ]
+"""
+
+
+def test_round_trip_unmodified_mixed_layout(parser) -> None:
+    """A text indented in more than one way, and with values ruamel.yaml spells its own
+    way, is written back out exactly as it was read."""
+    assert str(parser.parse(MIXED_LAYOUT)) == MIXED_LAYOUT
+
+
+@pytest.mark.parametrize(
+    ("edit", "old", "new"),
+    [
+        pytest.param(lambda c: c.__setitem__("ncpus", 100), "ncpus: 240", "ncpus: 100", id="top-level"),
+        pytest.param(
+            lambda c: c["manifest"]["reproduce"].__setitem__("exe", False),
+            "    exe: True",
+            "    exe: false",
+            id="block-indented-by-two",
+        ),
+        pytest.param(
+            lambda c: c["submodels"][0].__setitem__("name", "atm"),
+            "  - name: atmosphere",
+            "  - name: atm",
+            id="first-entry-of-a-sequence",
+        ),
+        pytest.param(
+            lambda c: c["manifest"]["reproduce"].__setitem__("restart", True),
+            "    input: True\n",
+            "    input: True\n    restart: true\n",
+            id="new-key",
+        ),
+        pytest.param(
+            lambda c: c["mpi"]["flags"].append("--mca x"),
+            "  - --mca mpi_yield_when_idle true\n",
+            "  - --mca mpi_yield_when_idle true\n  - --mca x\n",
+            id="new-sequence-entry",
+        ),
+        pytest.param(lambda c: c["sync"].pop("path"), "    path: null # rsync syntax\n", "", id="removed-key"),
+    ],
+)
+def test_round_trip_changes_only_the_lines_that_change(parser, edit, old, new) -> None:
+    """The lines that do not change stay as the text writes them, and a new line is
+    indented as its neighbours are."""
+    config = parser.parse(MIXED_LAYOUT)
+    edit(config)
+    assert str(config) == MIXED_LAYOUT.replace(old, new)
+
+
+def test_round_trip_falls_back_to_ruamel_yaml(parser, monkeypatch) -> None:
+    """ruamel.yaml writes the whole configuration when a changed line cannot be placed in
+    the text, or when the patched text does not read as the configuration does."""
+    config = parser.parse(MIXED_LAYOUT)
+    config["ncpus"] = 100
+
+    monkeypatch.setattr(yaml_config, "_patch", lambda *args: None)
+    assert str(config) == config._dump()
+
+    monkeypatch.setattr(yaml_config, "_patch", lambda *args: "ncpus: 1\n")
+    assert str(config) == config._dump()
 
 
 @pytest.mark.parametrize("text", ["", "- a\n- b\n", "a\n"], ids=["empty", "sequence", "scalar"])
