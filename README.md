@@ -127,6 +127,8 @@ parameterD = 1,
 A few caveats on the dict and list behaviour:
 - A list keeps at least two elements, since a single value is a scalar, and a scalar does not
   become a list or the other way round.
+- A list whose elements are all of one type keeps them so: a new element of another type raises
+  `TypeError`.
 - A list written with repeat counts (`3*1.0`), array qualifiers (`x(2) = …`) or skipped
   positions, or assigned more than once, can have its elements changed but not its length:
   delete the key and assign it again instead. The elements a repeat count stands for can only

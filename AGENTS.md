@@ -353,7 +353,9 @@ matter; line length is not.
 - Editing is restricted, but adding keys and resizing lists are supported. Assigning to a
   **new** key adds an entry — a scalar, a list of two or more values, `None` where the grammar
   has a `key_null` rule, a `dict` to create a block and fill it, or a list of dicts for records.
-  What still fails: changing a value's type raises `TypeError`; a list shorter than two
+  What still fails: changing a value's type raises `TypeError`, as does a new element of a list
+  whose elements all have one type, unless it has that type too (a mixed list, such as a Fortran
+  derived type assigned as a list of its components, takes any); a list shorter than two
   elements (one, for records), or one written with a repeat count, array qualifiers, skipped
   positions or in several assignments, raises `ValueError` on a change of length; so does giving
   one element of a repeat count (`6*9.0`) a value of its own, though giving all of them the same

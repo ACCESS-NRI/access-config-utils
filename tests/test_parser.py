@@ -767,6 +767,23 @@ def test_config_list_operations(parser):
     assert values == [2, 3]
 
 
+def test_config_list_growth_keeps_the_type_of_its_elements(parser) -> None:
+    """Test that a list of one type gains only that type, and a mixed list any.
+
+    A model reading the list into an array of one type would misread, or refuse, another.
+    """
+    config = parser.parse('a=1,2 b=1,"two"')
+
+    with pytest.raises(TypeError, match="whose elements are all of type int"):
+        config["a"].append("x")
+    with pytest.raises(TypeError, match="whose elements are all of type int"):
+        config["a"] = [1, 2, 3.5]
+    config["b"].append(3.5)
+
+    assert str(config) == 'a=1,2 b=1,"two",3.5'
+    assert config["a"] == [1, 2]
+
+
 def test_config_grammar_cache(parser):
     """Test that a grammar is compiled once, since that costs far more than parsing"""
     first = parser.parse("a=1")
