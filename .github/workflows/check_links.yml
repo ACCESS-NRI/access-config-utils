@@ -8,9 +8,8 @@
 name: Check links
 
 on:
-  push:
-    branches:
-      - main
+  # No push trigger: on a site with multiple versions, a push to main checks the links of a version that does not
+  # exist (https://github.com/ACCESS-NRI/documentation-infra/issues/19).
   pull_request:
   workflow_dispatch:
 
@@ -20,7 +19,7 @@ jobs:
     with:
       repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
       commit: ${{ github.event.pull_request.head.sha || github.sha }}
-      rtd_project: '<RTD_PROJECT_SLUG>'  # MODIFY: change this to the Read the Docs project
+      rtd_project: 'access-config-utils'
     #   readthedocs_yaml: # MODIFY: Uncomment to add .readthedocs.yaml path. If not included, '.readthedocs.yaml' is used.
     #   lychee_config: '/path/to/lychee_config.toml' # MODIFY: Uncomment to add lychee config path. If not included, the one from the ACCESS-NRI/documentation-infra repo gets used.
     # secrets: # MODIFY: Uncomment the lines below if the repo is private. You also need to create a secret named REPO_READ_TOKEN with a token that has repo read permissions.
