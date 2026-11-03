@@ -16,6 +16,8 @@ that would otherwise need three. What it cannot write is a block named by a chai
 which ``HeaderParser`` adds.
 """
 
+import copy
+import pickle
 from pathlib import Path
 
 import pytest
@@ -719,6 +721,20 @@ def test_config_dict_methods(parser):
 
     config.clear()
     assert str(config) == ""
+
+
+def test_config_copy(parser) -> None:
+    """Test that a copy of a configuration is its data, and leaves its file as it was.
+
+    Copied as any dict subclass is, a ``Config`` wrote every entry into the file again.
+    """
+    text = "a=1 b=2,3 block<c:4>"
+    config = parser.parse(text)
+
+    for duplicate in (copy.copy(config), copy.deepcopy(config), pickle.loads(pickle.dumps(config))):
+        assert duplicate == {"a": 1, "b": [2, 3], "block": {"c": 4}}
+        assert type(duplicate) is dict
+    assert str(config) == text
 
 
 def test_config_list_operations(parser):

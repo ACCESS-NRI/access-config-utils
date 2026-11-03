@@ -397,7 +397,10 @@ matter; line length is not.
   `config_resize`/`list_layout` around the elements that stay, given the old position each new
   element stands in for (`origins`: worked out by alignment when a whole list is assigned, exact
   for `append`, `extend` and `insert`, which are slice assignments). Each candidate layout is
-  validated by parsing, and the entry keeps its node. A copy is a plain list.
+  validated by parsing, and the entry keeps its node. **A copy is plain data**, through
+  `__reduce_ex__`: a `ConfigList` or a `ConfigBlockList` copies, deep copies and pickles as a
+  `list`, a `Config` or a `ConfigRecord` as a `dict`. The default copy of a `dict` subclass
+  refills it through `__setitem__`, which would write every entry into the file again.
 - **A value type that `collects` makes records.** `named_assignments` (a field table method of
   three strings) is one: the reader gathers every entry of the key into one `KEY_LIST` ref with
   `collected=True`, an entry per record, in file order — one record is a list of one. Each
