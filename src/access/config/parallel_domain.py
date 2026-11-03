@@ -3,6 +3,7 @@
 """Parallel domain models and domain-decomposition specifications.
 
 This module defines two frozen value objects:
+
 - ``Domain``: an N-dimensional rectangular grid.
 - ``DomainDecompositionSpec``: *how* a domain is to be split across an MPI cartesian
   process grid.

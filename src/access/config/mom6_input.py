@@ -5,13 +5,15 @@
 
 The MOM6 parameter file format is described here:
 
-https://mom6.readthedocs.io/en/main/api/generated/pages/Runtime_Parameter_System.html#mom6-parameter-file-syntax
+<https://mom6.readthedocs.io/en/main/api/generated/pages/Runtime_Parameter_System.html#mom6-parameter-file-syntax>
 
 It has similarities with a Fortran namelist, but with some notable differences:
- - no opening nor closing clauses ('&NAME' and '\')
+
+ - no opening nor closing clauses ('&NAME' and '/')
  - usage of an override directive ('#override')
  - some character, like '*', are allowed in the MOM6 parameter files, but not in namelists
  - keys are case-sensitive
+
 We have also found MOM6 parameter files with C-style comments in files used by CESM. These
 are ignored by MOM6, but are actually not part of the specifications.
 """

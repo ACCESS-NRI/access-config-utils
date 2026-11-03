@@ -4,10 +4,11 @@
 
 In the model used here, a parallel application is represented as a tree of components. Each
 component can be one of two types:
+
 - parent components: these components distribute their cores to sub-components, and do not
   run any work themselves.
 - leaves: these components run work themselves, and may have a domain of work that can be
-  split across cores, eiher using MPI ranks and OpenMP threads, or some other
+  split across cores, either using MPI ranks and OpenMP threads, or some other
   parallelisation strategy.
 
 A parent divides its cores between its sub-components by default, each of them taking a
@@ -142,6 +143,7 @@ class ComponentLayout:
     for its sub-components.
 
     How a component assigns its cores depends on whether it is a leaf or a parent:
+
     * A **leaf** component spends its cores itself, as ``n_ranks`` MPI ranks each running
       ``threads_per_rank`` OpenMP threads. It spends them exactly:
       ``n_ranks * threads_per_rank == n_cores``.
@@ -166,9 +168,9 @@ class ComponentLayout:
             for a leaf, the total over ``sub_layouts`` for a parent that partitions its
             cores, and the ranks they sit on between them for one whose sub-layouts share
             them. Must be >= 1.
-        threads_per_rank (int | None): OpenMP threads per MPI rank, for a leaf. Must be
-            >= 1 when set. ``None`` for a parent, whose sub-components may each use a
-            different thread count.
+        threads_per_rank (int | None): OpenMP threads per MPI rank, for a leaf. Must be >= 1
+            when set. ``None`` for a parent, whose sub-components may each use a different
+            thread count.
         decomposition (DomainDecompositionSpec | None): The specification of how this
             component's domain is to be split across its ``MPICartesianGrid``, or
             ``None`` when the component has no domain. Only a leaf may have one.

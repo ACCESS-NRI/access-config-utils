@@ -6,11 +6,11 @@
 A field table lists the tracers of a model built on FMS, such as MOM5, MOM6 and the UFS
 atmosphere, and how each is to be treated. The field manager reads it in
 ``read_field_table_legacy`` of ``field_manager/field_manager.F90``, and what follows is
-what that reads, https://github.com/NOAA-GFDL/FMS/blob/main/field_manager/field_manager.F90.
+what that reads, <https://github.com/NOAA-GFDL/FMS/blob/main/field_manager/field_manager.F90>.
 
 An entry is a header naming a field type, a model and a field, then the field's methods
 one per line, closed by a ``/`` as the last character of a line -- of the header itself,
-for an entry with no methods::
+for an entry with no methods:
 
     "TRACER", "atmos_mod", "sphum"
         "longname", "specific humidity"
@@ -25,7 +25,7 @@ control of comma-separated parameters, ``k=v,k2=v2``; or as an assignment, ``k =
 or in one string. A value is typed by its spelling, as the field manager types one: see
 ``grammar_values``. A ``#`` in the first column of a line makes it a comment.
 
-The configuration reads as the FMS YAML field table lays it out, its lists keyed by name::
+The configuration reads as the FMS YAML field table lays it out, its lists keyed by name:
 
     config["tracer"]["atmos_mod"]["sphum"] == {
         "longname": "specific humidity",

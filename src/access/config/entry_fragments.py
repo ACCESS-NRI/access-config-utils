@@ -19,7 +19,7 @@ from ``grammar_contract``, so a bare string literal here is a fragment kind, nev
 name.
 
 Examples:
-    A template is a flat sequence of fragments, in the order they are written::
+    A template is a flat sequence of fragments, in the order they are written:
 
     >>> from access.config.entry_fragments import Fragment
     >>> template = (Fragment("key"), Fragment("literal", " = "), Fragment("value"),
