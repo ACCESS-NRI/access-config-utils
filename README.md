@@ -11,7 +11,7 @@ A Python package providing various utilities to work with configurations for the
 Parsers:
 - Various parsers for configuration files used across ACCESS-NRI models:
   - Fortran namelists (`FortranNMLParser`)
-  - MOM6 parameter files, `MOM_input` and `MOM_override` (`MOM6InputParser`)
+  - MOM6 parameter files, `MOM_input` (`MOM6InputParser`)
   - NUOPC run configurations, `nuopc.runconfig` (`NUOPCParser`)
   - NUOPC run sequences, `nuopc.runseq` (`NUOPCRunSeqParser`)
   - FMS field tables in the legacy format, `field_table` (`FieldTableParser`)
@@ -19,9 +19,15 @@ Parsers:
 - Support for round-trip parsing, preserving comments and formatting
 - Simple API
 
+Parallel layouts:
+- Enumeration of the layouts a model can run on a number of cores: the cores, MPI ranks, OpenMP threads
+  and process grid of each component, filtered by allocation strategies and constraints (`iter_layouts`)
+
 ## Documentation
 
-Coming soon.
+The documentation is at [access-config-utils.readthedocs.io](https://access-config-utils.readthedocs.io/). It has a
+user guide, which explains how each format is read, edited and written, and how to describe a model and search its
+parallel layouts. It also has a developer guide and an API reference.
 
 ## Installation
 

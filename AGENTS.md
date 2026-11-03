@@ -30,6 +30,11 @@ Python >= 3.11 (CI covers 3.11–3.13). Runtime deps: `lark`, `ruamel.yaml`.
 - **Surgical changes.** Every changed line traces to the request. Match the surrounding style;
   don't refactor, reformat or "improve" adjacent code. Remove what your change orphans; mention
   pre-existing dead code rather than deleting it.
+- **The documentation follows the code.** The docstrings and the pages of the
+  [user guide](documentation/docs/pages/user-guide/) describe the behaviour in detail, so a
+  change of behaviour updates the docstrings and the pages that describe it, in the same change:
+  grep `src/` and `documentation/docs/pages` for the names you touched. The strict build catches
+  a broken reference, not stale prose.
 - **Be honest.** Report what you ran and what it showed: a failing test, a check you skipped,
   a test that passes without binding.
 
@@ -96,7 +101,19 @@ src/access/config/
 scripts/run_f90nml_tests.py
                         f90nml's own test suite run against FortranNMLParser
                         (--source <f90nml sdist>); a diagnostic report, not a gate
+
+documentation/          The MkDocs site, published on Read the Docs: pages in docs/pages/,
+                        the API reference generated from the docstrings in docs/pages/api/
 ```
+
+The [developer guide](documentation/docs/pages/developer-guide/index.md) explains this
+structure, how a file is parsed and edited and how the layout search works, for people; this
+file is the complete list of the rules, for an agent changing the code. The API reference is
+generated from the docstrings, on pages in `documentation/docs/pages/api/` that are each a run
+of `::: access.config.<module>` blocks, one page per concept, with the parser modules that are
+not public API under `api/internals/`. A new module needs a block on the right page and a row in
+the table of `api/index.md`; a new page needs an entry in the `nav` of
+`documentation/mkdocs.yml`, or the strict build fails.
 
 **The parser modules form four concept groups, and the imports run strictly one way through
 them**: grammar, then parse tree, then entry synthesis, then the data and the parser class.
@@ -227,9 +244,21 @@ ruff check .
 pre-commit run --all-files      # what CI's formatting job runs
 ```
 
+The documentation is built in an environment of its own, the way CI builds it:
+
+```shell
+pip install -r documentation/requirements.txt
+READTHEDOCS_CANONICAL_URL=https://access-config-utils.readthedocs.io/latest/ \
+    mkdocs build --strict -f documentation/mkdocs.yml
+```
+
+The variable stands in for the one Read the Docs sets, without which the build refuses to run.
+The date at the foot of each page comes from git, so a page that has not been committed yet
+makes the strict build warn.
+
 CI (`.github/workflows/ci.yml`): pre-commit, PyPA build, conda build, then pytest on
-3.11/3.12/3.13 with coverage uploaded to Codecov. Releases are tag-driven (`v*` → PyPI +
-anaconda); there is nothing to run locally for a release.
+3.11/3.12/3.13 with coverage uploaded to Codecov, and the strict documentation build. Releases
+are tag-driven (`v*` → PyPI + anaconda); there is nothing to run locally for a release.
 
 ## Conventions
 
@@ -246,6 +275,12 @@ anaconda); there is nothing to run locally for a release.
 - Tests: `pytest` with module-scoped fixtures; the `parallel_*` tests group cases in
   `class Test<Thing>:` blocks with no `__init__`. Coverage is **100%** across
   `src/access/config`, and new code keeps it there, error paths included.
+- `documentation/` comes from the ACCESS-NRI template,
+  [documentation-infra](https://github.com/ACCESS-NRI/documentation-infra), and is kept so that
+  it can be updated from there: `hooks/`, `overrides/`, `docs/css/`, `docs/js/`,
+  `docs/fontello/`, `docs/assets/logos/`, `requirements.txt` and `.readthedocs.yaml` stay as
+  copied, and `mkdocs.yml` and `abbreviations.md` are changed only where the template marks them
+  for it and where a comment says why.
 - Credit the agent in commit messages, with a `Co-Authored-By:` trailer.
 
 ## Docstring conventions
@@ -303,6 +338,12 @@ def iter_grids(cls, ndim: int, n_ranks: int) -> Iterator[MPICartesianGrid]:
 - **Markup is reST inline only**: ```` ``double backticks`` ```` for code and identifiers,
   `*emphasis*` when referring to a parameter, `**bold**` for emphasis. No `:class:`, `:attr:`,
   `:meth:`, `:exc:`, `:func:` or `:mod:` roles — there is no Sphinx build to render them.
+- **The text is rendered as Markdown**, by mkdocstrings in the API reference, so its block
+  structure is Markdown's: a blank line before a list, which is otherwise folded into the
+  paragraph above it; a list of terms as `- **term**: definition`, never a reST definition list;
+  an indented literal block introduced by a single colon, never `::`; and no continuation line
+  of an entry starting with `>`, which reads as a blockquote. CI builds the documentation
+  strictly, so an `Args:` entry griffe cannot match to the signature fails the build.
 - **Prose sub-headings inside a module docstring** (the `Concepts` blocks in the `parallel_*`
   modules, `Lark parse tree structure` in `tree_navigation.py`) keep a reST dash underline
   matched to the title's length. These are prose, not sections. `Notes` and `See Also` are *not*
@@ -314,11 +355,11 @@ def iter_grids(cls, ndim: int, n_ranks: int) -> Iterator[MPICartesianGrid]:
   `tests/test_parallel_doctests.py`. Keep them runnable, and keep `>>>` lines within 92 columns
   by splitting the statement, not wrapping it.
 
-Only the width is enforced mechanically. Ruff's `D` (pydocstyle) rules are deliberately
-**off**: they would fail the build on gaps this convention does not yet cover — functions that
-raise without a `Raises:` section, undocumented `__post_init__` / `is_satisfied` overrides in
-`parallel_constraints.py`, the missing licence header in `__init__.py`. Structure is a review
-matter; line length is not.
+Ruff enforces only the width, and the strict documentation build only what griffe cannot read.
+Ruff's `D` (pydocstyle) rules are deliberately **off**: they would fail the build on gaps this
+convention does not yet cover — functions that raise without a `Raises:` section, undocumented
+`__post_init__` / `is_satisfied` overrides in `parallel_constraints.py`, the missing licence
+header in `__init__.py`. Structure is a review matter; line length is not.
 
 ## Invariants — parser half
 
