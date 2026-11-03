@@ -636,6 +636,9 @@ matter; line length is not.
   `pestride = 1` — is assumed because the model cannot express anything else. It is refused on
   a sub-component running more than one core per rank, where a core index and a PE index part
   company, and under a partitioned parent, where each child already starts where the last ended.
+  The search offers a sub-component placed at an offset only its layouts running one rank per
+  core (`_placeable_layouts`), so a thread range or idle cores below it narrow its layouts
+  rather than ending the search with that refusal.
 - A component is a **leaf or a parent, never both** (`ParallelComponent` rejects `domain`
   together with `subcomponents`), and that split runs through `ComponentLayout`: a leaf has a
   `threads_per_rank` and spends its cores exactly (`n_ranks × threads_per_rank == n_cores`); a
