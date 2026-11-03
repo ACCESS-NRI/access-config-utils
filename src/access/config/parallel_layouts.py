@@ -39,9 +39,11 @@ handed down is their product. Such a parent's cores and ranks are those of the
 sub-component that reaches furthest into its range rather than the totals over them all,
 and its sub-components have to cover that range between them - a combination leaving a
 core idle is dropped before the recursion reaches it, and a combination that covers one
-range covers no other, so it is generated for that range alone. Everything else - the
-recursion, the constraint filtering, the memoisation - is the same, and what is left of
-the product is still the reason a shared parent's children are worth pinning down.
+range covers no other, so it is generated for that range alone. A sub-component placed
+partway into the range, at an offset, is offered only its layouts running one rank per
+core, since its offset is a core index. Everything else - the recursion, the constraint
+filtering, the memoisation - is the same, and what is left of the product is still the
+reason a shared parent's children are worth pinning down.
 
 That combining step is where the numbers come from: two sub-components with 30 layouts each
 already give the parent 900 for a single division, before the next division is even tried.
@@ -228,7 +230,8 @@ class _LayoutSearch:
 
         A split survives only if every sub-component has at least one layout for its share
         and the combination satisfies the group constraints of both the component and its
-        allocation strategy.
+        allocation strategy. Under a parent that shares its cores, a sub-component placed at
+        an offset is offered only its layouts running one rank per core.
 
         Args:
             component (ParallelComponent): The branch component, which has sub-components
@@ -264,6 +267,11 @@ class _LayoutSearch:
                 self._cached_component_layouts(sub, c, thread_range, sub_strategy)
                 for sub, c, sub_strategy in zip(component.subcomponents, core_split, sub_strategies, strict=True)
             ]
+            if shared:
+                sub_options = [
+                    _placeable_layouts(sub, options)
+                    for sub, options in zip(component.subcomponents, sub_options, strict=True)
+                ]
             # A sub-component with no valid layout kills the whole split, so stop before
             # taking a product that is guaranteed to be empty.
             if not all(sub_options):
@@ -329,6 +337,37 @@ def _iter_leaf_candidates(
                 decomposition=decomposition,
                 core_offset=component.core_offset,
             )
+
+
+def _placeable_layouts(
+    component: ParallelComponent, layouts: tuple[ComponentLayout, ...]
+) -> tuple[ComponentLayout, ...]:
+    """Return the *layouts* of a shared parent's sub-component that its offset allows.
+
+    An offset is a core index, as ESMF means ``rootpe``, so a sub-layout placed at one has
+    to run one rank per core, and the parent's ``ComponentLayout`` refuses any other: a
+    threaded leaf, or a parent leaving some of its cores idle. Those are dropped here
+    instead, and a sub-component left with none is a dead end, reported at ``DEBUG``.
+
+    Args:
+        component (ParallelComponent): The sub-component, whose ``core_offset`` places it.
+        layouts (tuple[ComponentLayout, ...]): Its layouts on the cores it is offered.
+
+    Returns:
+        tuple[ComponentLayout, ...]: The layouts it can have at its offset, in enumeration
+            order: all of them when it starts at the beginning of the range.
+    """
+    if not component.core_offset:
+        return layouts
+    placeable = tuple(layout for layout in layouts if layout.n_cores == layout.n_ranks)
+    if layouts and not placeable:
+        logger.debug(
+            "no layout of component %r on %d core(s) runs one rank per core, as its core offset of %d requires",
+            component.name,
+            layouts[0].n_cores,
+            component.core_offset,
+        )
+    return placeable
 
 
 def _log_if_empty(

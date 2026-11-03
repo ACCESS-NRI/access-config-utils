@@ -98,8 +98,9 @@ class ConfigStore:
         know, it is worked out by aligning the two lists.
 
         Raises:
-            TypeError: If the new value's type does not match what the entry holds, or a
-                value standing in for an old element is of another type.
+            TypeError: If the new value's type does not match what the entry holds, a value
+                standing in for an old element is of another type, or a new element is not
+                of the type the old ones all have.
             ValueError: If fewer than two values are asked for (none, for a list of
                 records), or the entry's values are not written one per node in a single
                 entry.

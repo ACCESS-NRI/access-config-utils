@@ -493,6 +493,33 @@ def test_str_asks_the_store_to_render(store) -> None:
     assert store.asked("render") == [None]
 
 
+class TestCopying:
+    """A copy of a configuration: its data, rather than a second view of the file."""
+
+    def test_a_copy_is_a_plain_dict_of_the_same_values(self, store) -> None:
+        """Test that a shallow copy is a dict holding the same values, and asks nothing.
+
+        Copied as any dict subclass is, it was an empty ``Config`` over the same store, and
+        every item set on it was written into the file a second time.
+        """
+        config = Config(store)
+        duplicate = copy.copy(config)
+
+        assert type(duplicate) is dict
+        assert duplicate == config
+        assert duplicate["c"] is config["c"]
+        assert store.asked("add_path") == []
+
+    def test_a_deep_copy_or_a_pickle_is_plain_data_throughout(self, store) -> None:
+        """Test that the lists and blocks of a deep copy, or of a pickle, are plain too."""
+        config = Config(store)
+
+        for duplicate in (copy.deepcopy(config), pickle.loads(pickle.dumps(config))):
+            assert duplicate == {"a": 1, "b": [1, 2], "c": {}, "d": None}
+            assert [type(duplicate[key]) for key in ("b", "c")] == [list, dict]
+            assert type(duplicate) is dict
+
+
 class TestConfigList:
     """The list handed out for a key holding several values, writing through its store."""
 
@@ -767,3 +794,16 @@ class TestConfigBlockList:
         """
         with pytest.raises(NotImplementedError, match="occurrence of a repeated block"):
             operation(blocks)
+
+    def test_a_copy_is_a_plain_list(self, blocks) -> None:
+        """Test that a copy lists the occurrences, and a deep copy or a pickle their data.
+
+        Copied as any list subclass is, the copy was filled by ``append``, which refuses.
+        """
+        shallow = copy.copy(blocks)
+
+        assert type(shallow) is list
+        assert shallow[0] is blocks[0]
+        for duplicate in (copy.deepcopy(blocks), pickle.loads(pickle.dumps(blocks))):
+            assert duplicate == [{}, {}]
+            assert [type(block) for block in duplicate] == [dict, dict]
