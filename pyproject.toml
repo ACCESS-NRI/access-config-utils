@@ -40,6 +40,8 @@ omit = ["src/access/config/__init__.py"]
 
 [tool.ruff]
 line-length = 120
+# Copied verbatim from the ACCESS-NRI documentation template, and kept that way so it can be updated from there
+extend-exclude = ["documentation/hooks"]
 
 [tool.ruff.lint]
 select = ["E", "F", "B", "C4", "SIM", "PTH", "UP", "I", "N", "C901", "W505"]
