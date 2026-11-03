@@ -55,7 +55,7 @@ meaning where nothing is divided and declines the shared path, while
 the divided one. A phase is therefore about the divided path alone.
 
 The two trees stand side by side, one strategy node per component, and it is the mode of
-each node that differs::
+each node that differs:
 
     component tree          strategy tree
     --------------          -------------
@@ -576,11 +576,21 @@ class FixedAllocation(AllocationStrategy):
         >>> FixedAllocation(12).n_cores
         12
 
-        A fraction names no count until the budget is known:
+        A fraction names no count until the budget is known, which is the search's:
 
+        >>> from access.config.parallel_allocation_strategies import (
+        ...     FixedAllocation, RootAllocation
+        ... )
+        >>> from access.config.parallel_component import ParallelComponent
+        >>> from access.config.parallel_layouts import iter_layouts
+        >>> model = ParallelComponent("model", subcomponents=(ParallelComponent("atm"),))
         >>> quarter = FixedAllocation(core_fraction=0.25)
-        >>> (quarter.n_cores, quarter._resolve_fractions(416).n_cores)
-        (None, 104)
+        >>> quarter.n_cores is None
+        True
+        >>> allocations = RootAllocation(subcomponents={"atm": quarter})
+        >>> layout = next(iter_layouts(model, 416, allocations=allocations))
+        >>> layout.sub_layouts[0].n_cores
+        104
     """
 
     # Carved out of the budget before anything else: a fixed count is not negotiable, so
@@ -837,9 +847,17 @@ class FreeAllocation(AllocationStrategy):
 
         A band of fractions resolves against the budget it is searched on:
 
+        >>> from access.config.parallel_allocation_strategies import (
+        ...     FreeAllocation, RootAllocation
+        ... )
+        >>> from access.config.parallel_component import ParallelComponent
+        >>> from access.config.parallel_layouts import iter_layouts
+        >>> model = ParallelComponent("model", subcomponents=(ParallelComponent("atm"),))
         >>> band = FreeAllocation(min_core_fraction=0.45, max_core_fraction=0.55)
-        >>> resolved = band._resolve_fractions(416)
-        >>> (resolved.min_cores, resolved.max_cores)
+        >>> allocations = RootAllocation(subcomponents={"atm": band})
+        >>> layouts = iter_layouts(model, 416, allocations=allocations)
+        >>> atm_cores = [layout.sub_layouts[0].n_cores for layout in layouts]
+        >>> (min(atm_cores), max(atm_cores))
         (187, 229)
     """
 
@@ -1092,22 +1110,34 @@ class WholeRangeAllocation(AllocationStrategy):
     sub-component, and it is an allocation rather than a constraint, so the counts it rules
     out are never generated instead of being generated and then filtered.
 
-    Args:
-        See ``AllocationStrategy`` for the fields shared by every mode. This mode adds
-        none: the size it describes is the parent's, so there is nothing of its own to
-        state.
+    See ``AllocationStrategy`` for the fields shared by every mode. This mode adds none: the
+    size it describes is the parent's, so there is nothing of its own to state.
 
     Examples:
-        Whatever the range comes to, this is the count offered - and there is only one:
+        Whatever the range comes to, this is the count offered - and there is only one. A
+        sub-component placed at an offset is offered what is left from there:
 
-        >>> WholeRangeAllocation()._shared_core_range(275)
-        range(275, 276)
-
-        A sub-component placed at an offset is offered what is left from there, since
-        ``iter_shared_core_shares`` subtracts the offset before asking:
-
-        >>> WholeRangeAllocation()._shared_core_range(275 - 100)
-        range(175, 176)
+        >>> from access.config.parallel_allocation_strategies import (
+        ...     RootAllocation, WholeRangeAllocation
+        ... )
+        >>> from access.config.parallel_component import CoreSharing, ParallelComponent
+        >>> from access.config.parallel_layouts import iter_layouts
+        >>> shared = ParallelComponent(
+        ...     "shared",
+        ...     core_sharing=CoreSharing.SHARED,
+        ...     subcomponents=(
+        ...         ParallelComponent("cpl"),
+        ...         ParallelComponent("atm", core_offset=100),
+        ...     ),
+        ... )
+        >>> allocations = RootAllocation(
+        ...     subcomponents={"cpl": WholeRangeAllocation(), "atm": WholeRangeAllocation()}
+        ... )
+        >>> layouts = list(iter_layouts(shared, 275, allocations=allocations))
+        >>> len(layouts)
+        1
+        >>> [(sub.name, sub.core_offset, sub.n_cores) for sub in layouts[0].sub_layouts]
+        [('cpl', 0, 275), ('atm', 100, 175)]
     """
 
     # Never reached: this mode refuses the divided path below, so the value only decides how
@@ -1262,7 +1292,7 @@ def iter_core_splits(
     Examples:
         Four siblings on 16 cores - ``A`` fixed at 4, ``B`` and ``C`` in a 3:2 ratio, ``D``
         free with at least one core - show the phases in order. ``A`` is carved out first,
-        then each shared multiplier ``k``, then ``D`` takes what is left::
+        then each shared multiplier ``k``, then ``D`` takes what is left:
 
             (4, 3, 2, 1) ... (4, 3, 2, 7)   # k = 1
             (4, 6, 4, 1), (4, 6, 4, 2)      # k = 2
