@@ -7,10 +7,10 @@ The `nuopc.runconfig` files used by the CESM driver, and thus by the NUOPC-based
 models, are a mixture of formats. At the top-level, one has the Resource Files as
 implemented in ESMF. From the ESMF documentation:
 
-    A Resource File (RF) is a text file consisting of list of label-value pairs. There
-    is a limit of 1024 characters per line and the Resource File can contain a maximum
-    of 200 records. Each label should be followed by some data, the value. An example
-    Resource File follows. It is the file used in the example below.
+> A Resource File (RF) is a text file consisting of list of label-value pairs. There
+> is a limit of 1024 characters per line and the Resource File can contain a maximum
+> of 200 records. Each label should be followed by some data, the value. An example
+> Resource File follows. It is the file used in the example below.
 
      # This is an example Resource File.
      # It contains a list of <label,value> pairs.
@@ -45,11 +45,11 @@ implemented in ESMF. From the ESMF documentation:
         300     3000     295.8
       ::
 
-    Note that the colon after the label is required and that the double colon is
-    required to declare tabular data.
+> Note that the colon after the label is required and that the double colon is
+> required to declare tabular data.
 
 For further details, see
-https://earthsystemmodeling.org/docs/release/ESMF_8_6_0/ESMF_refdoc/node6.html#SECTION06090000000000000000
+<https://earthsystemmodeling.org/docs/release/ESMF_8_6_0/ESMF_refdoc/node6.html#SECTION06090000000000000000>
 
 
 The CESM driver then uses tables as defined in Resource Files to store lists of key-value

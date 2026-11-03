@@ -239,8 +239,7 @@ class ConfigBlockList(list):
     block would go, and how it should be spaced -- so those operations raise
     ``NotImplementedError`` rather than leaving the list and the file disagreeing.
 
-    Args:
-        blocks (Sequence[Config]): One configuration per occurrence, in the order written.
+    It is built as a ``list`` is, from one ``Config`` per occurrence, in the order written.
     """
 
     def _unsupported(self, *args: Any, **kwargs: Any) -> NoReturn:
