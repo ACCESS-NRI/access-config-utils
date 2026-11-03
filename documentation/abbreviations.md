@@ -24,3 +24,14 @@ Add, delete or edit the list below to add known abbreviations to the site.
 *[PBS]: Portable Batch System
 *[VDI]: Virtual Desktop Interface
 *[NIWA]: New Zealand National Institute of Water and Atmospheric Research
+*[MPI]: Message Passing Interface
+*[OpenMP]: Open Multi-Processing, for parallelism in shared memory
+*[ESMF]: Earth System Modeling Framework
+*[NUOPC]: National Unified Operational Prediction Capability
+*[CMEPS]: Community Mediator for Earth Prediction Systems
+*[CESM]: Community Earth System Model
+*[FMS]: Flexible Modeling System
+*[MOM]: Modular Ocean Model
+*[CICE]: The Los Alamos sea ice model
+*[WW3]: WAVEWATCH III, a model of ocean waves
+*[UFS]: Unified Forecast System
