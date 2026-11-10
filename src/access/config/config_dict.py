@@ -64,10 +64,10 @@ class ConfigList(list):
     Writing an element changes one token, in the notation it was written in. A list that
     grows or shrinks is laid out afresh around the elements that stay: those keep their
     text, comments included, and a new element is written like its neighbours, on their
-    line or on a line of its own. A list keeps at least two elements, and one whose values
-    are written with repeat counts, array qualifiers or in more than one assignment can be
-    rewritten but not resized. The elements a repeat count stands for are rewritten only
-    together, all alike.
+    line or on a line of its own, and has their type when they all have one. A list keeps at
+    least two elements, and one whose values are written with repeat counts, array
+    qualifiers or in more than one assignment can be rewritten but not resized. The elements
+    a repeat count stands for are rewritten only together, all alike.
 
     A list of records, which the file writes one entry per record, keeps at least one
     instead, and hands each record out as a ``ConfigRecord``: a dict that is read only,
@@ -231,7 +231,8 @@ class ConfigBlockList(list):
     A format may read a repeated block as separate records rather than merging them -- a
     format may, where a reader stops at the first block of the name and so no single read
     ever sees the merge. Each element here is a nested ``Config`` over one
-    occurrence, and writing through it reaches that occurrence alone.
+    occurrence, and writing through it reaches that occurrence alone. A copy is a plain
+    list, which is what a copy of the data is.
 
     Only the elements are editable, not the list. Adding or removing a whole block is a
     change to the file's structure that nothing here knows how to write -- where the new
@@ -263,6 +264,10 @@ class ConfigBlockList(list):
     __iadd__ = _unsupported  # type: ignore[assignment]
     __imul__ = _unsupported  # type: ignore[assignment]
 
+    def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[Any, ...]:
+        """Copy and pickle as a plain list: the occurrences, not the file."""
+        return list, (list(self),)
+
 
 class Config(dict):
     """A dict holding the contents of a parsed configuration file.
@@ -270,6 +275,8 @@ class Config(dict):
     Every write is mirrored into the parse tree the store owns, so that ``str(config)``
     reproduces the file with the change and nothing else. Keys are matched however the
     format matches them: case-insensitively for some formats, exactly for others.
+
+    A copy is a plain dict, which is what a copy of the data is.
 
     Args:
         store (ConfigStore): The parse tree of one container and the entries in it.
@@ -565,3 +572,7 @@ class Config(dict):
     def __str__(self) -> str:
         """Override method to write the configuration back out as text."""
         return self._store.render()
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[Any, ...]:
+        """Copy and pickle as a plain dict: the parse tree is not data."""
+        return dict, (dict(self),)

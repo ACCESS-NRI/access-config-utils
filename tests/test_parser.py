@@ -16,6 +16,8 @@ that would otherwise need three. What it cannot write is a block named by a chai
 which ``HeaderParser`` adds.
 """
 
+import copy
+import pickle
 from pathlib import Path
 
 import pytest
@@ -721,6 +723,20 @@ def test_config_dict_methods(parser):
     assert str(config) == ""
 
 
+def test_config_copy(parser) -> None:
+    """Test that a copy of a configuration is its data, and leaves its file as it was.
+
+    Copied as any dict subclass is, a ``Config`` wrote every entry into the file again.
+    """
+    text = "a=1 b=2,3 block<c:4>"
+    config = parser.parse(text)
+
+    for duplicate in (copy.copy(config), copy.deepcopy(config), pickle.loads(pickle.dumps(config))):
+        assert duplicate == {"a": 1, "b": [2, 3], "block": {"c": 4}}
+        assert type(duplicate) is dict
+    assert str(config) == text
+
+
 def test_config_list_operations(parser):
     """Test that every list operation is written through to the file"""
     config = parser.parse("a=1,2,3")
@@ -749,6 +765,23 @@ def test_config_list_operations(parser):
             operation()
     assert str(config) == "a=2,3"
     assert values == [2, 3]
+
+
+def test_config_list_growth_keeps_the_type_of_its_elements(parser) -> None:
+    """Test that a list of one type gains only that type, and a mixed list any.
+
+    A model reading the list into an array of one type would misread, or refuse, another.
+    """
+    config = parser.parse('a=1,2 b=1,"two"')
+
+    with pytest.raises(TypeError, match="whose elements are all of type int"):
+        config["a"].append("x")
+    with pytest.raises(TypeError, match="whose elements are all of type int"):
+        config["a"] = [1, 2, 3.5]
+    config["b"].append(3.5)
+
+    assert str(config) == 'a=1,2 b=1,"two",3.5'
+    assert config["a"] == [1, 2]
 
 
 def test_config_grammar_cache(parser):

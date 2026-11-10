@@ -436,6 +436,26 @@ class TestEmptyResultDiagnostics:
             assert list(iter_layouts(parent, total_cores=2)) == []
         assert "no valid layout for component 'child' on 1 core(s) with 1-1 thread(s) per rank" in caplog.text
 
+    def test_a_child_at_an_offset_with_no_layout_of_one_rank_per_core_is_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Its own thread range allows two threads only, so nothing is left it can run at its
+        # offset, and the dead end names the offset rather than the thread range.
+        pool = ParallelComponent(
+            "pool",
+            core_sharing=CoreSharing.SHARED,
+            subcomponents=(ParallelComponent("cpl"), ParallelComponent("ice", core_offset=2)),
+        )
+        allocations = RootAllocation(
+            subcomponents={"cpl": FixedAllocation(4), "ice": FixedAllocation(2, thread_range=(2, 2))}
+        )
+        with caplog.at_level(logging.DEBUG, logger="access.config.parallel_layouts"):
+            assert list(iter_layouts(pool, total_cores=4, allocations=allocations)) == []
+        assert (
+            "no layout of component 'ice' on 2 core(s) runs one rank per core, as its core offset of 2 requires"
+            in caplog.text
+        )
+
     def test_quiet_by_default(self, caplog: pytest.LogCaptureFixture) -> None:
         comp = ParallelComponent("c", local_constraints=(_RejectAll(),))
         with caplog.at_level(logging.WARNING, logger="access.config.parallel_layouts"):
@@ -1172,3 +1192,55 @@ class TestIterLayoutsSharedCores:
             )
             == []
         )
+
+    def test_a_child_placed_at_an_offset_runs_one_rank_per_core(self) -> None:
+        """A child at an offset is offered only its unthreaded layouts; its sibling is not.
+
+        Both inherit the root's thread range. The offset counts cores, so a threaded layout
+        of the child was refused when the pool's layout was built, ending the search.
+        """
+        layouts = iter_layouts(
+            self._offset_model(2),
+            4,
+            allocations=RootAllocation(
+                thread_range=(1, 2),
+                subcomponents={
+                    "pool": FixedAllocation(4, subcomponents={"cpl": FixedAllocation(4), "ice": FixedAllocation(2)})
+                },
+            ),
+        )
+
+        assert [
+            [(child.name, child.n_ranks, child.threads_per_rank) for child in layout.sub_layouts[0].sub_layouts]
+            for layout in layouts
+        ] == [[("cpl", 4, 1), ("ice", 2, 1)], [("cpl", 2, 2), ("ice", 2, 1)]]
+
+    def test_a_parent_placed_at_an_offset_leaves_none_of_its_cores_idle(self) -> None:
+        """A parent at an offset is offered only the divisions that spend all of its cores.
+
+        One leaving a core idle runs fewer ranks than it holds cores, which an offset
+        counting cores cannot place: the first such division ended the search.
+        """
+        side = ParallelComponent("side", core_offset=2, subcomponents=(ParallelComponent("x"), ParallelComponent("y")))
+        model = ParallelComponent(
+            name="coupled",
+            subcomponents=(
+                ParallelComponent(
+                    "pool", core_sharing=CoreSharing.SHARED, subcomponents=(ParallelComponent("cpl"), side)
+                ),
+            ),
+        )
+        side_strategy = FixedAllocation(4, subcomponents={"x": FreeAllocation(), "y": FreeAllocation()})
+        allocations = RootAllocation(
+            subcomponents={"pool": FixedAllocation(6, subcomponents={"cpl": FixedAllocation(6), "side": side_strategy})}
+        )
+
+        layouts = iter_layouts(model, 6, allocations=allocations)
+
+        assert [
+            [child.n_cores for child in layout.sub_layouts[0].sub_layouts[1].sub_layouts] for layout in layouts
+        ] == [
+            [1, 3],
+            [2, 2],
+            [3, 1],
+        ]

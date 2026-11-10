@@ -353,7 +353,9 @@ matter; line length is not.
 - Editing is restricted, but adding keys and resizing lists are supported. Assigning to a
   **new** key adds an entry — a scalar, a list of two or more values, `None` where the grammar
   has a `key_null` rule, a `dict` to create a block and fill it, or a list of dicts for records.
-  What still fails: changing a value's type raises `TypeError`; a list shorter than two
+  What still fails: changing a value's type raises `TypeError`, as does a new element of a list
+  whose elements all have one type, unless it has that type too (a mixed list, such as a Fortran
+  derived type assigned as a list of its components, takes any); a list shorter than two
   elements (one, for records), or one written with a repeat count, array qualifiers, skipped
   positions or in several assignments, raises `ValueError` on a change of length; so does giving
   one element of a repeat count (`6*9.0`) a value of its own, though giving all of them the same
@@ -397,7 +399,10 @@ matter; line length is not.
   `config_resize`/`list_layout` around the elements that stay, given the old position each new
   element stands in for (`origins`: worked out by alignment when a whole list is assigned, exact
   for `append`, `extend` and `insert`, which are slice assignments). Each candidate layout is
-  validated by parsing, and the entry keeps its node. A copy is a plain list.
+  validated by parsing, and the entry keeps its node. **A copy is plain data**, through
+  `__reduce_ex__`: a `ConfigList` or a `ConfigBlockList` copies, deep copies and pickles as a
+  `list`, a `Config` or a `ConfigRecord` as a `dict`. The default copy of a `dict` subclass
+  refills it through `__setitem__`, which would write every entry into the file again.
 - **A value type that `collects` makes records.** `named_assignments` (a field table method of
   three strings) is one: the reader gathers every entry of the key into one `KEY_LIST` ref with
   `collected=True`, an entry per record, in file order — one record is a list of one. Each
@@ -631,6 +636,9 @@ matter; line length is not.
   `pestride = 1` — is assumed because the model cannot express anything else. It is refused on
   a sub-component running more than one core per rank, where a core index and a PE index part
   company, and under a partitioned parent, where each child already starts where the last ended.
+  The search offers a sub-component placed at an offset only its layouts running one rank per
+  core (`_placeable_layouts`), so a thread range or idle cores below it narrow its layouts
+  rather than ending the search with that refusal.
 - A component is a **leaf or a parent, never both** (`ParallelComponent` rejects `domain`
   together with `subcomponents`), and that split runs through `ComponentLayout`: a leaf has a
   `threads_per_rank` and spends its cores exactly (`n_ranks × threads_per_rank == n_cores`); a

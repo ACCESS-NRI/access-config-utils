@@ -342,13 +342,21 @@ class TestResizing:
         with pytest.raises(ValueError, match="at least two elements"):
             config["runSeq"].pop()
 
-    @pytest.mark.parametrize("value", [3600, "OCN # c", "  OCN", ":: OCN"])
+    @pytest.mark.parametrize("value", ["OCN # c", "  OCN", ":: OCN"])
     def test_a_value_that_is_not_a_line_of_text(self, parser, value) -> None:
         """Test that what would not read back as the same line is refused."""
         config = parser.parse("runSeq::\n  ATM\n  OCN\n::\n")
 
         with pytest.raises(UnsupportedEntryError):
             config["runSeq"].append(value)
+        assert str(config) == "runSeq::\n  ATM\n  OCN\n::\n"
+
+    def test_a_value_that_is_not_a_string(self, parser) -> None:
+        """Test that a new line is a string, as every line of the table is."""
+        config = parser.parse("runSeq::\n  ATM\n  OCN\n::\n")
+
+        with pytest.raises(TypeError, match="whose elements are all of type str"):
+            config["runSeq"].append(3600)
         assert str(config) == "runSeq::\n  ATM\n  OCN\n::\n"
 
 

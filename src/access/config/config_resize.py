@@ -39,7 +39,7 @@ from access.config.grammar_values import (
 from access.config.list_layout import VALUE_MARKER, ListText, layout_candidates
 from access.config.tree_edits import blank_comments, parse_entry_nodes, replace_entry_contents, rewritten_text
 from access.config.tree_navigation import is_value_node, locate_entry, node_at
-from access.config.tree_reader import read_entries
+from access.config.tree_reader import entry_value, read_entries
 
 if TYPE_CHECKING:
     from access.config.grammar_compiled import ParseContext
@@ -59,7 +59,8 @@ def resize_entry(
     Raises:
         ValueError: If fewer than two values are asked for, or the entry's values are not
             written one per node in a single entry.
-        TypeError: If a value standing in for an old element is of another type.
+        TypeError: If a value standing in for an old element is of another type, or a new
+            value is not of the type every old element has, when they all have one.
         UnsupportedEntryError: If a new value has no type the format can write here, or no
             layout of the list reads back as the values asked for.
     """
@@ -120,8 +121,12 @@ def _value_texts(
     """Return the token text to write each new value with.
 
     A value that stays keeps its token if unchanged, else is written in its old notation.
-    A new one takes the notation of its nearest old neighbour, else the format's own.
+    A new one takes the notation of its nearest old neighbour, else the format's own, and
+    keeps a list of one type of one type: only a list of mixed types, such as a Fortran
+    derived type assigned as a list of its components, takes a new value of any type.
     """
+    types = {type(value) for value in entry_value(ref)}
+    shared = types.pop() if len(types) == 1 else None
     texts = []
     for index, (value, origin) in enumerate(zip(values, origins, strict=True)):
         if origin is not None:
@@ -129,6 +134,10 @@ def _value_texts(
             assert node is not None
             texts.append(rewritten_text(node, value))
             continue
+        if shared is not None and type(value) is not shared:
+            raise TypeError(
+                f"Trying to add a {type(value).__name__} to '{key}', whose elements are all of type {shared.__name__}"
+            )
         # Copy a neighbour's notation, so a list of quoted strings gains quoted strings.
         neighbour = _nearest_old(origins, index)
         if neighbour is not None:

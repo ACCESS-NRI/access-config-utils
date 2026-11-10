@@ -128,13 +128,16 @@ class TestResizing:
         assert ref.entry_nodes == (entry,)
         assert [node.parent for node in ref.value_nodes] == [entry] * 3
 
-    def test_a_new_value_of_another_type(self, ctx) -> None:
-        """Test that a value its neighbours cannot hold takes the format's preference."""
-        store = store_of(ctx, "a = 1, 2\n")
+    def test_a_new_value_of_another_type_in_a_list_of_mixed_types(self, ctx) -> None:
+        """Test that a value its neighbours cannot hold takes the format's preference.
 
-        resize(store, [1, 2, "x"], [0, 1, None])
+        Only a list of mixed types takes one, such as a Fortran derived type's components.
+        """
+        store = store_of(ctx, "a = 'x', 2\n")
 
-        assert store.render() == 'a = 1, 2, "x"'
+        resize(store, ["x", 2, "y"], [0, 1, None])
+
+        assert store.render() == "a = 'x', 2, \"y\""
 
     def test_a_changed_value_keeps_its_place(self, ctx) -> None:
         """Test that a value taking an old element's place is written in its notation."""
@@ -192,12 +195,28 @@ class TestRefused:
         with pytest.raises(TypeError, match="change value type"):
             resize(store, ["x", 2, 3], [0, 1, None])
 
-    def test_a_new_value_no_type_can_hold(self, ctx) -> None:
-        """Test that a value the format has no notation for is refused."""
+    def test_a_new_value_of_another_type_than_the_list(self, ctx) -> None:
+        """Test that a list whose elements are all of one type gains only that type.
+
+        A model reading the list into an array of that type would misread it, or refuse it.
+        """
         store = store_of(ctx, "a = 1, 2\n")
 
+        with pytest.raises(TypeError, match="whose elements are all of type int"):
+            resize(store, [1, 2, "x"], [0, 1, None])
+
+        assert store.render() == "a = 1, 2"
+
+    def test_a_new_value_no_type_can_hold(self, ctx) -> None:
+        """Test that a value the format has no notation for is refused.
+
+        A list of one type takes only that type, which it has a notation for, so the list is
+        a mixed one.
+        """
+        store = store_of(ctx, "a = 'x', 2\n")
+
         with pytest.raises(UnsupportedEntryError, match="cannot store"):
-            resize(store, [1, 2, object()], [0, 1, None])
+            resize(store, ["x", 2, object()], [0, 1, None])
 
 
 class TestCandidates:
