@@ -1,0 +1,26 @@
+# =========== IMPORTANT!! READ THIS!! ============ #
+# This file is used to check links and can be copied to be used for documentation websites.
+
+# When you copy this file, make sure to check and modify the fields
+# that here are marked with `MODIFY`.
+# ============================================== #
+
+name: Check links
+
+on:
+  # No push trigger: on a site with multiple versions, a push to main checks the links of a version that does not
+  # exist (https://github.com/ACCESS-NRI/documentation-infra/issues/19).
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check-links:
+    uses: access-nri/documentation-infra/.github/workflows/check_links_workflow.yml@v0.3
+    with:
+      repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+      commit: ${{ github.event.pull_request.head.sha || github.sha }}
+      rtd_project: 'access-config-utils'
+    #   readthedocs_yaml: # MODIFY: Uncomment to add .readthedocs.yaml path. If not included, '.readthedocs.yaml' is used.
+      lychee_config: 'documentation/lychee_config.toml'
+    # secrets: # MODIFY: Uncomment the lines below if the repo is private. You also need to create a secret named REPO_READ_TOKEN with a token that has repo read permissions.
+    #   repo_read_token: ${{ secrets.REPO_READ_TOKEN }}

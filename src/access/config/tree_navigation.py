@@ -12,11 +12,10 @@ Lark parse tree structure
 A Lark parse tree is made up of two node types that correspond directly to
 grammar elements:
 
-``Tree``: produced by a **grammar rule** (lowercase name in the grammar)
+- ``Tree``: produced by a **grammar rule** (lowercase name in the grammar)
     - ``tree.data`` (``str``): the rule name, e.g. ``"key_value"``, ``"integer"``
     - ``tree.children`` (``list``): child nodes, each a ``Tree`` or ``Token``
-
-``Token``: produced by a **grammar terminal** (UPPERCASE name in the grammar)
+- ``Token``: produced by a **grammar terminal** (UPPERCASE name in the grammar)
     - ``Token`` is a subclass of ``str``, so it compares and behaves like the
       matched text directly (e.g. ``token == "42"``).
     - ``token.type`` (``str``): the terminal name, e.g. ``"CNAME"``, ``"INT"``

@@ -87,3 +87,25 @@ jobs:
       uses: codecov/codecov-action@v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # the dates at the foot of every page are read from the git history
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'  # as in .readthedocs.yaml
+        cache: 'pip'
+        cache-dependency-path: documentation/requirements.txt
+    - name: Install the documentation requirements
+      run: python -m pip install -r documentation/requirements.txt
+    # Strict, unlike the Read the Docs build, so that a docstring the API reference cannot read fails here
+    - name: Build the documentation, with warnings as errors
+      env:
+        # Set by Read the Docs, and required by the resolve-absolute-urls plugin
+        READTHEDOCS_CANONICAL_URL: https://access-config-utils.readthedocs.io/latest/
+        NO_MKDOCS_2_WARNING: 'true'
+      run: python -m mkdocs build --strict --config-file documentation/mkdocs.yml --site-dir "$RUNNER_TEMP/site"

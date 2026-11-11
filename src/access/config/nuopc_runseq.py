@@ -5,14 +5,14 @@
 
 The ``nuopc.runseq`` file of a CMEPS-driven model, such as ACCESS-OM3, says in which order
 the components and the mediator run, and how often. CMEPS reads it in
-``cesm/driver/esm.F90``::
+``cesm/driver/esm.F90``:
 
     call ESMF_ConfigLoadFile(runSeq, "nuopc.runseq", rc=rc)
     runSeqFF = NUOPC_FreeFormatCreate(runSeq, label="runSeq::", rc=rc)
     call NUOPC_DriverIngestRunSequence(driver, runSeqFF, autoAddConnectors=.true., rc=rc)
 
 So the file is an ESMF Resource File holding one table, labelled ``runSeq``, each line of
-which is one element of the run sequence::
+which is one element of the run sequence:
 
     runSeq::
     @3600
@@ -31,9 +31,9 @@ component runs it, a component and a phase label runs that phase, and ``SRC -> D
 optional ``:option=value`` settings runs a connector. ``#`` starts a comment, a table ends
 at a line starting with ``::``, and the whitespace around a line means nothing to ESMF.
 See the ESMF reference manual for Resource Files,
-https://earthsystemmodeling.org/docs/release/ESMF_8_6_0/ESMF_refdoc/node6.html#SECTION06090000000000000000
+<https://earthsystemmodeling.org/docs/release/ESMF_8_6_0/ESMF_refdoc/node6.html#SECTION06090000000000000000>
 and the NUOPC reference manual, under ``NUOPC_DriverIngestRunSequence``, for the run
-sequence syntax: https://earthsystemmodeling.org/docs/release/latest/NUOPC_refdoc/
+sequence syntax: <https://earthsystemmodeling.org/docs/release/latest/NUOPC_refdoc/>
 
 Each table reads as a list of its lines, kept whole as strings, without their indentation,
 trailing whitespace or comments: ``config["runSeq"]`` is ``["@3600", "MED

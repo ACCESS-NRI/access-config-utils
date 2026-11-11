@@ -14,7 +14,8 @@ python -m pytest
 ```
 
 This mirrors CI (`.github/workflows/ci.yml`): the `formatting` job runs `pre-commit`, which is
-ruff-check plus ruff-format; the `build` job runs `python -m pytest` on Python 3.11, 3.12 and 3.13.
+ruff-check plus ruff-format; the `build` job runs `python -m pytest` on Python 3.11, 3.12 and 3.13;
+and the `docs` job builds the documentation strictly.
 
 Equivalently, for the formatting half: `pre-commit run --all-files`.
 
@@ -53,8 +54,14 @@ Equivalently, for the formatting half: `pre-commit run --all-files`.
 - New files need the two-line Apache-2.0 header
   (`# Copyright 2025 ACCESS-NRI and contributors...` / `# SPDX-License-Identifier: Apache-2.0`).
   Neither ruff nor CI enforces this — check by eye.
-- If the change alters something `AGENTS.md`, `README.md` or a guide in `skills/` states — a name,
-  a count, a rule — update it in the same change. Nothing checks these, and they drift.
+- After changing a docstring, or anything under `documentation/`, build the documentation as CI
+  does, with the commands under Commands in `AGENTS.md`: the build fails on a docstring griffe
+  cannot read, a page missing from the navigation, and a broken link or anchor. It needs its own
+  environment, `pip install -r documentation/requirements.txt`, and warns about the date of a page
+  not yet committed.
+- If the change alters something `AGENTS.md`, `README.md`, a guide in `skills/` or a page under
+  `documentation/docs/pages/` states — a name, a count, a rule — update it in the same change.
+  Nothing checks these, and they drift.
 
 ## Reporting
 

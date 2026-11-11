@@ -11,21 +11,19 @@ which ones apply instead of writing predicates.
 
 Concepts
 --------
-constraint
-    A yes-or-no test applied to a candidate layout. Returning ``False`` rejects that one
-    candidate and means nothing more: the search moves on, so a rule that no layout can
-    satisfy shows up as a search that found nothing, not as an error.
-local and group
-    A local constraint judges one component's layout on its own. A group constraint judges
-    the layouts of a whole set of sibling sub-components together - a required ratio between
-    two of them, say - and so is attached to their parent rather than to any one sibling.
-applicability
-    Not every rule can be evaluated against every layout: a grid rule needs a decomposition,
-    a thread rule needs the thread count only a leaf has, and an idle-core rule needs a
-    parent with sub-components to have left cores unspent. Asking anyway is a mistake in
-    how the rule was attached, not a layout to reject, so these raise ``ValueError``
-    rather than quietly answering ``True`` or ``False``. The ``_require_*`` helpers below
-    hold those checks, one per precondition.
+- **constraint**: a yes-or-no test applied to a candidate layout. Returning ``False``
+  rejects that one candidate and means nothing more: the search moves on, so a rule that no
+  layout can satisfy shows up as a search that found nothing, not as an error.
+- **local and group**: a local constraint judges one component's layout on its own. A group
+  constraint judges the layouts of a whole set of sibling sub-components together - a
+  required ratio between two of them, say - and so is attached to their parent rather than
+  to any one sibling.
+- **applicability**: not every rule can be evaluated against every layout. A grid rule needs
+  a decomposition, a thread rule needs the thread count only a leaf has, and an idle-core
+  rule needs a parent with sub-components to have left cores unspent. Asking anyway is a
+  mistake in how the rule was attached, not a layout to reject, so these raise
+  ``ValueError`` rather than quietly answering ``True`` or ``False``. The ``_require_*``
+  helpers below hold those checks, one per precondition.
 
 The rules fall into four families, in the order they appear below:
 
@@ -354,8 +352,8 @@ class MinSubdomainSizeConstraint(LocalConstraint):
     attached to several components without risk of it changing between checks.
 
     Args:
-        min_size (int): Minimum number of grid points per sub-domain dimension. Must be
-            >= 1.
+        min_size (int): Minimum number of grid points per sub-domain dimension.
+            Must be >= 1.
     """
 
     min_size: int

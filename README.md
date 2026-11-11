@@ -4,14 +4,16 @@
 
 ## About
 
-A Python package providing various utilities to work with configurations for the models developed at [ACCESS-NRI](https://github.com/ACCESS-NRI).
+access-config-utils is a Python package for working with the configurations of the climate models developed at
+[ACCESS-NRI](https://github.com/ACCESS-NRI). It has two parts, which you can use independently of each other: parsers
+for configuration files, and a search for parallelisation layouts.
 
 ## Key Features
 
 Parsers:
 - Various parsers for configuration files used across ACCESS-NRI models:
   - Fortran namelists (`FortranNMLParser`)
-  - MOM6 parameter files, `MOM_input` and `MOM_override` (`MOM6InputParser`)
+  - MOM6 parameter files, `MOM_input` (`MOM6InputParser`)
   - NUOPC run configurations, `nuopc.runconfig` (`NUOPCParser`)
   - NUOPC run sequences, `nuopc.runseq` (`NUOPCRunSeqParser`)
   - FMS field tables in the legacy format, `field_table` (`FieldTableParser`)
@@ -19,9 +21,16 @@ Parsers:
 - Support for round-trip parsing, preserving comments and formatting
 - Simple API
 
+Parallelisation layouts:
+- Enumeration of the layouts that a model can run on a number of cores. A layout gives the cores, the MPI ranks, the
+  OpenMP threads and the process grid of each component, and the search is filtered by allocation strategies and
+  constraints (`iter_layouts`)
+
 ## Documentation
 
-Coming soon.
+The documentation is at [access-config-utils.readthedocs.io](https://access-config-utils.readthedocs.io/). It has a user
+guide, which explains how each format is read, edited and written, and how to describe a model and search for its
+parallelisation layouts. It also has a developer guide and an API reference.
 
 ## Installation
 
@@ -47,7 +56,7 @@ pip install .
 
 Here is a simple example of how to parse a text and modify its contents.
 
-To parse some text, one just needs to call the `parse` function of the appropriate parser:
+To parse some text, call the `parse` method of the appropriate parser:
 ```python
 from access.config import FortranNMLParser
 
@@ -59,6 +68,9 @@ parameterB = 'abc'
 config = FortranNMLParser().parse(text)
 print(config)
 ```
+
+This prints:
+
 ```python
 &data_nml
 parameterA = 1
@@ -66,12 +78,15 @@ parameterB = 'abc'
 /
 ```
 
-The parsed content can then be modified like a Python dict. Everything not touched — comments,
-blank lines, spacing — is reproduced exactly:
+You can then modify the parsed content like a Python dict. Everything that you do not touch is reproduced exactly,
+including the comments, the blank lines and the spacing:
 ```python
 config["data_nml"]["parameterA"] = 2
 print(config)
 ```
+
+This prints:
+
 ```python
 &data_nml
 parameterA = 2
@@ -79,15 +94,17 @@ parameterB = 'abc'
 /
 ```
 
-New keys can be added too, and are written like the entries around them: the same spacing,
-delimiters, quotes and line endings. Each value is written in whichever notation the format uses,
-so a `bool` becomes a Fortran logical here:
+You can also add new keys. They are written like the entries around them, with the same spacing, delimiters, quotes and
+line endings. Each value is written in the notation of the format, so a `bool` becomes a Fortran logical here:
 ```python
 config["data_nml"]["parameterC"] = True
 config["data_nml"]["parameterD"] = [1, 2, 3]
 config["new_nml"] = {"parameterE": "def"}
 print(config)
 ```
+
+This prints:
+
 ```python
 &data_nml
 parameterA = 2
@@ -100,14 +117,13 @@ parameterE = "def"
 /
 ```
 
-A value the format cannot express raises `UnsupportedEntryError` rather than writing a file that
-no longer means what the dict says — for instance `None` in a format with no valueless assignment,
-or a string containing a space in one with no quoted-string syntax.
+A value that the format cannot express raises `UnsupportedEntryError`. The file would otherwise no longer mean what the
+dict says. Examples are `None` in a format with no valueless assignment, and a string containing a space in a format
+with no quoted strings.
 
-A list value behaves like a list: elements can be changed, added, removed and reordered, by
-assignment or with `append`, `extend`, `insert`, `pop`, `sort` and the rest. The elements that stay
-keep their text, comments included, and a new element is written like its neighbours, on their
-line or on a line of its own:
+A list value behaves like a list. You can change, add, remove and reorder its elements, by assignment or with `append`,
+`extend`, `insert`, `pop`, `sort` and the rest. The elements that stay keep their text, comments included, and a new
+element is written like its neighbours, on their line or on a line of its own:
 ```python
 config = FortranNMLParser().parse('''&data_nml
 parameterD = 1,
@@ -116,6 +132,9 @@ parameterD = 1,
 config["data_nml"]["parameterD"].append(3)
 print(config)
 ```
+
+This prints:
+
 ```python
 &data_nml
 parameterD = 1,
@@ -137,10 +156,10 @@ A few caveats on the dict and list behaviour:
 - Replacing an existing block wholesale raises `SyntaxError` — a block can be created and edited,
   but not swapped out.
 
-Every parser works the same way; only the layout of the dict follows the format. An FMS field
-table, for instance, reads as the FMS YAML field table lays it out. A header is three levels of
-keys, and a method of three strings is a record, one of a list of the records the file writes for
-it, holding its name under `"value"`:
+Every parser works in the same way, and only the structure of the dict depends on the format. An FMS field table, for
+instance, is read with the structure of the FMS YAML field table. A header is three levels of keys. A method of three
+strings is a record, which holds its name under `"value"`, and the records that the file writes for a method make a
+list:
 ```python
 from access.config import FieldTableParser
 
@@ -150,17 +169,23 @@ config = FieldTableParser().parse('''"TRACER", "atmos_mod", "sphum"
 ''')
 print(dict(config["tracer"]["atmos_mod"]["sphum"]))
 ```
+
+This prints:
+
 ```python
 {'longname': 'specific humidity', 'profile_type': [{'value': 'fixed', 'surface_value': 3e-06}]}
 ```
-A record is read only, and is changed by assigning a dict to its place in the list. A new field
-is written as a whole entry, after the last of its type and model:
+A record is read only. To change it, assign a dict to its place in the list. A new field is written as a whole entry,
+after the last entry of its type and model:
 ```python
 profile = config["tracer"]["atmos_mod"]["sphum"]["profile_type"]
 profile[0] = {**profile[0], "surface_value": 1e-5}
 config["tracer"]["atmos_mod"]["liq_wat"] = {"longname": "cloud liquid specific humidity"}
 print(config)
 ```
+
+This prints:
+
 ```python
 "TRACER", "atmos_mod", "sphum"
     "longname", "specific humidity"
@@ -169,8 +194,8 @@ print(config)
     "longname", "cloud liquid specific humidity" /
 ```
 
-A JSON file holds plain data, so its dict is edited directly, and the text is written again from it
-once it changes. The file's own layout is kept, down to which lists it wrote on one line:
+A JSON file holds plain data, so you edit its dict directly, and the text is written again from it once it changes. The
+formatting of the file is kept, down to which lists it wrote on one line:
 ```python
 from access.config import JSONParser
 
@@ -187,6 +212,9 @@ config["dt"] = 900
 config["levels"].append(4)
 print(config)
 ```
+
+This prints:
+
 ```python
 {
     "name": "run",
