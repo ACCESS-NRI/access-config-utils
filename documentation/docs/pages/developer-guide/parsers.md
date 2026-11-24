@@ -150,5 +150,6 @@ punctuation that tells two syntaxes apart is kept in a rule of its own, which is
 ## The YAML and JSON parsers
 
 None of this applies to `YAMLParser` and `JSONParser`, which wrap ruamel.yaml and `json`. Their
-configurations are the data of those libraries. Their `str` writes the data out again, in the style
-detected from the text it came from.
+configurations are the data of those libraries. While the data is unchanged, their `str` gives back
+the text it came from. After an edit, a YAML configuration replaces only the lines that changed in
+that text, and a JSON configuration writes its data again, in the style detected from the text.

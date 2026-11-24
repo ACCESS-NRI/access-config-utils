@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import copy
+from collections.abc import Callable
 from io import StringIO
 
 import pytest
 from ruamel.yaml import YAML, CommentedMap
 
-from access.config import yaml_config
 from access.config.yaml_config import DEFAULT_INDENT, YAMLConfig, YAMLParser, guess_indent
 
 
@@ -338,17 +338,71 @@ def test_round_trip_changes_only_the_lines_that_change(parser, edit, old, new) -
     assert str(config) == MIXED_LAYOUT.replace(old, new)
 
 
-def test_round_trip_falls_back_to_ruamel_yaml(parser, monkeypatch) -> None:
-    """ruamel.yaml writes the whole configuration when a changed line cannot be placed in
-    the text, or when the patched text does not read as the configuration does."""
-    config = parser.parse(MIXED_LAYOUT)
-    config["ncpus"] = 100
+@pytest.mark.parametrize(
+    ("text", "edit", "expected"),
+    [
+        pytest.param(
+            "a:\n  b: True\n  # note\nz: 1\n",
+            lambda c: c["a"].__setitem__("n", 2),
+            "a:\n  b: True\n  # note\n  n: 2\nz: 1\n",
+            id="key-after-a-comment-line",
+        ),
+        pytest.param(
+            "x:\n  y: [1,\n    2]\n  z: 1\n",
+            lambda c: c["x"].__setitem__("z", {"w": 1}),
+            "x:\n  y: [1,\n    2]\n  z:\n    w: 1\n",
+            id="mapping-below-a-multi-line-flow-value",
+        ),
+        pytest.param("a: True\nb: 2\n", lambda c: c.insert(0, "first", 0), "first: 0\na: True\nb: 2\n", id="first-key"),
+        pytest.param(
+            "a:\n    exe: True", lambda c: c.__setitem__("x", 1), "a:\n    exe: True\nx: 1", id="no-final-newline"
+        ),
+        pytest.param("a: 1\r\nb: True\r\n", lambda c: c.__setitem__("a", 5), "a: 5\r\nb: True\r\n", id="crlf"),
+    ],
+)
+def test_round_trip_patches_the_text(
+    parser: YAMLParser, text: str, edit: Callable[[YAMLConfig], object], expected: str
+) -> None:
+    """Test that an edit is made to the text, which ruamel.yaml would write differently."""
+    config = parser.parse(text)
+    edit(config)
+    assert str(config) == expected
 
-    monkeypatch.setattr(yaml_config, "_patch", lambda *args: None)
-    assert str(config) == config._dump()
 
-    monkeypatch.setattr(yaml_config, "_patch", lambda *args: "ncpus: 1\n")
-    assert str(config) == config._dump()
+@pytest.mark.parametrize(
+    ("text", "edit", "expected"),
+    [
+        pytest.param(
+            "a: [1, 2,\n    3, 4]\nb: 2\n",
+            lambda c: c["a"].append(5),
+            "a: [1, 2, 3, 4, 5]\nb: 2\n",
+            id="multi-line-flow-sequence-grows",
+        ),
+        pytest.param(
+            "diag:\n  - - a\n    - b\n  - - c\n    - d\n",
+            lambda c: c["diag"][1].__setitem__(0, "z"),
+            "diag:\n  -   - a\n      - b\n  -   - z\n      - d\n",
+            id="edit-in-nested-block-sequences",
+        ),
+        pytest.param(
+            "x:\n  y: [1,\n    2]\nz: 1\n",
+            lambda c: c["x"].__setitem__("w", 3),
+            "x:\n  y: [1, 2]\n  w: 3\nz: 1\n",
+            id="key-after-a-multi-line-flow-value",
+        ),
+    ],
+)
+def test_round_trip_falls_back_to_ruamel_yaml(
+    parser: YAMLParser, text: str, edit: Callable[[YAMLConfig], object], expected: str
+) -> None:
+    """Test that ruamel.yaml writes the whole configuration when the text cannot be patched.
+
+    The first and last cases change lines that have no match in the text; the middle one
+    gives a patched text that does not read.
+    """
+    config = parser.parse(text)
+    edit(config)
+    assert str(config) == expected
 
 
 @pytest.mark.parametrize("text", ["", "- a\n- b\n", "a\n"], ids=["empty", "sequence", "scalar"])

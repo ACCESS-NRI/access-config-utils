@@ -121,11 +121,10 @@ def _indent(line: str) -> int:
 
 
 def _text_column(column: int, row: int, dumped: list[str], source: dict[int, int], text: list[str]) -> int:
-    """Return the column in the text for *column* of the dump, at the dump's line *row*.
+    """Return the text's column for a line the dump writes at *column*, inserted at *row*.
 
-    The column is that of the nearest line above at the same column of the dump, as the text
-    writes it. A line with no such line above it in its block is indented from its parent as
-    in the dump.
+    It moves as the text moves the nearest line above *row* in the old dump, never one being
+    inserted, that is no deeper and has a match; a shallower line with none leaves it as is.
     """
     for k in range(min(row, len(dumped)) - 1, -1, -1):
         line = dumped[k]
@@ -148,7 +147,16 @@ def _patch(text: str, before: str, after: str) -> str | None:
     that changed are replaced there, at the indentation the text uses around them. The
     lines that did not change stay as the text writes them. None means a changed line could
     not be matched.
+
+    A changed line keeps the text's indentation but the dump's spacing within the line,
+    so an edit inside nested block sequences (``- - a``) gives a text that does not read.
+    The lines written end as the text's do, and a text with no final newline is given none.
     """
+    newline = "\r\n" if "\r\n" in text else "\n"
+    # a text with no final newline is given one to insert lines after, taken off at the end
+    missing = not text.endswith("\n")
+    if missing:
+        text += newline
     lines, dumped, new = (part.splitlines(keepends=True) for part in (text, before, after))
 
     # the line of the text each line of the dump was written from
@@ -183,10 +191,14 @@ def _patch(text: str, before: str, after: str) -> str | None:
             ]
         else:
             columns = [_text_column(_indent(line), i1, dumped, source, lines) for line in new[j1:j2]]
+        # ruamel.yaml ends a line with "\n", but a comment with the "\r\n" it was read
+        # with, so each line is ended as the text ends its lines
         lines[start:end] = [
-            " " * max(column, 0) + line.lstrip(" ") for column, line in zip(columns, new[j1:j2], strict=True)
+            " " * max(column, 0) + line.lstrip(" ").rstrip("\r\n") + newline
+            for column, line in zip(columns, new[j1:j2], strict=True)
         ]
-    return "".join(lines)
+    patched = "".join(lines)
+    return patched.removesuffix(newline) if missing else patched
 
 
 def _reads_as(text: str, config: CommentedMap) -> bool:
@@ -195,6 +207,13 @@ def _reads_as(text: str, config: CommentedMap) -> bool:
         return _round_trip_yaml().load(text) == config
     except Exception:  # a text that does not even read is not the configuration
         return False
+
+
+def _dump(data: CommentedMap, yaml: YAML | None) -> str:
+    """Return *data* as *yaml* writes it, or with ruamel.yaml's defaults if it is None."""
+    output = StringIO("")
+    (yaml if yaml is not None else _round_trip_yaml()).dump(data, output)
+    return output.getvalue()
 
 
 class YAMLConfig(CommentedMap):
@@ -217,34 +236,26 @@ class YAMLConfig(CommentedMap):
     Attributes:
         yaml (YAML | None): The instance the configuration is written back out with. One
             with ruamel.yaml's default indentation when ``None``.
-        text (str | None): The text the configuration was read from, if any.
-        dumped (str | None): What ``yaml`` wrote for the configuration as it was read.
     """
 
     yaml: YAML | None = None
-    text: str | None = None
-    dumped: str | None = None
+    _text: str | None = None  # The text the configuration was read from, if any.
 
     def __str__(self) -> str:
-        dumped = self._dump()
-        if self.text is None or self.dumped is None:
+        dumped = _dump(self, self.yaml)
+        if self._text is None:
             return dumped
-        if dumped == self.dumped:
-            return self.text
-        patched = _patch(self.text, self.dumped, dumped)
+        # the configuration as it was read, written the same way, shows what has changed
+        before = _dump(_round_trip_yaml().load(self._text), self.yaml)
+        if dumped == before:
+            return self._text
+        patched = _patch(self._text, before, dumped)
         return patched if patched is not None and _reads_as(patched, self) else dumped
-
-    def _dump(self) -> str:
-        """Return the configuration as ruamel.yaml writes it."""
-        output = StringIO("")
-        (self.yaml if self.yaml is not None else _round_trip_yaml()).dump(self, output)
-        return output.getvalue()
 
     def copy_attributes(self, t: Any, memo: Any = None) -> Any:
         """Override method so that a copy is written back out like the original."""
         t.yaml = self.yaml
-        t.text = self.text
-        t.dumped = self.dumped
+        t._text = self._text
         return super().copy_attributes(t, memo)
 
 
@@ -278,6 +289,5 @@ class YAMLParser:
             raise TypeError(f"The top level of a YAML configuration must be a mapping, not {type(config).__name__}")
         config.__class__ = YAMLConfig
         config.yaml = _round_trip_yaml(guess_indent(stream))
-        config.text = stream
-        config.dumped = config._dump()
+        config._text = stream
         return config
