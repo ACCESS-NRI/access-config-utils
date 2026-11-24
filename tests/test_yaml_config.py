@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import copy
+from collections.abc import Callable
 from io import StringIO
 
 import pytest
@@ -264,6 +265,162 @@ def test_round_trip_root_merge(parser) -> None:
     config = parser.parse(text)
     assert config["a"] == 1
     assert str(config) == text
+
+
+# A payu configuration as the ACCESS ones are written: two indentations for its mappings and
+# three for its sequences, and values that ruamel.yaml spells its own way.
+MIXED_LAYOUT = """# PBS configuration
+queue: normal
+ncpus: 240   # cores
+sync:
+    enable: False   # set path below and change to true
+    path: null # rsync syntax
+manifest:
+  reproduce:
+    exe: True
+    input: True
+modules:
+    load:
+        - access-om3/2026.05.004
+        - model-tools/mppnccombine-fast/2025.07.000
+mpi:
+  flags:
+  - --mca mpi_yield_when_idle true
+submodels:
+  - name: atmosphere
+    ncpus: 1
+base_date: [ 1900, 1, 1 ]
+"""
+
+
+def test_round_trip_unmodified_mixed_layout(parser) -> None:
+    """A text indented in more than one way, and with values ruamel.yaml spells its own
+    way, is written back out exactly as it was read."""
+    assert str(parser.parse(MIXED_LAYOUT)) == MIXED_LAYOUT
+
+
+@pytest.mark.parametrize(
+    ("edit", "old", "new"),
+    [
+        pytest.param(lambda c: c.__setitem__("ncpus", 100), "ncpus: 240", "ncpus: 100", id="top-level"),
+        pytest.param(
+            lambda c: c["manifest"]["reproduce"].__setitem__("exe", False),
+            "    exe: True",
+            "    exe: false",
+            id="block-indented-by-two",
+        ),
+        pytest.param(
+            lambda c: c["submodels"][0].__setitem__("name", "atm"),
+            "  - name: atmosphere",
+            "  - name: atm",
+            id="first-entry-of-a-sequence",
+        ),
+        pytest.param(
+            lambda c: c["manifest"]["reproduce"].__setitem__("restart", True),
+            "    input: True\n",
+            "    input: True\n    restart: true\n",
+            id="new-key",
+        ),
+        pytest.param(
+            lambda c: c["mpi"]["flags"].append("--mca x"),
+            "  - --mca mpi_yield_when_idle true\n",
+            "  - --mca mpi_yield_when_idle true\n  - --mca x\n",
+            id="new-sequence-entry",
+        ),
+        pytest.param(lambda c: c["sync"].pop("path"), "    path: null # rsync syntax\n", "", id="removed-key"),
+    ],
+)
+def test_round_trip_changes_only_the_lines_that_change(parser, edit, old, new) -> None:
+    """The lines that do not change stay as the text writes them, and a new line is
+    indented as its neighbours are."""
+    config = parser.parse(MIXED_LAYOUT)
+    edit(config)
+    assert str(config) == MIXED_LAYOUT.replace(old, new)
+
+
+@pytest.mark.parametrize(
+    ("text", "edit", "expected"),
+    [
+        pytest.param(
+            "a:\n  b: True\n  # note\nz: 1\n",
+            lambda c: c["a"].__setitem__("n", 2),
+            "a:\n  b: True\n  # note\n  n: 2\nz: 1\n",
+            id="key-after-a-comment-line",
+        ),
+        pytest.param(
+            "x:\n  y: [1,\n    2]\n  z: 1\n",
+            lambda c: c["x"].__setitem__("z", {"w": 1}),
+            "x:\n  y: [1,\n    2]\n  z:\n    w: 1\n",
+            id="mapping-below-a-multi-line-flow-value",
+        ),
+        pytest.param("a: True\nb: 2\n", lambda c: c.insert(0, "first", 0), "first: 0\na: True\nb: 2\n", id="first-key"),
+        pytest.param(
+            "a:\n    exe: True", lambda c: c.__setitem__("x", 1), "a:\n    exe: True\nx: 1", id="no-final-newline"
+        ),
+        pytest.param("a: 1\r\nb: True\r\n", lambda c: c.__setitem__("a", 5), "a: 5\r\nb: True\r\n", id="crlf"),
+        pytest.param(
+            "flags:\n  - true\n  - True\n",
+            lambda c: c["flags"].__setitem__(0, False),
+            "flags:\n  - false\n  - True\n",
+            id="identical-lines",
+        ),
+        pytest.param(
+            "flags:\n  - True\n  - True\n  - True\n  - 1\n  - true\n",
+            lambda c: (c["flags"].__setitem__(1, 1), c["flags"].__setitem__(4, 2)),
+            "flags:\n  - True\n  - 1\n  - True\n  - 1\n  - 2\n",
+            id="two-edits-among-identical-lines",
+        ),
+        pytest.param(
+            "a: True\nb: 1\n",
+            lambda c: setattr(c.yaml, "explicit_start", True),
+            "---\na: True\nb: 1\n",
+            id="yaml-setting-changed",
+        ),
+    ],
+)
+def test_round_trip_patches_the_text(
+    parser: YAMLParser, text: str, edit: Callable[[YAMLConfig], object], expected: str
+) -> None:
+    """Test that an edit is made to the text, which ruamel.yaml would write differently."""
+    config = parser.parse(text)
+    edit(config)
+    assert str(config) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "edit", "expected"),
+    [
+        pytest.param(
+            "a: [1, 2,\n    3, 4]\nb: 2\n",
+            lambda c: c["a"].append(5),
+            "a: [1, 2, 3, 4, 5]\nb: 2\n",
+            id="multi-line-flow-sequence-grows",
+        ),
+        pytest.param(
+            "diag:\n  - - a\n    - b\n  - - c\n    - d\n",
+            lambda c: c["diag"][1].__setitem__(0, "z"),
+            "diag:\n  -   - a\n      - b\n  -   - z\n      - d\n",
+            id="edit-in-nested-block-sequences",
+        ),
+        pytest.param(
+            "x:\n  y: [1,\n    2]\nz: 1\n",
+            lambda c: c["x"].__setitem__("w", 3),
+            "x:\n  y: [1, 2]\n  w: 3\nz: 1\n",
+            id="key-after-a-multi-line-flow-value",
+        ),
+    ],
+)
+def test_round_trip_falls_back_to_ruamel_yaml(
+    parser: YAMLParser, text: str, edit: Callable[[YAMLConfig], object], expected: str
+) -> None:
+    """Test that ruamel.yaml writes the whole configuration when the text cannot be patched.
+
+    The first and last cases change lines that have no match in the text; the middle one
+    gives a patched text that does not read.
+    """
+    config = parser.parse(text)
+    edit(config)
+    assert str(config) == expected
 
 
 @pytest.mark.parametrize("text", ["", "- a\n- b\n", "a\n"], ids=["empty", "sequence", "scalar"])

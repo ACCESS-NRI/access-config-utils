@@ -83,7 +83,7 @@ src/access/config/
                         element)
   field_table.py        FieldTableParser   (keys lower-cased, headers as chains of three keys,
                         methods of three strings as records)
-  yaml_config.py        YAMLParser         (thin wrapper over ruamel.yaml)
+  yaml_config.py        YAMLParser         (thin wrapper over ruamel.yaml, its text patched)
   json_config.py        JSONParser         (thin wrapper over json, its layout detected)
 
   parallel_domain.py      Domain, DomainDecompositionSpec

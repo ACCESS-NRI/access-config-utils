@@ -77,12 +77,63 @@ collate:
 ```
 
 ruamel.yaml keeps the comments, the order of the keys and the quotes of every string. However, it
-does not edit the file: it writes the whole file again, so what comes back is the data as
-ruamel.yaml writes it. The parser detects the indentation that the file uses, and writes with the
-same one. A file that is indented in the same way throughout, like the one above, therefore comes
-back unchanged apart from the edits. A file that mixes several indentations comes back with one of
-them. Some values are also written in ruamel.yaml's way and not in the file's: `True` is written as
-`true`, `null` as nothing, and `[ 1, 2 ]` as `[1, 2]`.
+does not keep the layout of the file. It writes the whole file with one indentation, and it spells
+some values in its own way: `True` as `true`, `null` as nothing, and `[ 1, 2 ]` as `[1, 2]`. `str`
+therefore does not return what ruamel.yaml writes, but edits the text that was parsed. A
+configuration that has not changed is written back exactly as it was read. After an edit, only the
+lines that changed are replaced in the text. The other lines keep their indentation, spacing and
+spelling, even in a file that mixes several indentations. As a second example, we use such a file:
+
+```yaml title="mixed.yaml"
+sync:
+    enable: False   # set to true to sync
+    path: null
+manifest:
+  reproduce:
+    exe: True
+base_date: [ 1900, 1, 1 ]
+```
+
+Save it as `mixed.yaml` in the current directory too. We parse it, add a key to the innermost
+mapping and print the result:
+
+```python
+config = YAMLParser().parse(Path("mixed.yaml").read_text())
+config["manifest"]["reproduce"]["input"] = True
+print(str(config))
+```
+
+This prints:
+
+```text
+sync:
+    enable: False   # set to true to sync
+    path: null
+manifest:
+  reproduce:
+    exe: True
+    input: true
+base_date: [ 1900, 1, 1 ]
+```
+
+Only the new line differs from the file. It is indented like the lines around it, but it is written
+in ruamel.yaml's spelling: `true`, next to the `True` of the line above. When the text can be edited
+like this, lines that are added or changed use the line ending of the file, `\n` or `\r\n`, and a
+file without a final newline still has none after an edit.
+
+ruamel.yaml writes some lines that differ in the file in the same way, such as `- True` and
+`- true`. When two edits are near such lines, or one of them is added or removed, `str` cannot
+always tell which of them changed. It can then rewrite or remove one that did not change, but the
+data is still right.
+
+Before `str` returns the edited text, it reads the text again and compares it with the
+configuration. Sometimes the text does not read as the same data, or a changed line cannot be placed
+in it. In that case, ruamel.yaml writes the whole file instead, with the indentation that the parser
+detects from the file. This happens, for example, when a list that is written in brackets over
+several lines changes. It also happens when an entry changes in a list that is nested directly in a
+list, written `- - a`. A file that is indented in the same way throughout, like `config.yaml` above,
+then keeps its indentation. A file that mixes several indentations comes back with one of them. In
+both cases, every value is spelled in ruamel.yaml's way.
 
 The top level of the file has to be a mapping. Anything else raises `TypeError`.
 
