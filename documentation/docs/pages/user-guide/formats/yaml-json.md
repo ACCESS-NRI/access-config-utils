@@ -117,9 +117,14 @@ base_date: [ 1900, 1, 1 ]
 ```
 
 Only the new line differs from the file. It is indented like the lines around it, but it is written
-in ruamel.yaml's spelling: `true`, next to the `True` of the line above. Lines that are added or
-changed use the line ending of the file, `\n` or `\r\n`. A file that does not end with a newline
-still does not end with one after an edit.
+in ruamel.yaml's spelling: `true`, next to the `True` of the line above. When the text can be edited
+like this, lines that are added or changed use the line ending of the file, `\n` or `\r\n`, and a
+file without a final newline still has none after an edit.
+
+ruamel.yaml writes some lines that differ in the file in the same way, such as `- True` and
+`- true`. When two edits are near such lines, or one of them is added or removed, `str` cannot
+always tell which of them changed. It can then rewrite or remove one that did not change, but the
+data is still right.
 
 Before `str` returns the edited text, it reads the text again and compares it with the
 configuration. Sometimes the text does not read as the same data, or a changed line cannot be placed

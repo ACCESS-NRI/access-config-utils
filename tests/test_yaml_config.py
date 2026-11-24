@@ -358,6 +358,24 @@ def test_round_trip_changes_only_the_lines_that_change(parser, edit, old, new) -
             "a:\n    exe: True", lambda c: c.__setitem__("x", 1), "a:\n    exe: True\nx: 1", id="no-final-newline"
         ),
         pytest.param("a: 1\r\nb: True\r\n", lambda c: c.__setitem__("a", 5), "a: 5\r\nb: True\r\n", id="crlf"),
+        pytest.param(
+            "flags:\n  - true\n  - True\n",
+            lambda c: c["flags"].__setitem__(0, False),
+            "flags:\n  - false\n  - True\n",
+            id="identical-lines",
+        ),
+        pytest.param(
+            "flags:\n  - True\n  - True\n  - True\n  - 1\n  - true\n",
+            lambda c: (c["flags"].__setitem__(1, 1), c["flags"].__setitem__(4, 2)),
+            "flags:\n  - True\n  - 1\n  - True\n  - 1\n  - 2\n",
+            id="two-edits-among-identical-lines",
+        ),
+        pytest.param(
+            "a: True\nb: 1\n",
+            lambda c: setattr(c.yaml, "explicit_start", True),
+            "---\na: True\nb: 1\n",
+            id="yaml-setting-changed",
+        ),
     ],
 )
 def test_round_trip_patches_the_text(

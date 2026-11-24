@@ -138,6 +138,17 @@ def _text_column(column: int, row: int, dumped: list[str], source: dict[int, int
     return column
 
 
+def _changes(old: list[str], new: list[str]) -> list[tuple[str, int, int, int, int]]:
+    """Return the ``difflib`` opcodes that turn the lines *old* into the lines *new*."""
+    # the lines both start and end with are left out, as difflib would otherwise match a
+    # changed line to an unchanged one written the same way, and rewrite the unchanged one
+    n = min(len(old), len(new))
+    head = next((k for k in range(n) if old[k] != new[k]), n)
+    tail = next((k for k in range(n - head) if old[-1 - k] != new[-1 - k]), n - head)
+    matcher = difflib.SequenceMatcher(None, old[head : len(old) - tail], new[head : len(new) - tail], False)
+    return [(tag, i1 + head, i2 + head, j1 + head, j2 + head) for tag, i1, i2, j1, j2 in matcher.get_opcodes()]
+
+
 def _patch(text: str, before: str, after: str) -> str | None:
     """Return *text* with the change from *before* to *after* made to it, or None.
 
@@ -150,7 +161,9 @@ def _patch(text: str, before: str, after: str) -> str | None:
 
     A changed line keeps the text's indentation but the dump's spacing within the line,
     so an edit inside nested block sequences (``- - a``) gives a text that does not read.
-    The lines written end as the text's do, and a text with no final newline is given none.
+    Where the dump writes several lines the same way (``- True`` and ``- true``), two edits
+    near them, or one of them added or removed, can replace one that did not change. The
+    lines written end as the text's do, and a text with no final newline is given none.
     """
     newline = "\r\n" if "\r\n" in text else "\n"
     # a text with no final newline is given one to insert lines after, taken off at the end
@@ -167,7 +180,7 @@ def _patch(text: str, before: str, after: str) -> str | None:
     for block in keys.get_matching_blocks():
         source.update({block.a + k: block.b + k for k in range(block.size)})
 
-    changes = difflib.SequenceMatcher(None, dumped, new, False).get_opcodes()
+    changes = _changes(dumped, new)
     # from the last change to the first, so that the rows of the text yet to change stay put
     for tag, i1, i2, j1, j2 in reversed(changes):
         if tag == "equal":
@@ -235,7 +248,8 @@ class YAMLConfig(CommentedMap):
 
     Attributes:
         yaml (YAML | None): The instance the configuration is written back out with. One
-            with ruamel.yaml's default indentation when ``None``.
+            with ruamel.yaml's default indentation when ``None``. A setting changed on it
+            after parsing, such as ``explicit_start``, rewrites the lines it changes.
     """
 
     yaml: YAML | None = None
@@ -245,8 +259,9 @@ class YAMLConfig(CommentedMap):
         dumped = _dump(self, self.yaml)
         if self._text is None:
             return dumped
-        # the configuration as it was read, written the same way, shows what has changed
-        before = _dump(_round_trip_yaml().load(self._text), self.yaml)
+        # the configuration as it was read, written as the parser set it up to be, shows
+        # what has changed: the data, or the settings of ``yaml``
+        before = _dump(_round_trip_yaml().load(self._text), _round_trip_yaml(guess_indent(self._text)))
         if dumped == before:
             return self._text
         patched = _patch(self._text, before, dumped)
