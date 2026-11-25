@@ -17,6 +17,7 @@ Parsers:
   - NUOPC run configurations, `nuopc.runconfig` (`NUOPCParser`)
   - NUOPC run sequences, `nuopc.runseq` (`NUOPCRunSeqParser`)
   - FMS field tables in the legacy format, `field_table` (`FieldTableParser`)
+  - Rose configurations, `rose-suite.conf` and `rose-app.conf` (`RoseConfParser`)
   - YAML (`YAMLParser`) and JSON (`JSONParser`)
 - Support for round-trip parsing, preserving comments and formatting
 - Simple API

@@ -144,6 +144,43 @@ def _is_text_line(value: Any) -> bool:
     return _is_trimmed(value, "#\r\n") and not value.startswith("::")
 
 
+# --- Rose settings ---
+#
+# Rose gives a setting no type: its value is the text after the equals sign, trimmed. A
+# value may go on over the lines below, each indented, and Rose then joins it up: each such
+# line is trimmed and loses one leading equals sign, which is how a line keeps the spaces it
+# starts with, and follows a line break. A blank or comment line between them adds nothing.
+
+
+def _rose_text(token: str) -> str:
+    """Return the value Rose reads from the text of a setting, continuation lines and all.
+
+    The token starts with the text after the equals sign, which may be empty, as when the
+    value only starts on the line below.
+    """
+    first, *continuations = token.split("\n")
+    value = first.strip()
+    for line in continuations:
+        text = line.strip()
+        if text and not text.startswith("#"):
+            value += "\n" + text.removeprefix("=")
+    return value
+
+
+def _rose_text_to_str(value: str, token_text: str) -> str:
+    """Write a setting's value as the one line after its equals sign.
+
+    Raise ``UnsupportedEntryError`` for a value that line cannot hold as it is: one that is
+    empty, has whitespace at either end, or runs over several lines. A value of several
+    lines can still be written over itself, since ``rewrite`` keeps a token holding it.
+    """
+    if not _is_trimmed(value, "\r\n"):
+        raise UnsupportedEntryError(
+            f"A Rose setting is written as one line of text with nothing to trim, which {value!r} is not"
+        )
+    return value
+
+
 # --- Values typed by their spelling ---
 #
 # The FMS field manager gives a value no declared type: it reads one from the spelling, in
@@ -506,6 +543,8 @@ VALUE_TYPE_HANDLER_REGISTRY: dict[str, ValueTypeHandler] = {
         seed=lambda value: _INFERRED_SEEDS[type(value)],
     ),
     "text_line": ValueTypeHandler(type_check=_is_text_line),
+    # The value of a Rose setting: the rest of its line, and of the lines continuing it.
+    "rose_text": ValueTypeHandler(type_check=_is_str, from_token=_rose_text, to_token=_rose_text_to_str),
     "path": ValueTypeHandler(type_check=lambda value: isinstance(value, Path), from_token=Path),
     "named_assignments": ValueTypeHandler(
         type_check=_is_record, from_token=_read_record, to_token=_write_record, seed='"", ""', collects=True

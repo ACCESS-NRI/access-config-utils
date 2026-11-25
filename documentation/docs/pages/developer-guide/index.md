@@ -29,7 +29,7 @@ into four groups. The imports run one way through them, from the formats down to
 
 ```mermaid
 flowchart TD
-    formats["<b>Formats</b><br>fortran_nml, mom6_input, nuopc_config,<br>nuopc_runseq, field_table"]
+    formats["<b>Formats</b><br>fortran_nml, mom6_input,<br>nuopc_config, nuopc_runseq,<br>field_table, rose_conf"]
     data["<b>The data and the parser</b><br>parser, config_dict, config_store,<br>config_resize, config_insert, list_layout"]
     synthesis["<b>Entry synthesis</b><br>entry_render, entry_style, entry_fragments"]
     tree["<b>Parse tree</b><br>tree_reader, tree_edits, tree_navigation"]

@@ -29,7 +29,7 @@ from lark.exceptions import ConfigurationError, UnexpectedInput
 from lark.grammar import Rule
 from lark.reconstruct import Reconstructor
 
-from access.config.grammar_contract import BLOCK_RULE, KEY_RULE, START_RULE
+from access.config.grammar_contract import BLOCK_RULE, KEY_BLOCK, KEY_RULE, START_RULE
 from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
 
 OPTIONAL_START_RULES: tuple[str, ...] = (BLOCK_RULE, KEY_RULE)
@@ -63,7 +63,8 @@ class GrammarInfo:
             ``VALUE_TYPE_HANDLER_REGISTRY`` that some rule uses.
 
     ``is_repetition_rule`` says whether a rule is a plain repetition, which is what tells a
-    container that may be empty from one that may not.
+    container that may be empty from one that may not, and ``blocks_run_on`` whether a block
+    has nothing to close it.
     """
 
     rules_by_origin: Mapping[str, Sequence[Rule]]
@@ -102,6 +103,24 @@ class GrammarInfo:
             if not str(rule.expansion[0].name).startswith(prefixes):
                 return False
         return True
+
+    def blocks_run_on(self) -> bool:
+        """Report whether a block of this format runs on to whatever follows it.
+
+        That is a block with nothing to close it, as a Rose section runs until the next
+        header: a ``key_block`` rule whose ``block`` is the last thing it holds. An entry
+        added after such a block would be read as part of it, so ``ConfigStore`` puts an
+        entry that is not a block above the first one instead.
+
+        Read off the grammar rather than the tree, because the tree cannot tell: Lark
+        filters a closing literal out of it, so ``key "<" block ">"`` leaves a ``key`` and
+        a ``block`` too.
+        """
+        return any(
+            (rule.alias or origin) == KEY_BLOCK and str(rule.expansion[-1].name) == BLOCK_RULE
+            for origin, rules in self.rules_by_origin.items()
+            for rule in rules
+        )
 
 
 @dataclass(frozen=True)

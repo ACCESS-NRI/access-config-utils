@@ -9,6 +9,7 @@ Every format has its own parser, which you import from `access.config`:
 | [NUOPC run configurations](formats/nuopc-runconfig.md) | `NUOPCParser` |
 | [NUOPC run sequences](formats/nuopc-runseq.md) | `NUOPCRunSeqParser` |
 | [FMS field tables](formats/field-tables.md) | `FieldTableParser` |
+| [Rose configurations](formats/rose.md) | `RoseConfParser` |
 | [YAML](formats/yaml-json.md) | `YAMLParser` |
 | [JSON](formats/yaml-json.md#json) | `JSONParser` |
 
@@ -73,8 +74,9 @@ True ['DIABATIC_FIRST', 'DT', 'DT_THERM', 'KPP']
 
 The values are read as Python values: an `int`, a `float`, a `str` or a `bool`. A key written
 without a value is read as `None`. A Fortran namelist can also hold a `complex`, and a NUOPC run
-configuration a `pathlib.Path`. A value written as a list is a `ConfigList`, which is a `list`. The
-page of each format explains how its values are written and what they are read as.
+configuration a `pathlib.Path`. A Rose configuration holds only strings, because Rose gives a
+setting no type. A value written as a list is a `ConfigList`, which is a `list`. The page of each
+format explains how its values are written and what they are read as.
 
 ## Keys
 

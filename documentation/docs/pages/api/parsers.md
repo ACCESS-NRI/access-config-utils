@@ -17,3 +17,5 @@ parser](../developer-guide/adding-a-parser.md) shows how to write a new one.
 ::: access.config.nuopc_runseq
 
 ::: access.config.field_table
+
+::: access.config.rose_conf

@@ -36,6 +36,7 @@ nav:
       - NUOPC run configurations: pages/user-guide/formats/nuopc-runconfig.md
       - NUOPC run sequences: pages/user-guide/formats/nuopc-runseq.md
       - FMS field tables: pages/user-guide/formats/field-tables.md
+      - Rose configurations: pages/user-guide/formats/rose.md
       - YAML and JSON: pages/user-guide/formats/yaml-json.md
     - Parallelisation layouts:
       - Components and layouts: pages/user-guide/layouts/components.md

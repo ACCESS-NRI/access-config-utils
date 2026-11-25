@@ -17,7 +17,7 @@ dict, and write it back out. Everything that you did not edit is written back as
   [Fortran namelists](formats/fortran-namelists.md), [MOM6 parameter files](formats/mom6.md),
   [NUOPC run configurations](formats/nuopc-runconfig.md),
   [NUOPC run sequences](formats/nuopc-runseq.md), [FMS field tables](formats/field-tables.md),
-  and [YAML and JSON](formats/yaml-json.md).
+  [Rose configurations](formats/rose.md), and [YAML and JSON](formats/yaml-json.md).
 
 ## Parallelisation layouts
 
