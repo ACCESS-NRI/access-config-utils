@@ -306,7 +306,7 @@ class TestBlocksRunOn:
 
     def test_a_block_closed_by_a_literal(self) -> None:
         """Test that a literal after the block closes it, though the tree drops it."""
-        assert not compile_grammar(WITH_BLOCK).info.blocks_run_on()
+        assert not compile_grammar(WITH_BLOCK).info.blocks_run_on
 
     def test_a_block_ending_its_entry(self) -> None:
         """Test a block that is the last thing its entry holds, as a Rose section is."""
@@ -322,7 +322,7 @@ class TestBlocksRunOn:
             %ignore WS
         """).info
 
-        assert run_on.blocks_run_on()
+        assert run_on.blocks_run_on
 
     def test_a_rule_named_for_its_category(self) -> None:
         """Test a ``key_block`` rule that is not aliased, as MOM6 names its block rule."""
@@ -338,8 +338,8 @@ class TestBlocksRunOn:
             %ignore WS
         """).info
 
-        assert run_on.blocks_run_on()
+        assert run_on.blocks_run_on
 
     def test_a_grammar_without_blocks(self) -> None:
         """Test that a format with no block has none to run on."""
-        assert not compile_grammar(WITHOUT_BLOCK).info.blocks_run_on()
+        assert not compile_grammar(WITHOUT_BLOCK).info.blocks_run_on

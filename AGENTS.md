@@ -549,12 +549,15 @@ header in `__init__.py`. Structure is a review matter; line length is not.
   an entry is never one. Fortran's top-level comments are the exception: every line between two
   namelist groups is one opaque `random_text` node, so a new group still goes above them.
 - **A block that nothing closes runs on, so nothing that is not a block goes after one.** A
-  Rose section runs until the next header. `GrammarInfo.blocks_run_on()` reads that off the
-  grammar (a `key_block` rule ending with its `block`), since the tree cannot tell: Lark drops
-  a closing literal. Where it holds, `ConfigStore._insertion_point` passes
-  `entry_insertion_index(upto=first_block_line(...))` for an entry that is not a block, which
-  goes after the last entry *above* the first block. It is false for every other shipped
-  grammar, which close their blocks. Such a `block` spells its alternatives out rather than
+  Rose section runs until the next header. `GrammarInfo.blocks_run_on` reads that off the
+  grammar once (a `key_block` rule ending with its `block`), since the tree cannot tell: Lark
+  drops a closing literal. Where it holds, `ConfigStore._insertion_point` keeps the order of
+  the container both ways. It passes `entry_insertion_index(upto=first_block_line(...))` for
+  an entry that is not a block, which goes after the last entry *above* the first block. A
+  block goes at the first position from the last entry on that the container's rule accepts
+  (`_block_index`, which matches the kinds of the children with lark's `match_tree`), past
+  the top-level comments and blank lines that may not follow one. It is false for every other
+  shipped grammar, which close their blocks. Such a `block` spells its alternatives out rather than
   repeating an expression of `start`: Lark would share the helper rule between the two,
   `block` would not be a plain repetition, and deleting its last entry would delete it.
 - **Layout is copied from the nearest donor, never invented.** The entries of the container

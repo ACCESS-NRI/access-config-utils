@@ -278,12 +278,13 @@ RUN_ON_GRAMMAR = """
 
 
 class TestAddingAboveRunOnBlocks:
-    """An entry that is not a block, in a container whose blocks run on to what follows."""
+    """A new entry in a container whose blocks run on to what follows, kept in its order."""
 
     @staticmethod
     def store_of(text: str) -> ConfigStore:
-        """Return a store over *text*, read with the grammar above and its one template."""
-        ctx = ParseContext(compile_grammar(RUN_ON_GRAMMAR), {("start", "key_value"): "{key}={value}\n"})
+        """Return a store over *text*, read with the grammar above and its two templates."""
+        templates = {("start", "key_value"): "{key}={value}\n", ("start", "key_block"): "[{key}]\n"}
+        ctx = ParseContext(compile_grammar(RUN_ON_GRAMMAR), templates)
         tree = ctx.lark.parse(text, start="start")
         AddParent().visit(tree)
         return ConfigStore(tree, ctx)
@@ -314,6 +315,18 @@ class TestAddingAboveRunOnBlocks:
         store.add_path(("t",), {})
 
         assert store.render() == "a=1\n[s]\nx=2\n[t]"
+
+    def test_a_block_goes_below_the_lines_that_may_not_follow_one(self) -> None:
+        """Test a first block, which goes below a blank line ending the container.
+
+        After the last entry, the blank line would follow the block, which the rule of the
+        container does not allow, so the container could not be written out.
+        """
+        store = self.store_of("a=1\n\n")
+
+        store.add_path(("t",), {})
+
+        assert store.render() == "a=1\n\n[t]"
 
     def test_an_entry_in_a_block_follows_its_last_entry(self) -> None:
         """Test that the rule is the container's: a block holds no block to go above."""

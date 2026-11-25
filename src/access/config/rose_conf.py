@@ -18,7 +18,8 @@ It is a modified INI format. This grammar follows what ``ConfigLoader.load`` in
   equals sign it starts with, and joins it to the value after a line break. A blank or
   comment line between them adds nothing and does not end the value.
 - A line whose first character other than a blank is ``#`` is a comment. A ``#`` anywhere
-  else is part of a value.
+  else is part of a value. The comments that open the file, up to its first blank line or
+  setting, are the file's, and the comments right above a header are its section's.
 - ``[NAME]`` starts a section, which runs until the next one: nothing closes it. The
   settings above the first section belong to no section.
 - ``!`` or ``!!`` before a key or a section name marks it ignored, by the user or by a
@@ -38,8 +39,9 @@ for one it uses, and a new key copied from an ignored neighbour does not take on
 The cost is that a file holding both ``KEY=`` and ``!KEY=`` reads as two keys, where Rose
 reads one, in the state written last.
 
-Three things Rose reads are refused: the empty header ``[]``, which takes Rose back to the
-settings of no section, a header with blanks before it, and blanks inside the brackets.
+Four things Rose reads are refused: the empty header ``[]``, which takes Rose back to the
+settings of no section, a header with blanks before it, blanks inside the brackets, and a
+setting whose key starts with ``[``, such as ``[a]=1``.
 """
 
 from __future__ import annotations
@@ -85,12 +87,18 @@ class RoseConfParser(ConfigParser):
 // "start" must be a non-transparent rule: the root node is the container that new entries
 // are added to, and a transparent rule collapses away for a single-entry file. The settings
 // of no section come first, as nothing closes a section.
-start: line* section* last_line?
+start: opening* line* section* last_line?
 ?line: key_value | key_null | comment | blank_line
+
+// The comments that open the file, up to its first blank line or setting, are the file's,
+// as Rose gives them to the root of the configuration: they stay where they are when the
+// first section is deleted, and a new setting of no section goes below them.
+opening.3: COMMENT -> comment
 
 // The blank lines and the comments right above a header belong to its section, as Rose
 // associates them, so a new section is parted from the one above as that one is, and a
-// section deleted takes its comments with it. The line "parse" adds to the end of the file
+// section deleted takes its comments with it. The comments that open the file are the
+// exception, being the file's. The line "parse" adds to the end of the file
 // stays at the top level, so a new section goes above it and the file keeps its last line
 // break. The priorities say which rule takes such a line where both could.
 section: gap* heading* "[" name "]" line_end block -> key_block

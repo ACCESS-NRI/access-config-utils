@@ -150,6 +150,8 @@ def _is_text_line(value: Any) -> bool:
 # value may go on over the lines below, each indented, and Rose then joins it up: each such
 # line is trimmed and loses one leading equals sign, which is how a line keeps the spaces it
 # starts with, and follows a line break. A blank or comment line between them adds nothing.
+# A value of several lines is read but only written over itself, which ``rewrite`` allows
+# by keeping a token that holds it: the indentation of new continuation lines is unknown.
 
 
 def _rose_text(token: str) -> str:
@@ -171,8 +173,7 @@ def _rose_text_to_str(value: str, token_text: str) -> str:
     """Write a setting's value as the one line after its equals sign.
 
     Raise ``UnsupportedEntryError`` for a value that line cannot hold as it is: one that is
-    empty, has whitespace at either end, or runs over several lines. A value of several
-    lines can still be written over itself, since ``rewrite`` keeps a token holding it.
+    empty, has whitespace at either end, or runs over several lines.
     """
     if not _is_trimmed(value, "\r\n"):
         raise UnsupportedEntryError(

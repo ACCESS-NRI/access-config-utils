@@ -154,15 +154,21 @@ PROJECT=tm70
 
 A new section is written as a copy of the last section, so it is parted from the section above it
 in the same way, here by a blank line. The first section of a file has nothing to copy, and is
-written after a blank line. The blank lines and the comments right above a header belong to its
-section. A new setting is therefore never written between a comment and the header below it, and
-deleting a section deletes the comments above it. Deleting the last setting of a section leaves the
-section, with nothing in it.
+written after a blank line. A new section also goes below the comments and the blank lines at the
+top of a file that has no section yet, which would otherwise come after a section.
+
+The blank lines and the comments right above a header belong to its section. A new setting is
+therefore never written between a comment and the header below it, and deleting a section deletes
+the comments above it. The comments that open the file are the exception: up to its first blank
+line or setting, they belong to the file, as Rose has them. They stay when the first section is
+deleted, and a new setting of no section is written below them. Deleting the last setting of a
+section leaves the section, with nothing in it.
 
 ## What is not read
 
 - Three headers that Rose reads: the empty header `[]`, which takes Rose back to the settings of no
   section, a header with blanks before it, and a header with blanks between a bracket and its name.
+- A setting whose key starts with `[`, such as `[a]=1`, which Rose reads as the key `[a]`.
 - The optional configurations of a suite or an application, under `opt/`, are files of their own.
   Each is parsed on its own, and nothing merges it into the configuration it changes.
 
@@ -174,5 +180,3 @@ What can be read is not always possible to add:
   one raises `UnsupportedEntryError`.
 - A section cannot hold a section, so a dict assigned to a key of a section raises
   `UnsupportedEntryError`.
-- The comments right above the first header belong to its section, even when they describe the
-  whole file. A new setting of no section is written above them.

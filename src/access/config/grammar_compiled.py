@@ -61,14 +61,23 @@ class GrammarInfo:
             of the rule they define.
         value_rules (frozenset[str]): The value-type rules the grammar has: the names in
             ``VALUE_TYPE_HANDLER_REGISTRY`` that some rule uses.
+        blocks_run_on (bool): Whether a block of this format has nothing to close it, so
+            that it runs on to whatever follows it, as a Rose section runs until the next
+            header. ``ConfigStore`` then keeps the order of such a container: an entry that
+            is not a block goes above the first block, and a block after every line that
+            may not follow one. Read off the grammar rather than the tree, because Lark
+            filters a closing literal out of the tree. It is a ``key_block`` alternative
+            whose last symbol is ``block``, so a block reached through an inlined rule, as
+            ``_body: line_end block``, is not seen, and a ``block`` rule holding its own
+            closing literal is taken to run on. No shipped grammar is either.
 
     ``is_repetition_rule`` says whether a rule is a plain repetition, which is what tells a
-    container that may be empty from one that may not, and ``blocks_run_on`` whether a block
-    has nothing to close it.
+    container that may be empty from one that may not.
     """
 
     rules_by_origin: Mapping[str, Sequence[Rule]]
     value_rules: frozenset[str]
+    blocks_run_on: bool
 
     @classmethod
     def from_lark(cls, lark: Lark) -> GrammarInfo:
@@ -78,7 +87,11 @@ class GrammarInfo:
         for rule in lark.rules:
             rules_by_origin.setdefault(str(rule.origin.name), []).append(rule)
             used.update(str(symbol.name) for symbol in rule.expansion)
-        return cls(rules_by_origin, frozenset(used & VALUE_TYPE_HANDLER_REGISTRY.keys()))
+        blocks_run_on = any(
+            (rule.alias or rule.origin.name) == KEY_BLOCK and str(rule.expansion[-1].name) == BLOCK_RULE
+            for rule in lark.rules
+        )
+        return cls(rules_by_origin, frozenset(used & VALUE_TYPE_HANDLER_REGISTRY.keys()), blocks_run_on)
 
     def is_repetition_rule(self, name: str) -> bool:
         """Report whether a rule is a plain repetition of something, such as ``a: b*``.
@@ -103,24 +116,6 @@ class GrammarInfo:
             if not str(rule.expansion[0].name).startswith(prefixes):
                 return False
         return True
-
-    def blocks_run_on(self) -> bool:
-        """Report whether a block of this format runs on to whatever follows it.
-
-        That is a block with nothing to close it, as a Rose section runs until the next
-        header: a ``key_block`` rule whose ``block`` is the last thing it holds. An entry
-        added after such a block would be read as part of it, so ``ConfigStore`` puts an
-        entry that is not a block above the first one instead.
-
-        Read off the grammar rather than the tree, because the tree cannot tell: Lark
-        filters a closing literal out of it, so ``key "<" block ">"`` leaves a ``key`` and
-        a ``block`` too.
-        """
-        return any(
-            (rule.alias or origin) == KEY_BLOCK and str(rule.expansion[-1].name) == BLOCK_RULE
-            for origin, rules in self.rules_by_origin.items()
-            for rule in rules
-        )
 
 
 @dataclass(frozen=True)

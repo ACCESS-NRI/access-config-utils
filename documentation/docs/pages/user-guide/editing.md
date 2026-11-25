@@ -298,7 +298,8 @@ The first of the two elements could have been changed, but the second could not,
 | Giving one of the elements a repeat count stands for a value of its own | `ValueError` |
 | Writing a position of a namelist array that no entry writes | `ValueError` |
 | Adding a key the format does not allow as a name | `ValueError` |
-| Adding a value the format cannot write, such as `None` in a MOM6 parameter file, an infinite or NaN `float`, a string holding both quote characters in a format with no way of escaping them, or a string of several lines in a Rose configuration | `UnsupportedEntryError` |
+| Adding a value the format cannot write, such as `None` in a MOM6 parameter file, an infinite or NaN `float`, or a string holding both quote characters in a format with no way of escaping them | `UnsupportedEntryError` |
+| Writing a string of several lines in a Rose configuration, other than the value already there | `UnsupportedEntryError` |
 | Assigning a dict to a block that exists | `SyntaxError` |
 | Changing a field of a field table record, rather than replacing the record | `TypeError` |
 

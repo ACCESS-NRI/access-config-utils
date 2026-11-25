@@ -28,7 +28,7 @@ from access.config.rose_conf import RoseConfParser
 
 
 @pytest.fixture(scope="module")
-def parser():
+def parser() -> RoseConfParser:
     """Fixture instantiating the parser."""
     return RoseConfParser()
 
@@ -312,10 +312,12 @@ class TestRejected:
             "[[s]]",
             "[s] x",
             "[s]\n  x=1",
-            # Rose reads these three: the first takes it back to the settings of no section.
+            # Rose reads these four: the first takes it back to the settings of no section,
+            # and the last is the setting "[a]".
             "[]",
             " [s]",
             "[ s ]",
+            "[a]=1",
         ],
     )
     def test_malformed_input_raises(self, parser, source) -> None:
@@ -472,22 +474,28 @@ class TestAddingAnEntry:
         assert str(config) == "root-dir=*=/x\nroot-dir{share}=*=/y\n\n[a]\nx=1\n"
         assert dict(parser.parse(str(config))) == dict(config)
 
-    def test_a_new_top_level_setting_where_the_file_has_none(self, parser) -> None:
-        """Test that the first setting of no section goes first, below a file comment.
-
-        The comment directly above the first header heads that section, and stays with it.
-        """
-        for source, written in [
+    @pytest.mark.parametrize(
+        ("source", "written"),
+        [
             ("[a]\nx=1\n", "A=1\n[a]\nx=1\n"),
             ("# about the file\n\n[a]\nx=1\n", "# about the file\nA=1\n\n[a]\nx=1\n"),
-            ("# about a\n[a]\nx=1\n", "A=1\n# about a\n[a]\nx=1\n"),
-        ]:
-            config = parser.parse(source)
+            ("# about the file\n[a]\nx=1\n", "# about the file\nA=1\n[a]\nx=1\n"),
+            ("\n# about a\n[a]\nx=1\n", "A=1\n\n# about a\n[a]\nx=1\n"),
+        ],
+        ids=["no comment", "a file comment", "a file comment above a header", "a comment heading a"],
+    )
+    def test_a_new_top_level_setting_where_the_file_has_none(self, parser, source, written) -> None:
+        """Test that the first setting of no section goes first, below the file's comments.
 
-            config["A"] = "1"
+        The comments opening the file are the file's, up to its first blank line, as Rose
+        reads them, while a comment right above a header after that heads its section.
+        """
+        config = parser.parse(source)
 
-            assert str(config) == written
-            assert dict(parser.parse(str(config))) == dict(config)
+        config["A"] = "1"
+
+        assert str(config) == written
+        assert dict(parser.parse(str(config))) == dict(config)
 
     def test_a_new_section_goes_last_parted_like_the_one_above(self, parser) -> None:
         """Test that a new section copies the blank line above the last one."""
@@ -525,6 +533,29 @@ class TestAddingAnEntry:
         config["s"] = {"B": "2"}
 
         assert str(config) == "\n[s]\nB=2\n"
+        assert dict(parser.parse(str(config))) == dict(config)
+
+    @pytest.mark.parametrize(
+        ("source", "written"),
+        [
+            ("meta=x\n\n", "meta=x\n\n\n[s]\nB=2\n"),
+            ("\n", "\n\n[s]\nB=2\n"),
+            ("A=1\n\n# about the file\n", "A=1\n\n# about the file\n\n[s]\nB=2\n"),
+            ("# about the file\n", "# about the file\n\n[s]\nB=2\n"),
+        ],
+        ids=["a blank line", "a single line break", "a comment", "only a comment"],
+    )
+    def test_a_new_section_goes_below_every_line_of_no_section(self, parser, source, written) -> None:
+        """Test that a new section goes past the blank lines and comments of no section.
+
+        Below a section they would be read as part of it, so its rule takes none there, and
+        a section spliced in above them could not be written out.
+        """
+        config = parser.parse(source)
+
+        config["s"] = {"B": "2"}
+
+        assert str(config) == written
         assert dict(parser.parse(str(config))) == dict(config)
 
     def test_a_new_key_never_lands_between_a_comment_and_the_section_it_heads(self, parser) -> None:
@@ -593,6 +624,14 @@ class TestDeleting:
         del config["b"]
 
         assert str(config) == "[a]\nx=1\n\n[c]\nz=3\n"
+
+    def test_the_comments_opening_the_file_stay_when_the_first_section_goes(self, parser) -> None:
+        """Test that the comments above the first header are the file's, as for Rose."""
+        config = parser.parse("# Suite for X\n[jinja2:suite.rc]\nA=1\n[env]\nB=2\n")
+
+        del config["jinja2:suite.rc"]
+
+        assert str(config) == "# Suite for X\n[env]\nB=2\n"
 
     def test_deleting_the_last_section_keeps_the_final_newline(self, parser) -> None:
         """Test that the line break ending the file is not the last section's to take."""
