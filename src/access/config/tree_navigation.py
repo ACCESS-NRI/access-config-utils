@@ -36,7 +36,14 @@ from typing import Any, TypeGuard
 
 from lark import Token, Tree, Visitor
 
-from access.config.grammar_contract import BLOCK_RULE, COMMENT_RULES, ENTRY_CATEGORIES, KEY_RULE, REPEAT_RULE
+from access.config.grammar_contract import (
+    BLOCK_RULE,
+    COMMENT_RULES,
+    ENTRY_CATEGORIES,
+    KEY_BLOCK,
+    KEY_RULE,
+    REPEAT_RULE,
+)
 from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
 
 
@@ -128,7 +135,23 @@ def is_comment_line(node: Tree | Token) -> bool:
     return isinstance(node, Tree) and not contains_entry(node) and _holds_comment(node)
 
 
-def entry_insertion_index(container: Tree, after: int | None = None) -> int:
+def first_block_line(container: Tree) -> int | None:
+    """Return the index of the first child of *container* holding a block, ``None`` if none.
+
+    In a format whose blocks run on to whatever follows them, an entry that is not a block
+    has to go above this line, since one below it would be read as part of the block.
+    """
+    return next(
+        (
+            position
+            for position, child in enumerate(container.children)
+            if isinstance(child, Tree) and any(entry.data == KEY_BLOCK for entry in entry_nodes(child))
+        ),
+        None,
+    )
+
+
+def entry_insertion_index(container: Tree, after: int | None = None, upto: int | None = None) -> int:
     """Return the index in ``container.children`` at which a new entry belongs.
 
     One past the last child that holds an entry, so a new entry follows the last existing
@@ -136,7 +159,9 @@ def entry_insertion_index(container: Tree, after: int | None = None) -> int:
     Simply appending would put it after all of those, which for a block would place it
     outside the block entirely. Given a line to follow instead, one past that line: an
     entry written beside others of its kind, such as one more component of a derived type
-    whose components are written one per line, goes after the last of them.
+    whose components are written one per line, goes after the last of them. Given a line
+    *upto*, only the children above it are considered, and the entry goes above it: a
+    setting at the top of a Rose file goes above the first section, which nothing closes.
 
     The search is over the container's *direct* children even though the test for holding an
     entry looks deeper: one child can be a whole line carrying several assignments, and a
@@ -150,14 +175,15 @@ def entry_insertion_index(container: Tree, after: int | None = None) -> int:
     line is what puts it *between* two comment blocks rather than inside the second one. A
     container holding no entry gives its start, after any leading comment.
     """
+    end = len(container.children) if upto is None else upto
     if after is None:
         index = 0
-        for position, child in enumerate(container.children):
+        for position, child in enumerate(container.children[:end]):
             if contains_entry(child):
                 index = position + 1
     else:
         index = after + 1
-    while index < len(container.children) and is_comment_line(container.children[index]):
+    while index < end and is_comment_line(container.children[index]):
         index += 1
     return index
 

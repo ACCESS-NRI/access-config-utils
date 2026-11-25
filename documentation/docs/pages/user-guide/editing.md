@@ -183,7 +183,9 @@ This prints:
 ```
 
 A new entry goes after the last entry of its block, or of the configuration, and never inside a
-comment. It is written as a copy of the nearest entry of the same kind, with the spacing and
+comment. The one exception is a Rose configuration, where nothing closes a section: a setting of no
+section goes after the last setting above the first section, or it would be part of a section. A
+new entry is written as a copy of the nearest entry of the same kind, with the spacing and
 punctuation of that entry. Its value is written in the notation of the format, so a `bool` is a
 Fortran logical here. The first entry of a kind has nothing to copy. It is written in the way that
 the parser of the format declares, with the indentation of the entry above it.
@@ -297,6 +299,7 @@ The first of the two elements could have been changed, but the second could not,
 | Writing a position of a namelist array that no entry writes | `ValueError` |
 | Adding a key the format does not allow as a name | `ValueError` |
 | Adding a value the format cannot write, such as `None` in a MOM6 parameter file, an infinite or NaN `float`, or a string holding both quote characters in a format with no way of escaping them | `UnsupportedEntryError` |
+| Writing a string of several lines in a Rose configuration, other than the value already there | `UnsupportedEntryError` |
 | Assigning a dict to a block that exists | `SyntaxError` |
 | Changing a field of a field table record, rather than replacing the record | `TypeError` |
 

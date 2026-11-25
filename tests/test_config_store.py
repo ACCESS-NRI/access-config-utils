@@ -259,6 +259,95 @@ class TestAddingAChain:
         assert store.render() == "a%b = 1\nx = 3\nn%a = 1"
 
 
+# A format whose blocks have nothing to close them, as a Rose section runs until the next
+# header.
+RUN_ON_GRAMMAR = """
+    start: line* section*
+    ?line: scalar | empty_line
+    scalar: key "=" integer line_end -> key_value
+    section: "[" key "]" line_end block -> key_block
+    block: (scalar | empty_line)*
+    empty_line: line_end
+    line_end: ws* NEWLINE
+
+    %import config.key
+    %import config.integer
+    %import config.ws
+    %import config.NEWLINE
+"""
+
+
+class TestAddingAboveRunOnBlocks:
+    """A new entry in a container whose blocks run on to what follows, kept in its order."""
+
+    @staticmethod
+    def store_of(text: str) -> ConfigStore:
+        """Return a store over *text*, read with the grammar above and its two templates."""
+        templates = {("start", "key_value"): "{key}={value}\n", ("start", "key_block"): "[{key}]\n"}
+        ctx = ParseContext(compile_grammar(RUN_ON_GRAMMAR), templates)
+        tree = ctx.lark.parse(text, start="start")
+        AddParent().visit(tree)
+        return ConfigStore(tree, ctx)
+
+    def test_goes_above_the_first_block(self) -> None:
+        """Test that the entry follows the last one above the blocks, not the last block.
+
+        Written after the last block, it would be read as part of it.
+        """
+        store = self.store_of("a=1\n\n[s]\nx=2\n[t]\n")
+
+        store.add_path(("b",), 3)
+
+        assert store.render() == "a=1\nb=3\n\n[s]\nx=2\n[t]"
+
+    def test_with_no_entry_above_the_blocks_goes_first(self) -> None:
+        """Test a file starting with a block, which the entry goes above."""
+        store = self.store_of("[s]\nx=2\n")
+
+        store.add_path(("b",), 3)
+
+        assert store.render() == "b=3\n[s]\nx=2"
+
+    def test_a_block_still_goes_after_the_last_one(self) -> None:
+        """Test that a new block is written where blocks go, after the others."""
+        store = self.store_of("a=1\n[s]\nx=2\n")
+
+        store.add_path(("t",), {})
+
+        assert store.render() == "a=1\n[s]\nx=2\n[t]"
+
+    def test_a_block_goes_below_the_lines_that_may_not_follow_one(self) -> None:
+        """Test a first block, which goes below a blank line ending the container.
+
+        After the last entry, the blank line would follow the block, which the rule of the
+        container does not allow, so the container could not be written out.
+        """
+        store = self.store_of("a=1\n\n")
+
+        store.add_path(("t",), {})
+
+        assert store.render() == "a=1\n\n[t]"
+
+    def test_an_entry_in_a_block_follows_its_last_entry(self) -> None:
+        """Test that the rule is the container's: a block holds no block to go above."""
+        store = self.store_of("[s]\nx=2\n[t]\n")
+        block = store.child(store.refs["s"])
+
+        block.add_path(("y",), 3)
+
+        assert store.render() == "[s]\nx=2\ny=3\n[t]"
+
+    def test_closed_blocks_leave_the_order_alone(self, ctx) -> None:
+        """Test that where something closes a block, a new entry follows the last entry."""
+        tree = ctx.lark.parse("a = 1\nblk<\n>\n", start="start")
+        AddParent().visit(tree)
+        store = ConfigStore(tree, ctx)
+
+        store.add_path(("z",), 3)
+
+        assert store.render() == "a = 1\nblk<\n>\nz = 3"
+
+
 def rec(a: int) -> dict:
     """Return the record ``"f", "a=<a>"``."""
     return {"value": "f", "a": a}

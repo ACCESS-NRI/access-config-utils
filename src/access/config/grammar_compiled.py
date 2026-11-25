@@ -29,7 +29,7 @@ from lark.exceptions import ConfigurationError, UnexpectedInput
 from lark.grammar import Rule
 from lark.reconstruct import Reconstructor
 
-from access.config.grammar_contract import BLOCK_RULE, KEY_RULE, START_RULE
+from access.config.grammar_contract import BLOCK_RULE, KEY_BLOCK, KEY_RULE, START_RULE
 from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY
 
 OPTIONAL_START_RULES: tuple[str, ...] = (BLOCK_RULE, KEY_RULE)
@@ -61,6 +61,15 @@ class GrammarInfo:
             of the rule they define.
         value_rules (frozenset[str]): The value-type rules the grammar has: the names in
             ``VALUE_TYPE_HANDLER_REGISTRY`` that some rule uses.
+        blocks_run_on (bool): Whether a block of this format has nothing to close it, so
+            that it runs on to whatever follows it, as a Rose section runs until the next
+            header. ``ConfigStore`` then keeps the order of such a container: an entry that
+            is not a block goes above the first block, and a block after every line that
+            may not follow one. Read off the grammar rather than the tree, because Lark
+            filters a closing literal out of the tree. It is a ``key_block`` alternative
+            whose last symbol is ``block``, so a block reached through an inlined rule, as
+            ``_body: line_end block``, is not seen, and a ``block`` rule holding its own
+            closing literal is taken to run on. No shipped grammar is either.
 
     ``is_repetition_rule`` says whether a rule is a plain repetition, which is what tells a
     container that may be empty from one that may not.
@@ -68,6 +77,7 @@ class GrammarInfo:
 
     rules_by_origin: Mapping[str, Sequence[Rule]]
     value_rules: frozenset[str]
+    blocks_run_on: bool
 
     @classmethod
     def from_lark(cls, lark: Lark) -> GrammarInfo:
@@ -77,7 +87,11 @@ class GrammarInfo:
         for rule in lark.rules:
             rules_by_origin.setdefault(str(rule.origin.name), []).append(rule)
             used.update(str(symbol.name) for symbol in rule.expansion)
-        return cls(rules_by_origin, frozenset(used & VALUE_TYPE_HANDLER_REGISTRY.keys()))
+        blocks_run_on = any(
+            (rule.alias or rule.origin.name) == KEY_BLOCK and str(rule.expansion[-1].name) == BLOCK_RULE
+            for rule in lark.rules
+        )
+        return cls(rules_by_origin, frozenset(used & VALUE_TYPE_HANDLER_REGISTRY.keys()), blocks_run_on)
 
     def is_repetition_rule(self, name: str) -> bool:
         """Report whether a rule is a plain repetition of something, such as ``a: b*``.

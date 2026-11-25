@@ -83,6 +83,8 @@ src/access/config/
                         element)
   field_table.py        FieldTableParser   (keys lower-cased, headers as chains of three keys,
                         methods of three strings as records)
+  rose_conf.py          RoseConfParser     (case-sensitive, [NAME] sections nothing closes,
+                        every value untyped text, ignore marks in the key)
   yaml_config.py        YAMLParser         (thin wrapper over ruamel.yaml, its text patched)
   json_config.py        JSONParser         (thin wrapper over json, its layout detected)
 
@@ -375,6 +377,8 @@ header in `__init__.py`. Structure is a review matter; line length is not.
   `VALUE_TYPE_HANDLER_REGISTRY`, normally imported from `config.lark` (Fortran defines
   `bare_exponent` and `fortran_identifier` in its own grammar). A value-type rule node has exactly
   one `Token` child.
+  Rose defines `rose_text` in its grammar too: a setting is untyped text, and a value continued
+  on indented lines is one string, read as Rose joins it and written only over itself.
 - **Never `%ignore` whitespace that must survive round-tripping.** Capture it in the explicit
   `ws` rule from `config.lark`.
 - **Two rules aliased to the same entry category must produce distinguishable children.** The
@@ -544,6 +548,18 @@ header in `__init__.py`. Structure is a review matter; line length is not.
   are `empty_line`, told apart by a `comment`/`fortran_comment` node below), and a child holding
   an entry is never one. Fortran's top-level comments are the exception: every line between two
   namelist groups is one opaque `random_text` node, so a new group still goes above them.
+- **A block that nothing closes runs on, so nothing that is not a block goes after one.** A
+  Rose section runs until the next header. `GrammarInfo.blocks_run_on` reads that off the
+  grammar once (a `key_block` rule ending with its `block`), since the tree cannot tell: Lark
+  drops a closing literal. Where it holds, `ConfigStore._insertion_point` keeps the order of
+  the container both ways. It passes `entry_insertion_index(upto=first_block_line(...))` for
+  an entry that is not a block, which goes after the last entry *above* the first block. A
+  block goes at the first position from the last entry on that the container's rule accepts
+  (`_block_index`, which matches the kinds of the children with lark's `match_tree`), past
+  the top-level comments and blank lines that may not follow one. It is false for every other
+  shipped grammar, which close their blocks. Such a `block` spells its alternatives out rather than
+  repeating an expression of `start`: Lark would share the helper rule between the two,
+  `block` would not be a plain repetition, and deleting its last entry would delete it.
 - **Layout is copied from the nearest donor, never invented.** The entries of the container
   above the insertion point come first (`probe_entry_style(..., upto=)`); a block created by an
   assignment has none, so it takes the style of the nearest sibling block above it — the

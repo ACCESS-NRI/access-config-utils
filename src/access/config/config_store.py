@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 from lark import Tree
 from lark.exceptions import UnexpectedInput
 
-from access.config.config_insert import insert_entry
+from access.config.config_insert import entry_category, insert_entry
 from access.config.config_resize import resize_entry
 from access.config.entry_style import (
     EntryStyle,
@@ -38,11 +38,18 @@ from access.config.entry_style import (
     probe_entry_style,
     probe_sibling_block_style,
 )
-from access.config.grammar_contract import KEY_LIST, KEY_VALUE
+from access.config.grammar_contract import KEY_BLOCK, KEY_LIST, KEY_VALUE
 from access.config.grammar_values import VALUE_TYPE_HANDLER_REGISTRY, UnsupportedEntryError
 from access.config.list_layout import align_values
 from access.config.tree_edits import remove_entry_node, update_node_value, write_values
-from access.config.tree_navigation import entry_chain, entry_insertion_index, entry_nodes, key_token, line_index
+from access.config.tree_navigation import (
+    entry_chain,
+    entry_insertion_index,
+    entry_nodes,
+    first_block_line,
+    key_token,
+    line_index,
+)
 from access.config.tree_reader import EntryRef, entry_value, read_entries
 
 if TYPE_CHECKING:
@@ -197,7 +204,10 @@ class ConfigStore:
     def add_path(self, raw_keys: Sequence[str], value: Any, category: str | None = None) -> EntryRef:
         """Write an entry for a key path this container does not have yet.
 
-        One key is a plain entry, written after the last entry of the container. More are a
+        One key is a plain entry, written after the last entry of the container. Where
+        blocks run on to whatever follows them, an entry that is not a block goes after the
+        last entry above the first block instead, and a block after every line that may not
+        follow one. More are a
         chain, as in the Fortran ``a%b = 1``: a block written one component per line, each
         line repeating its key. Such a line goes after the last one sharing the most leading
         keys with it, so that a type's components stay together, and spells those keys the
@@ -221,7 +231,7 @@ class ConfigStore:
                 "It is either merged from several blocks, or written one component per line"
             )
         keys = [self.ctx.normalise_key(key) for key in raw_keys]
-        index, spelled = self._insertion_point(keys)
+        index, spelled = self._insertion_point(keys, category or entry_category(value))
         style = probe_entry_style(self.tree, self.ctx.reconstructor, upto=index)
         if style.indent is None:
             style = self.fallback_style
@@ -233,14 +243,21 @@ class ConfigStore:
             self.reread()
         return ref
 
-    def _insertion_point(self, keys: Sequence[str]) -> tuple[int, list[str]]:
+    def _insertion_point(self, keys: Sequence[str], category: str) -> tuple[int, list[str]]:
         """Return where an entry for *keys* goes, and how the keys it shares are spelled.
 
         That is an index among the children of the container, and the leading keys shared
-        with the line the entry follows, as that line spells them.
+        with the line the entry follows, as that line spells them. *category* is the kind of
+        entry: where a block runs on to whatever follows it, as a Rose section does, the
+        container's order is kept. An entry that is not a block goes above the first block,
+        or it would be read as part of that block, and a block goes where its rule lets it.
         """
         if len(keys) == 1:
-            return entry_insertion_index(self.tree), []
+            if not self.ctx.info.blocks_run_on:
+                return entry_insertion_index(self.tree), []
+            if category == KEY_BLOCK:
+                return self._block_index(), []
+            return entry_insertion_index(self.tree, upto=first_block_line(self.tree)), []
         after, spelled = None, []
         for position, line in enumerate(self.tree.children):
             for entry in entry_nodes(line) if isinstance(line, Tree) else []:
@@ -253,6 +270,35 @@ class ConfigStore:
                 if shared and len(shared) >= len(spelled):
                     after, spelled = position, shared
         return entry_insertion_index(self.tree, after), spelled
+
+    def _block_index(self) -> int:
+        """Return where a new block goes in a container whose blocks run on.
+
+        The first position from the last entry on that the container's rule accepts a block
+        at, so a block goes past the lines that may not follow one, such as the comments and
+        blank lines at the top of a Rose file with no section yet. Only the kinds of the
+        children are matched, so this does not write anything out.
+        """
+        rule = str(self.tree.data)
+        children = self.tree.children
+        probe = Tree(KEY_BLOCK, [])
+        index = entry_insertion_index(self.tree)
+        return next(
+            (
+                position
+                for position in range(index, len(children) + 1)
+                if self._accepts(rule, [*children[:position], probe, *children[position:]])
+            ),
+            index,
+        )
+
+    def _accepts(self, rule: str, children: list) -> bool:
+        """Report whether the rule of the container takes children of these kinds."""
+        try:
+            self.ctx.reconstructor.match_tree(Tree(rule, children), rule)
+        except UnexpectedInput:
+            return False
+        return True
 
     def created_block_style(self, entry: Tree | None = None) -> EntryStyle:
         """Return the style the contents of a block just created should follow.

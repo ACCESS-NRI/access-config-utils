@@ -38,6 +38,7 @@ flowchart LR
 | [NUOPC run configurations](user-guide/formats/nuopc-runconfig.md) | `nuopc.runconfig` | `NUOPCParser` |
 | [NUOPC run sequences](user-guide/formats/nuopc-runseq.md) | `nuopc.runseq` | `NUOPCRunSeqParser` |
 | [FMS field tables](user-guide/formats/field-tables.md) | `field_table`, in the legacy format | `FieldTableParser` |
+| [Rose configurations](user-guide/formats/rose.md) | `rose-suite.conf`, `rose-app.conf` | `RoseConfParser` |
 | [YAML](user-guide/formats/yaml-json.md) | Payu's `config.yaml`, and any other YAML file | `YAMLParser` |
 | [JSON](user-guide/formats/yaml-json.md#json) | `forcing.json`, and any other JSON file | `JSONParser` |
 

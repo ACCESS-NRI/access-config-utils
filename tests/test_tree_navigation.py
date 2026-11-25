@@ -21,6 +21,7 @@ from access.config.tree_navigation import (
     entry_chain,
     entry_insertion_index,
     entry_nodes,
+    first_block_line,
     flatten_slots,
     index_positions,
     is_comment_line,
@@ -49,6 +50,11 @@ def comment_line(text: str = "# note", rule: str = "comment") -> Tree:
 def scalar(key: str = "a") -> Tree:
     """Return a ``key_value`` entry node."""
     return entry_node("key_value", key, value_node())
+
+
+def section(key: str = "s") -> Tree:
+    """Return a ``key_block`` entry node holding an empty block."""
+    return entry_node("key_block", key, Tree("block", []))
 
 
 class TestAddParent:
@@ -215,6 +221,39 @@ class TestEntryInsertionIndex:
         """Test an entry placed beside another, after that line's comment run."""
         container = Tree("start", [scalar("a"), comment_line(), scalar("b"), line()])
         assert entry_insertion_index(container, after=0) == 2
+
+    def test_above_a_line_given(self) -> None:
+        """Test that the entries below *upto* do not count, so the entry goes above it."""
+        container = Tree("start", [scalar("a"), line(), section("s"), scalar("b")])
+        assert entry_insertion_index(container, upto=2) == 1
+
+    def test_the_comment_run_stops_at_the_line_given(self) -> None:
+        """Test that the run is stepped over only up to *upto*, never past it."""
+        container = Tree("start", [scalar("a"), comment_line(), comment_line(), section("s")])
+        assert entry_insertion_index(container, upto=2) == 2
+
+    def test_nothing_above_the_line_given(self) -> None:
+        """Test that an entry with no entry above *upto* goes at the front."""
+        container = Tree("start", [section("s"), scalar("b")])
+        assert entry_insertion_index(container, upto=0) == 0
+
+
+class TestFirstBlockLine:
+    """The line a block starts on, above which an entry goes where blocks run on."""
+
+    def test_the_first_line_holding_a_block(self) -> None:
+        """Test that the first of two blocks is found, past the lines before it."""
+        container = Tree("start", [scalar("a"), line(), section("s"), section("t")])
+        assert first_block_line(container) == 2
+
+    def test_a_block_inside_a_line(self) -> None:
+        """Test that a line wrapping a block holds it, as a grammar's line rule may."""
+        container = Tree("start", [scalar("a"), line(section("s"))])
+        assert first_block_line(container) == 1
+
+    def test_no_block(self) -> None:
+        """Test that a container holding no block has no such line."""
+        assert first_block_line(Tree("start", [scalar("a"), line()])) is None
 
 
 class TestLinesAndKeys:

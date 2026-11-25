@@ -161,6 +161,10 @@ causes are:
   other shape breaks quietly.
 - `AssertionError` in `AddParent`: a tree node appears twice in the tree. Code that builds nodes has
   to make a new object for every position, and never reuse one.
+- Deleting the last entry of a block deletes the block as well. Removing an entry also removes the
+  wrappers left without one, and only a rule that is a plain repetition is kept empty.
+  `GrammarInfo.is_repetition_rule` says whether `block` is one. It is not where the same expression
+  is written in `block` and in `start`, because Lark then shares one helper rule between the two.
 
 When the wrong node changes, look at the references of the entry. They are held by the store of the
 configuration that the key is in:

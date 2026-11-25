@@ -7,7 +7,7 @@ the internals of the parsers, which are for developers.
 | Page | Modules | What they cover |
 |---|---|---|
 | [Configurations](configurations.md) | `config_dict`, `grammar_values` | The dict, list and record a file is read as, and the error raised for a value a format cannot write |
-| [Parsers](parsers.md) | `parser`, `fortran_nml`, `mom6_input`, `nuopc_config`, `nuopc_runseq`, `field_table` | The base class of the parsers built on a grammar, and the parser of each format |
+| [Parsers](parsers.md) | `parser`, `fortran_nml`, `mom6_input`, `nuopc_config`, `nuopc_runseq`, `field_table`, `rose_conf` | The base class of the parsers built on a grammar, and the parser of each format |
 | [YAML and JSON](yaml-json.md) | `yaml_config`, `json_config` | The parsers that wrap ruamel.yaml and `json` |
 | [Components and layouts](parallel-components.md) | `parallel_component`, `parallel_domain`, `parallel_mpi_grid` | Component trees, the layouts found for them, domains and grids of ranks |
 | [Allocation strategies](allocation-strategies.md) | `parallel_allocation_strategies` | How the cores of a parent are divided among its sub-components |
@@ -38,6 +38,7 @@ from access.config import (
     MOM6InputParser,
     NUOPCParser,
     NUOPCRunSeqParser,
+    RoseConfParser,
     UnsupportedEntryError,
     YAMLParser,
 )

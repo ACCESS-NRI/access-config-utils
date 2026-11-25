@@ -108,9 +108,16 @@ the value types that the format writes.
 The new entry goes where `entry_insertion_index` says. This is one past the last entry of the
 container, and then past any comment lines that start there, up to a blank line, the next entry or
 the end. A comment at the end of the line of an entry belongs to that entry, so a new entry never
-lands inside one. The new nodes are annotated with their parents on their own, before they are
-spliced in. The configurations on the path of the key are then read again, in place, so that a
-reference held by a caller sees the new key.
+lands inside one. A format may have blocks that nothing closes, as a Rose section runs until the
+next header. `GrammarInfo.blocks_run_on` reads this from the grammar: a `key_block` rule ends with
+its `block`. In such a format, an entry that is not a block goes after the last entry above the
+first block (`first_block_line`), because after a block it would be part of that block. A new block
+goes at the first position from the last entry on that the rule of the container accepts, which
+lark's `match_tree` checks on the kinds of the children alone. This puts it past the comments and
+blank lines at the top of a file with no block yet, which may not follow a block. The new
+nodes are annotated with their parents on their own, before they are spliced in. The configurations
+on the path of the key are then read again, in place, so that a reference held by a caller sees the
+new key.
 
 ### Chains and blocks
 

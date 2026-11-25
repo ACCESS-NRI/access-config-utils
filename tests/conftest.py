@@ -36,6 +36,7 @@ from access.config.mom6_input import MOM6InputParser
 from access.config.nuopc_config import NUOPCParser
 from access.config.nuopc_runseq import NUOPCRunSeqParser
 from access.config.parser import ConfigParser
+from access.config.rose_conf import RoseConfParser
 from access.config.tree_reader import EntryRef
 
 PARSERS = {
@@ -44,6 +45,7 @@ PARSERS = {
     "nuopc_config": NUOPCParser,
     "nuopc_runseq": NUOPCRunSeqParser,
     "field_table": FieldTableParser,
+    "rose_conf": RoseConfParser,
 }
 
 # The entry text each parser writes for each container and category it supports, with no
@@ -72,6 +74,12 @@ CANONICAL = {
     # A method line starts with its line break, and is indented.
     ("field_table", "block", "key_value"): '\n  "NEWKEY", "7"',
     ("field_table", "block", "key_list"): "\n  NEWKEY = 1, 2, 3",
+    ("rose_conf", "start", "key_value"): "NEWKEY=ATM\n",
+    ("rose_conf", "start", "key_null"): "NEWKEY=\n",
+    # A new section is parted from what is above it by a blank line.
+    ("rose_conf", "start", "key_block"): "\n[NEWKEY]\n",
+    ("rose_conf", "block", "key_value"): "NEWKEY=ATM\n",
+    ("rose_conf", "block", "key_null"): "NEWKEY=\n",
 }
 
 # The same for a chain of keys, keyed by how many keys there are: the Fortran ``a%b = 1``
@@ -88,8 +96,8 @@ CHAIN_CANONICAL = {
 
 VALUES = {"key_value": 7, "key_list": [1, 2, 3], "key_null": None, "key_block": {}}
 
-# Values for a format whose only value type is a line of text, which holds no number.
-TEXT_VALUES = {"key_value": "ATM", "key_list": ["@3600", "ATM", "@"], "key_null": None}
+# Values for a format whose only value type is text, which holds no number.
+TEXT_VALUES = {"key_value": "ATM", "key_list": ["@3600", "ATM", "@"], "key_null": None, "key_block": {}}
 
 
 def canonical_rows(grammar: str) -> list[tuple[str, str, str]]:

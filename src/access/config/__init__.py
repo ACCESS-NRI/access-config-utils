@@ -16,6 +16,7 @@ from access.config.mom6_input import MOM6InputParser
 from access.config.nuopc_config import NUOPCParser
 from access.config.nuopc_runseq import NUOPCRunSeqParser
 from access.config.parser import ConfigParser
+from access.config.rose_conf import RoseConfParser
 from access.config.yaml_config import YAMLParser
 
 __all__ = [
@@ -32,4 +33,5 @@ __all__ = [
     "YAMLParser",
     "NUOPCParser",
     "NUOPCRunSeqParser",
+    "RoseConfParser",
 ]

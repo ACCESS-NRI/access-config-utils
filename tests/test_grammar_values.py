@@ -40,6 +40,7 @@ ROUND_TRIPS = [
     ("string", "'quoted'", "quoted", '"quoted"'),
     ("fortran_string", "'quoted'", "quoted", '"quoted"'),
     ("text_line", "MED -> OCN :remapMethod=redist", "MED -> OCN :remapMethod=redist", "MED -> OCN :remapMethod=redist"),
+    ("rose_text", "'PT1H10M'", "'PT1H10M'", "'PT1H10M'"),
     ("path", "/dir/file.nc", Path("/dir/file.nc"), "/dir/file.nc"),
     ("inferred_string", '"kg/kg"', "kg/kg", '"kg/kg"'),
     ("inferred_string", '"3.e-6"', 3.0e-6, '"3e-06"'),
@@ -312,6 +313,49 @@ class TestRewrite:
         assert handler.from_token("word") == "word"
         assert handler.rewrite("other", "word") == "other"
         assert handler.to_new_token("fresh") == "fresh"
+
+
+class TestRoseText:
+    """The value of a Rose setting: the rest of its line, and the lines continuing it."""
+
+    @pytest.mark.parametrize(
+        ("token", "value"),
+        [
+            pytest.param("*=/scratch/x", "*=/scratch/x", id="one-line"),
+            pytest.param("one\n  two  ", "one\ntwo", id="trimmed"),
+            pytest.param("one\n   =  two", "one\n  two", id="equals-keeps-blanks"),
+            pytest.param("one\n   ==two", "one\n=two", id="one-equals-dropped"),
+            pytest.param("one\n   =\n   =three", "one\n\nthree", id="bare-equals"),
+            pytest.param("one\n\n  # a comment\n# another\n  two", "one\ntwo", id="blank-and-comment"),
+            pytest.param("one\n  =#not a comment", "one\n#not a comment", id="equals-hash"),
+            pytest.param("\n  =x", "\nx", id="starts-below"),
+            pytest.param("one\r\n  =two", "one\ntwo", id="crlf"),
+        ],
+    )
+    def test_reads_the_value_rose_reads(self, token, value) -> None:
+        """Test that continuation lines are joined as ``ConfigLoader.load`` joins them."""
+        assert VALUE_TYPE_HANDLER_REGISTRY["rose_text"].from_token(token) == value
+
+    def test_any_string_is_of_its_type(self) -> None:
+        """Test that only a string is a value, as Rose gives a setting no type."""
+        handler = VALUE_TYPE_HANDLER_REGISTRY["rose_text"]
+
+        assert handler.type_check("two\nlines")
+        assert not handler.type_check(16)
+
+    def test_writes_a_line_of_text_as_given(self) -> None:
+        """Test that one line replaces the token whole, continuation lines and all."""
+        assert VALUE_TYPE_HANDLER_REGISTRY["rose_text"].rewrite("'P1M'", "'PT1H'\n  =x") == "'P1M'"
+
+    @pytest.mark.parametrize("value", ["", " padded", "padded\t", "two\nlines", "cr\r"])
+    def test_refuses_what_one_line_cannot_hold(self, value) -> None:
+        """Test the strings Rose would read back otherwise, trimmed or cut at the line."""
+        with pytest.raises(UnsupportedEntryError):
+            VALUE_TYPE_HANDLER_REGISTRY["rose_text"].rewrite(value, "x")
+
+    def test_a_value_of_several_lines_is_written_over_itself(self) -> None:
+        """Test that a token already holding the value keeps its continuation lines."""
+        assert VALUE_TYPE_HANDLER_REGISTRY["rose_text"].rewrite("one\ntwo", "one\n   =two") == "one\n   =two"
 
 
 class TestIdenticalValues:

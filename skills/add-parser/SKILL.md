@@ -84,7 +84,8 @@ Requirements:
   of free text, `inferred_string`/`inferred_text` for a value typed by its spelling as the FMS
   field manager types one, `named_assignments` for a record of a name and parameters). A format
   may define one itself under a registry name, with exactly one `Token` child, as `fortran_nml.py`
-  does for `bare_exponent` and `fortran_identifier`. Collect the subset your format allows into a
+  does for `bare_exponent` and `fortran_identifier`, and `rose_conf.py` for `rose_text`, the
+  untyped text of a Rose setting and its continuation lines. Collect the subset your format allows into a
   transparent `?value:` rule. A value type whose handler `collects` makes an entry one record of a
   list the key holds, an entry per record.
 

@@ -127,9 +127,14 @@ its constants (`START_RULE`, `KEY_VALUE` and the rest) instead of spelling the n
   `complex`, `logical`, `bool`, `string`, `fortran_string`, `identifier` and `path`, together with
   the more particular ones that the formats of the package need. They are all in `config.lark`. A
   rule with any other name is not a value. A format can define a value-type rule of its own, under a
-  registered name, as `fortran_nml` does.
+  registered name, as `fortran_nml` and `rose_conf` do.
 - **The blocks.** A `key_block` holds its entries in a rule *named* `block`, and not in one aliased
-  to it, because a new entry of a block is parsed with `block` as the start symbol.
+  to it, because a new entry of a block is parsed with `block` as the start symbol. A block may have
+  nothing to close it, as a Rose section runs until the next header. The shared code then writes a
+  new entry that is not a block above the first block, so there is nothing for the parser to do.
+  Write out the alternatives of such a `block` rather than repeating an expression of `start`:
+  Lark would share one helper rule between the two, `block` would not be a plain repetition, and
+  deleting the last entry of a block would delete the block.
 - **The start rule.** The top-level rule is named `start`, and it is not transparent: write
   `start:`, never `?start:`. A transparent rule with one child is inlined away, so a file with a
   single entry would have no container for a new entry to go in.

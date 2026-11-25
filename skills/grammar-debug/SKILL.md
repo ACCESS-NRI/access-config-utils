@@ -174,7 +174,12 @@ and it is why the run is stepped over at all, since one-past-the-entry would oth
 line of that comment. A blank line is *not* a comment line (same `empty_line` rule, no
 `comment`/`fortran_comment` node below it), so it stops the run and the new key goes above it.
 Fortran between namelist groups is the exception: those lines are one `random_text` blob with no
-comment node in it, so nothing is stepped over there.
+comment node in it, so nothing is stepped over there. A format whose blocks nothing closes is the
+other: where `GrammarInfo.blocks_run_on` is true, as for a Rose section, `ConfigStore` passes
+`upto=first_block_line(...)`, so an entry that is not a block goes after the last entry *above* the
+first block, never after the last block. A new block goes at the first position from the last entry
+on that the container's rule accepts (`ConfigStore._block_index`, through `match_tree`), past the
+top-level lines that may not follow a block.
 
 A block created by an assignment is the one container that has no entry above it to read an indent
 from: it is empty, so `probe_sibling_block_style(container, reconstructor)` gives it the style of

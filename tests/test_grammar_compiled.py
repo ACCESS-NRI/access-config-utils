@@ -299,3 +299,47 @@ class TestValueRules:
         """).info
 
         assert keys_only.value_rules == frozenset()
+
+
+class TestBlocksRunOn:
+    """Whether a block has nothing to close it, so that it runs on to what follows it."""
+
+    def test_a_block_closed_by_a_literal(self) -> None:
+        """Test that a literal after the block closes it, though the tree drops it."""
+        assert not compile_grammar(WITH_BLOCK).info.blocks_run_on
+
+    def test_a_block_ending_its_entry(self) -> None:
+        """Test a block that is the last thing its entry holds, as a Rose section is."""
+        run_on = compile_grammar("""
+            start: entry*
+            entry: "[" key "]" block -> key_block
+            block: inner*
+            inner: key "=" integer
+
+            %import config.key
+            %import config.integer
+            %import common.WS
+            %ignore WS
+        """).info
+
+        assert run_on.blocks_run_on
+
+    def test_a_rule_named_for_its_category(self) -> None:
+        """Test a ``key_block`` rule that is not aliased, as MOM6 names its block rule."""
+        run_on = compile_grammar("""
+            start: key_block*
+            key_block: key ":" block
+            block: inner*
+            inner: key "=" integer
+
+            %import config.key
+            %import config.integer
+            %import common.WS
+            %ignore WS
+        """).info
+
+        assert run_on.blocks_run_on
+
+    def test_a_grammar_without_blocks(self) -> None:
+        """Test that a format with no block has none to run on."""
+        assert not compile_grammar(WITHOUT_BLOCK).info.blocks_run_on
