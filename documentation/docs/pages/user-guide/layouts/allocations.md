@@ -98,14 +98,29 @@ parent](components.md#partitioned-and-shared-cores) the whole range of the paren
 offset to the end. Use it to pin the sub-components of a shared parent to whatever range the parent
 is given.
 
-`FreeAllocation()`, with no bounds, leaves a component open. Every component of the tree needs a
-strategy, because there is no default mode. At every level, the names in the strategy have to be
-exactly those of the component tree. A name that is missing from the strategy, or that the component
-tree does not have, raises `ValueError` when the search is started. For example, we leave out `ice`:
+`FreeAllocation()`, with no bounds, leaves a component open. You only need to give a strategy for the
+components you have an opinion about. A component that the strategy leaves out takes a default when
+the search is started: a `WholeRangeAllocation()` if its parent is shared, and a `FreeAllocation()`
+otherwise. Its own sub-components get their defaults in the same way. For example, we leave out
+`ice`, which is then free:
+
+```python
+allocations = RootAllocation(subcomponents={"atm": FixedAllocation(12), "ocn": FixedAllocation(8)})
+print(splits(allocations))
+```
+
+This prints the splits that give `ice` any number of cores that is left:
+
+```text
+[(12, 8, 1), (12, 8, 2), (12, 8, 3), (12, 8, 4)]
+```
+
+A name that the component tree does not have is still refused, since it is almost always a typo. It
+raises `ValueError` when the search is started:
 
 ```python
 try:
-    iter_layouts(model, 24, allocations=RootAllocation(subcomponents={"atm": FreeAllocation(), "ocn": FreeAllocation()}))
+    iter_layouts(model, 24, allocations=RootAllocation(subcomponents={"atmos": FixedAllocation(12)}))
 except ValueError as error:
     print(error)
 ```
@@ -113,11 +128,12 @@ except ValueError as error:
 This prints:
 
 ```text
-RootAllocation: no allocation given at root for {'ice'}. Every sub-component needs one - there is no default mode. Add a FreeAllocation() for the ones that should be left open.
+RootAllocation: unknown component names in allocations at root: ['atmos']. Valid names: ['atm', 'ice', 'ocn'].
 ```
 
 If you give no allocation strategy at all, `iter_layouts` uses a `FreeAllocation()` for every
-component, with one thread per rank.
+component, with one thread per rank. Note that this differs from the defaults under a shared parent,
+where a component left out of a strategy takes the whole range.
 
 ## How the cores of a parent are divided
 

@@ -20,7 +20,7 @@ from access.config.parallel_allocation_strategies import (
     iter_shared_core_shares,
     resolve_root_strategy,
 )
-from access.config.parallel_component import GroupConstraint, LocalConstraint
+from access.config.parallel_component import CoreSharing, GroupConstraint, LocalConstraint, ParallelComponent
 
 # ---------------------------------------------------------------------------
 # Mock components
@@ -217,8 +217,8 @@ class TestAllocationStrategy:
         assert ocn == FixedAllocation(n_cores=4)
 
     def test_strategies_for_has_no_default_mode(self) -> None:
-        # _validate_names has already ruled this out by the time the enumerator asks, so a
-        # bare KeyError is the right answer rather than a silently invented free mode.
+        # resolve_root_strategy has filled every default in by the time the enumerator asks,
+        # so a bare KeyError is the right answer rather than a mode invented here.
         spec = FreeAllocation(subcomponents={"ocn": FixedAllocation(n_cores=4)})
         with pytest.raises(KeyError, match="atm"):
             spec.strategies_for(("atm", "ocn"))
@@ -668,10 +668,34 @@ class TestResolveRootStrategy:
         with pytest.raises(TypeError, match="allocations must be a RootAllocation"):
             resolve_root_strategy(comp, allocations, 16)
 
-    def test_a_mismatched_tree_is_rejected(self) -> None:
-        comp = component("r", component("a"))
-        with pytest.raises(ValueError, match=r"no allocation given at root for \{'a'\}"):
-            resolve_root_strategy(comp, RootAllocation(), 16)
+    def test_a_component_left_out_takes_the_default_of_its_parent(self) -> None:
+        """Test that a component left out takes the default of its parent's kind."""
+        # Whole range where siblings take turns on one range, free where they divide it, and
+        # the default's own sub-components are completed by the same rule.
+        shared = ParallelComponent(
+            "shared", core_sharing=CoreSharing.SHARED, subcomponents=(component("cpl"), component("ice"))
+        )
+        comp = component("r", component("ocn"), shared)
+        given = RootAllocation(subcomponents={"ocn": FixedAllocation(n_cores=12)})
+
+        resolved = resolve_root_strategy(comp, given, 16)
+
+        assert resolved == RootAllocation(
+            subcomponents={
+                "ocn": FixedAllocation(n_cores=12),
+                "shared": FreeAllocation(subcomponents={"cpl": WholeRangeAllocation(), "ice": WholeRangeAllocation()}),
+            }
+        )
+        assert given.subcomponents == {"ocn": FixedAllocation(n_cores=12)}, "the caller's tree is left as it was"
+
+    def test_a_default_is_given_at_any_depth(self) -> None:
+        """Test that a component left out below the root is completed too."""
+        comp = component("r", component("mid", component("a"), component("b")))
+        given = RootAllocation(subcomponents={"mid": FreeAllocation(subcomponents={"a": FixedAllocation(n_cores=2)})})
+
+        mid = resolve_root_strategy(comp, given, 16).subcomponents["mid"]
+
+        assert mid.subcomponents == {"a": FixedAllocation(n_cores=2), "b": FreeAllocation()}
 
     def test_fractions_are_resolved_against_the_budget(self) -> None:
         # The tree the enumerator receives never holds a fraction: this is the one place

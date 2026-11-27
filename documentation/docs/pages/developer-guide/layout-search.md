@@ -12,9 +12,11 @@ modes implement, and at how to change the search safely. The module docstrings o
 A search is given two trees of the same shape. The `ParallelComponent` tree says what the model is,
 and the `AllocationStrategy` tree says how a study wants its cores allocated. They are kept apart so
 that one model can be used for many studies, and they are matched by name. Before the search starts,
-`resolve_root_strategy` checks that the strategy tree names exactly the sub-components of the
-component tree at every level, because there is no default mode. It also turns every fraction of the
-total into a number of cores, once, so that the search itself only ever sees counts.
+`resolve_root_strategy` completes the strategy tree, so that it names every sub-component of the
+component tree at every level. A component that the strategy leaves out takes its default, a
+`WholeRangeAllocation()` under a shared parent and a `FreeAllocation()` under any other, and a name
+that the component tree does not have is refused. It also turns every fraction of the total into a
+number of cores, once, so that the search itself only ever sees counts.
 
 ## The recursion
 

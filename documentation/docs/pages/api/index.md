@@ -22,8 +22,8 @@ All module names are relative to `access.config`.
 
 ## What to import from where
 
-You import the parsers, and the types that a parsed configuration is made of, from the package
-itself:
+You import the parsers, the types that a parsed configuration is made of, and the allocation
+strategies and constraints of the layout search, from the package itself:
 
 ```python
 from access.config import (
@@ -42,15 +42,15 @@ from access.config import (
     UnsupportedEntryError,
     YAMLParser,
 )
+from access.config import FixedAllocation, FreeAllocation, RootAllocation, SubdomainAspectRatioConstraint
 ```
 
-Everything else is imported from the module that defines it. This includes the whole of the layout
-search:
+The strategies are `RootAllocation`, `FixedAllocation`, `WeightedAllocation`, `FreeAllocation` and
+`WholeRangeAllocation`, and every constraint of `parallel_constraints` is exported too. Everything
+else is imported from the module that defines it. This includes the rest of the layout search:
 
 ```python
-from access.config.parallel_allocation_strategies import FixedAllocation, FreeAllocation, RootAllocation
 from access.config.parallel_component import CoreSharing, ParallelComponent
-from access.config.parallel_constraints import SubdomainAspectRatioConstraint
 from access.config.parallel_domain import Domain
 from access.config.parallel_layouts import iter_layouts
 ```

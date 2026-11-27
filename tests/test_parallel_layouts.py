@@ -196,26 +196,40 @@ class TestIterLayoutsLeaf:
             assert layout.n_ranks * layout.threads_per_rank == 12
             assert layout.idle_cores == 0
 
-    def test_missing_allocation_raises(self) -> None:
-        """No default mode, so a sub-component left out is an error, not a free one."""
+    def test_a_sub_component_left_out_is_free(self) -> None:
+        """Test that a sub-component left out of a divided parent's strategy is free."""
         parent = ParallelComponent("p", subcomponents=(ParallelComponent("a"), ParallelComponent("b")))
-        with pytest.raises(ValueError, match=r"no allocation given at root for \{'b'\}"):
-            iter_layouts(
-                parent,
-                total_cores=4,
-                allocations=RootAllocation(subcomponents={"a": FreeAllocation()}),
-            )
+        explicit = RootAllocation(subcomponents={"a": FixedAllocation(n_cores=1), "b": FreeAllocation()})
 
-    def test_missing_allocation_is_caught_at_depth(self) -> None:
-        leaf = ParallelComponent("leaf")
-        mid = ParallelComponent("mid", subcomponents=(leaf,))
-        parent = ParallelComponent("p", subcomponents=(mid,))
-        with pytest.raises(ValueError, match=r"no allocation given at root.mid for \{'leaf'\}"):
+        left_out = list(
             iter_layouts(
-                parent,
-                total_cores=4,
-                allocations=RootAllocation(subcomponents={"mid": FreeAllocation()}),
+                parent, total_cores=4, allocations=RootAllocation(subcomponents={"a": FixedAllocation(n_cores=1)})
             )
+        )
+
+        assert left_out == list(iter_layouts(parent, total_cores=4, allocations=explicit))
+        assert len(left_out) == 3
+
+    def test_a_sub_component_of_a_shared_parent_left_out_takes_the_whole_range(self) -> None:
+        """Test that a sub-component a shared parent's strategy leaves out takes it all."""
+        shared = ParallelComponent(
+            "s", core_sharing=CoreSharing.SHARED, subcomponents=(ParallelComponent("a"), ParallelComponent("b"))
+        )
+        parent = ParallelComponent("p", subcomponents=(shared, ParallelComponent("c")))
+        allocations = RootAllocation(subcomponents={"s": FixedAllocation(n_cores=2)})
+
+        layouts = list(iter_layouts(parent, total_cores=4, allocations=allocations))
+
+        assert {sub.n_cores for layout in layouts for sub in layout.sub_layouts[0].sub_layouts} == {2}
+        explicit = RootAllocation(
+            subcomponents={
+                "s": FixedAllocation(
+                    n_cores=2, subcomponents={"a": WholeRangeAllocation(), "b": WholeRangeAllocation()}
+                ),
+                "c": FreeAllocation(),
+            }
+        )
+        assert layouts == list(iter_layouts(parent, total_cores=4, allocations=explicit))
 
     @pytest.mark.parametrize(
         "allocations",

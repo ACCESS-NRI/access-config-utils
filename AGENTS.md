@@ -604,13 +604,17 @@ header in `__init__.py`. Structure is a review matter; line length is not.
   `RootAllocation` declares no `_phase`, so nesting one raises `AttributeError` naming the
   class; its `_iter_core_shares` exists only to satisfy the ABC and raises `TypeError` (not a
   generator, so it fires on the call).
-- **There is no default mode.** `_validate_names` requires the two trees to name the same
-  components exactly, at every level — unknown names *and* missing ones are both `ValueError`.
-  A component the caller has no opinion about carries an explicit `FreeAllocation()`;
-  `iter_layouts(allocations=None)` builds that tree via `FreeAllocation._tree_for` under a
-  `RootAllocation` that `resolve_root_strategy` supplies. This is why `strategies_for` can index
-  `subcomponents` directly. Don't reintroduce a default: it would put a mode's identity back on
-  the base.
+- **The base has no default mode; the resolved tree has a default for every component.** A
+  component the caller's tree leaves out takes one when `resolve_root_strategy` completes the
+  tree (`_with_defaults`): `WholeRangeAllocation()` under a `CoreSharing.SHARED` parent,
+  `FreeAllocation()` under any other, its own sub-components completed by the same rule. An
+  unknown name is still `ValueError`, before the fractions are resolved. The default is chosen
+  by module-level code below the modes, since choosing it knows the modes: don't give the base a
+  default mode, or a field default that is one. A tree that leaves nothing out comes back as the
+  same object. `iter_layouts(allocations=None)` still builds an all-free tree via
+  `FreeAllocation._tree_for`, so under a shared parent `None` and a tree leaving a sub-component
+  out differ. Either way the enumerator holds a complete tree, which is why `strategies_for` can
+  index `subcomponents` directly.
 - **The scheduler is mode-agnostic**, and this is the invariant most worth protecting. Adding a
   mode means writing the class, declaring `_phase`, and implementing `_iter_core_shares`;
   nothing in `iter_core_splits` is edited, and there is no `isinstance` chain to extend. The
@@ -645,7 +649,7 @@ header in `__init__.py`. Structure is a review matter; line length is not.
   API: Python has no `internal`, and importing a `_`-prefixed name across modules is worse. (The
   one such import, `_occupied` into `parallel_layouts`, is a Housekeeping item.) Everything a
   mode knows about *itself* stays `_`-prefixed and inside `parallel_allocation_strategies`:
-  `_validate_names`, `_core_range`, `_resolve_fractions`, `_iter_core_shares`,
+  `_with_defaults`, `_core_range`, `_resolve_fractions`, `_iter_core_shares`,
   `_shared_core_range`, `_tree_for`, `_group_by_mode`. What a caller touches is the six classes'
   fields plus `iter_layouts`. Doctests run on private methods too, but keep *class-level*
   examples on the public API.
@@ -732,7 +736,10 @@ header in `__init__.py`. Structure is a review matter; line length is not.
   sees no record at all.
 - Both modules carry an `__all__`: `parallel_allocation_strategies.__all__` is the abstract
   base, `RootAllocation` and the four modes; `parallel_layouts.__all__` is `iter_layouts` alone
-  — the classes are imported from where they are defined, not re-exported. Names in neither
+  — the classes are imported from where they are defined, not re-exported. The package itself,
+  `access.config`, re-exports `RootAllocation`, the four modes and every constraint of
+  `parallel_constraints`, which is what a study writes; `tests/test_init.py` checks that a new
+  mode or constraint is among them. Names in neither
   are an import, module state (`logger`), `_`-prefixed, or one of the cross-module contract
   names above. Ruff's `F822` fails the build on a name in `__all__` that no longer exists, so a
   rename must touch both. `__all__` constrains `import *` only; it does not stop an explicit

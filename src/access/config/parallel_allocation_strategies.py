@@ -55,7 +55,10 @@ meaning where nothing is divided and declines the shared path, while
 the divided one. A phase is therefore about the divided path alone.
 
 The two trees stand side by side, one strategy node per component, and it is the mode of
-each node that differs:
+each node that differs. A component the strategy tree leaves out takes its default when the
+tree is resolved: ``WholeRangeAllocation`` under a ``CoreSharing.SHARED`` parent, and
+``FreeAllocation`` under any other. So a strategy states only the components it has an
+opinion about:
 
     component tree          strategy tree
     --------------          -------------
@@ -85,9 +88,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Any, ClassVar, Self, cast
+from typing import Any, ClassVar, Self, TypeVar, cast
 
-from access.config.parallel_component import GroupConstraint, LocalConstraint, ParallelComponent
+from access.config.parallel_component import CoreSharing, GroupConstraint, LocalConstraint, ParallelComponent
 
 __all__ = [
     "AllocationStrategy",
@@ -209,10 +212,12 @@ class AllocationStrategy(ABC):
             as the default inherited by its sub-components.
         subcomponents (Mapping[str, AllocationStrategy]): Allocation strategies for direct
             sub-components, keyed by component name. Omit (or pass ``{}``) for leaf
-            components. Every sub-component of the matching component must appear, since
-            there is no default mode; ``FreeAllocation()`` is the entry for one that should
-            be left open. The mapping is copied on construction and exposed as a read-only
-            view, so later changes to the dict passed in here do not affect the strategy.
+            components. A sub-component left out takes its default when the tree is
+            resolved: ``WholeRangeAllocation()`` under a ``CoreSharing.SHARED`` parent, and
+            ``FreeAllocation()`` under any other. A name that is not a sub-component of the
+            matching component is refused. The mapping is copied on construction and exposed
+            as a read-only view, so later changes to the dict passed in here do not affect
+            the strategy.
         local_constraints (tuple[LocalConstraint, ...]): Constraints applied only when
             this allocation strategy is active, checked alongside the component's own
             ``ParallelComponent.local_constraints``. Use this for strategy-specific filters
@@ -387,9 +392,9 @@ class AllocationStrategy(ABC):
         """Return the sub-strategies for *names*, in the order given.
 
         The mapping is keyed by component name while the enumerator works positionally,
-        so this is where the two are lined up. Every name must have an entry: there is no
-        default mode, and ``_validate_names`` has already established that the strategy
-        tree names exactly the same components as the component tree.
+        so this is where the two are lined up. Every name must have an entry: the
+        enumerator only ever holds a tree that ``resolve_root_strategy`` has completed, with
+        a strategy for every component of the component tree.
 
         Args:
             names (Iterable[str]): Sub-component names, in the order the caller needs
@@ -409,39 +414,6 @@ class AllocationStrategy(ABC):
             ['FreeAllocation', 'FixedAllocation']
         """
         return tuple(self.subcomponents[name] for name in names)
-
-    def _validate_names(self, component: ParallelComponent, path: str = "root") -> None:
-        """Check that this strategy tree names exactly *component*'s sub-components.
-
-        The two trees must agree name for name, at every level. A name that matches
-        nothing is almost always a typo, and silently ignoring it would hand back layouts
-        that quietly disregard the caller's intent. A sub-component with no entry is
-        equally an error: there is no default mode to fall back on, so the strategy tree
-        simply does not say how that component is to be served.
-
-        Args:
-            component (ParallelComponent): The component this strategy is laid over.
-            path (str): Dotted path to *component*, for the error message.
-
-        Raises:
-            ValueError: If, at any depth, the keys of ``subcomponents`` are not exactly
-                the names of the matching component's sub-components.
-        """
-        sub_names = {sub.name for sub in component.subcomponents}
-        given = set(self.subcomponents)
-        if unknown := given - sub_names:
-            raise ValueError(
-                f"{type(self).__name__}: unknown component names in allocations at {path}: "
-                f"{unknown}. Valid names: {sub_names}."
-            )
-        if missing := sub_names - given:
-            raise ValueError(
-                f"{type(self).__name__}: no allocation given at {path} for {missing}. "
-                "Every sub-component needs one - there is no default mode. Add a "
-                "FreeAllocation() for the ones that should be left open."
-            )
-        for sub in component.subcomponents:
-            self.subcomponents[sub.name]._validate_names(sub, f"{path}.{sub.name}")
 
     def _resolve_fractions(self, total_cores: int, path: str = "root") -> Self:
         """Return this strategy tree with every fractional bound turned into a core count.
@@ -801,9 +773,8 @@ class FreeAllocation(AllocationStrategy):
     """Free allocation: the component takes any core count within its own bounds.
 
     This is the mode that constrains nothing, so a bare ``FreeAllocation()`` is what a
-    component gets when the caller has no opinion about it. It still has to be written
-    down: there is no default mode, and an omitted sub-component is an error rather than
-    a free one.
+    component gets when the caller has no opinion about it: it is the default of a
+    sub-component the strategy tree leaves out under a parent that divides its cores.
 
     A bound may be written as an absolute core count, as a fraction of the whole budget, or
     as both. The fractions are what make one strategy tree usable across a scaling study,
@@ -1111,7 +1082,9 @@ class WholeRangeAllocation(AllocationStrategy):
     out are never generated instead of being generated and then filtered.
 
     See ``AllocationStrategy`` for the fields shared by every mode. This mode adds none: the
-    size it describes is the parent's, so there is nothing of its own to state.
+    size it describes is the parent's, so there is nothing of its own to state. It is the
+    default of a sub-component the strategy tree leaves out under a shared parent, since
+    that is how the ACCESS models run the components that take turns on one range.
 
     Examples:
         Whatever the range comes to, this is the count offered - and there is only one. A
@@ -1438,24 +1411,84 @@ def _iter_covering_shares(
     yield from walk(0, 0)
 
 
+_Strategy = TypeVar("_Strategy", bound=AllocationStrategy)
+
+
+def _with_defaults(strategy: _Strategy, component: ParallelComponent, path: str = "root") -> _Strategy:
+    """Return *strategy* completed with a strategy for each component below *component*.
+
+    A sub-component the tree leaves out takes the default of its parent's kind:
+    ``WholeRangeAllocation()`` under a shared parent, whose sub-components take turns on
+    one range, and ``FreeAllocation()`` under one that divides its cores. Its own
+    sub-components are completed the same way. This sits here, below the modes, because
+    choosing a default knows the modes, and the base class must not. A name that matches
+    nothing is refused: it is almost always a typo, and ignoring it would hand back layouts
+    that quietly disregard the caller's intent. A tree that leaves nothing out is returned
+    as it stands.
+
+    Raises:
+        ValueError: If, at any depth, a key of ``subcomponents`` is not the name of a
+            sub-component of the matching component.
+
+    Examples:
+        >>> from access.config.parallel_component import CoreSharing, ParallelComponent
+        >>> shared = ParallelComponent(
+        ...     "shared",
+        ...     core_sharing=CoreSharing.SHARED,
+        ...     subcomponents=(ParallelComponent("cpl"), ParallelComponent("ice")),
+        ... )
+        >>> ocean = ParallelComponent("ocn")
+        >>> model = ParallelComponent("model", subcomponents=(ocean, shared))
+        >>> given = RootAllocation(subcomponents={"ocn": FixedAllocation(n_cores=96)})
+        >>> completed = _with_defaults(given, model)
+        >>> type(completed.subcomponents["shared"]).__name__
+        'FreeAllocation'
+        >>> type(completed.subcomponents["shared"].subcomponents["ice"]).__name__
+        'WholeRangeAllocation'
+    """
+    names = {sub.name for sub in component.subcomponents}
+    if unknown := set(strategy.subcomponents) - names:
+        raise ValueError(
+            f"{type(strategy).__name__}: unknown component names in allocations at {path}: "
+            f"{sorted(unknown)}. Valid names: {sorted(names)}."
+        )
+    default = WholeRangeAllocation if component.core_sharing is CoreSharing.SHARED else FreeAllocation
+    subs = {
+        sub.name: _with_defaults(
+            strategy.subcomponents[sub.name] if sub.name in strategy.subcomponents else default(),
+            sub,
+            f"{path}.{sub.name}",
+        )
+        for sub in component.subcomponents
+    }
+    if all(name in strategy.subcomponents and subs[name] is strategy.subcomponents[name] for name in subs):
+        return strategy
+    return replace(strategy, subcomponents=subs)
+
+
 def resolve_root_strategy(
     component: ParallelComponent, allocations: RootAllocation | None, total_cores: int
 ) -> RootAllocation:
-    """Settle the strategy tree to search under: validate it, and resolve its fractions.
+    """Settle the strategy tree to search under: complete it, and resolve its fractions.
 
     Being the root is a role a strategy is given rather than a property it has, so the
     ``RootAllocation`` type is checked here, at the boundary, and not at construction.
     The check is by ``isinstance`` rather than by annotation alone because this package
     ships no type information and callers are not required to run a type checker.
 
-    This is also where a bound written as a share of the budget becomes a core count, which
-    is why the budget is an argument: the tree handed back always states absolute counts, so
-    the enumerator never meets a fraction. A tree that holds none is returned unchanged.
+    This is where a component the tree leaves out gets its default, as ``_with_defaults``
+    describes, so that the enumerator holds a strategy for every component. It is also
+    where a bound written as a share of the budget becomes a core count, which is why the
+    budget is an argument: the tree handed back always states absolute counts, so the
+    enumerator never meets a fraction. A tree that leaves nothing out and holds no fraction
+    is returned unchanged.
 
     Args:
         component (ParallelComponent): Root of the component tree to lay the strategy over.
         allocations (RootAllocation | None): The caller's strategy tree, or ``None`` to
-            build an all-free one mirroring *component*.
+            build an all-free one mirroring *component*. Note that ``None`` gives a
+            sub-component of a shared parent a ``FreeAllocation()``, where a tree leaving it
+            out gives it a ``WholeRangeAllocation()``.
         total_cores (int): The whole budget, which the fractional bounds are shares of.
 
     Returns:
@@ -1463,8 +1496,8 @@ def resolve_root_strategy(
 
     Raises:
         TypeError: If *allocations* is not a ``RootAllocation``.
-        ValueError: If the strategy tree does not name exactly *component*'s
-            sub-components at any depth, or if a bound resolves to an empty range on
+        ValueError: If the strategy tree names a component that is not a sub-component of
+            the matching one at any depth, or if a bound resolves to an empty range on
             *total_cores*.
     """
     if allocations is None:
@@ -1478,5 +1511,4 @@ def resolve_root_strategy(
             "component always receives the whole budget, so a strategy that states a core count "
             "or bound cannot describe it; set those on a sub-component, or change total_cores."
         )
-    allocations._validate_names(component)
-    return allocations._resolve_fractions(total_cores)
+    return _with_defaults(allocations, component)._resolve_fractions(total_cores)
