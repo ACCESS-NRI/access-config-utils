@@ -26,10 +26,11 @@ from access.config.parallel_component import CoreSharing, GroupConstraint, Local
 # Mock components
 # ---------------------------------------------------------------------------
 #
-# This module never touches a real ParallelComponent: it reads ``.name`` and
-# ``.subcomponents`` off whatever it is handed and nothing else, so a mock carrying those
-# two is a faithful stand-in. ``subcomponents`` is a tuple, as the real type declares, so
-# the mock cannot quietly accept a shape the real one would reject.
+# This module never touches a real ParallelComponent: it reads ``.name``,
+# ``.subcomponents`` and ``.core_sharing`` off whatever it is handed and nothing else, so
+# a mock carrying those three is a faithful stand-in. ``subcomponents`` is a tuple, as the
+# real type declares, so the mock cannot quietly accept a shape the real one would reject,
+# and ``core_sharing`` is PARTITIONED, the real type's default.
 
 
 def component(name: str, *subcomponents: MagicMock) -> MagicMock:
@@ -37,6 +38,7 @@ def component(name: str, *subcomponents: MagicMock) -> MagicMock:
     comp = MagicMock()
     comp.name = name  # assigned, never passed: ``name=`` is reserved by Mock itself
     comp.subcomponents = subcomponents
+    comp.core_sharing = CoreSharing.PARTITIONED
     return comp
 
 
@@ -364,12 +366,6 @@ class TestAllocationStrategy:
         band = FreeAllocation(min_core_fraction=0.1015, max_core_fraction=0.1085, core_step=10)
         with pytest.raises(ValueError, match="admits no core count"):
             band._resolve_fractions(1000)
-
-    def test_free_tree_for_mirrors_the_component_tree(self) -> None:
-        root = component("r", component("a"), component("b"))
-        tree = FreeAllocation._tree_for(root)
-        assert set(tree.subcomponents) == {"a", "b"}
-        assert tree.subcomponents["a"] == FreeAllocation()
 
     def test_free_defaults(self) -> None:
         spec = FreeAllocation()

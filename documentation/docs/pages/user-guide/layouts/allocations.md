@@ -1,7 +1,7 @@
 # Allocating cores
 
-Without further instructions, a search offers every sub-component every number of cores that fits.
-This is far more than a study wants. An *allocation strategy* says how many cores each component may
+Without further instructions, a search offers every sub-component of a parent that divides its cores
+every number of cores that fits. This is far more than a study wants. An *allocation strategy* says how many cores each component may
 receive. It is a tree of its own, with the same shape as the component tree: there is one strategy
 for each component, keyed by the name of the component, under a `RootAllocation` for the root.
 
@@ -131,9 +131,8 @@ This prints:
 RootAllocation: unknown component names in allocations at root: ['atmos']. Valid names: ['atm', 'ice', 'ocn'].
 ```
 
-If you give no allocation strategy at all, `iter_layouts` uses a `FreeAllocation()` for every
-component, with one thread per rank. Note that this differs from the defaults under a shared parent,
-where a component left out of a strategy takes the whole range.
+If you give no allocation strategy at all, every component takes its default, as if you gave a
+`RootAllocation()` that names none of them, with one thread per rank.
 
 ## How the cores of a parent are divided
 

@@ -185,9 +185,10 @@ it rules out. So:
 
 - pin the components that should not vary with a `FixedAllocation`, and give the others narrow
   bounds or a `core_step`;
-- give the sub-components of a shared parent a `WholeRangeAllocation` or a `FixedAllocation`.
-  Otherwise each of them is offered every count that fits, independently of the others, so four free
-  sub-components of a 275-core range make most of 275⁴ combinations;
+- leave the sub-components of a shared parent out of the strategy, which gives each the whole range,
+  or give them a `FixedAllocation`. Each of them given a `FreeAllocation` is offered every count that
+  fits, independently of the others, so four free sub-components of a 275-core range make most of
+  275⁴ combinations;
 - narrow the `thread_range` instead of filtering threads with a constraint, because every thread
   count in the range is tried;
 - attach each constraint as low in the tree as it applies: a constraint is checked at its own
@@ -233,8 +234,8 @@ access.config.parallel_layouts: no valid layout for 'model' on 8 core(s)
 `iter_layouts` checks its arguments when it is called, before you ask for any layout. It raises:
 
 - `TypeError` if `allocations` is not a `RootAllocation`;
-- `ValueError` if `total_cores` is less than 1, if the strategy tree does not name exactly the
-  components of the tree at every level, or if fractional bounds leave a component no count.
+- `ValueError` if `total_cores` is less than 1, if the strategy tree names a component that the
+  component tree does not have at that level, or if fractional bounds leave a component no count.
 
 Some mistakes can only be found once the search reaches the component involved. They raise
 `ValueError` on the first `next()`, and not on the call. These are a `WeightedAllocation` under a

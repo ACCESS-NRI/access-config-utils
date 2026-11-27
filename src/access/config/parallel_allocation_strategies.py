@@ -1037,23 +1037,6 @@ class FreeAllocation(AllocationStrategy):
             for rest in cls._iter_core_shares(rest_allocs, budget - c):
                 yield (c, *rest)
 
-    @classmethod
-    def _tree_for(cls, component: ParallelComponent) -> FreeAllocation:
-        """Return an all-free strategy tree mirroring *component*'s shape.
-
-        ``resolve_root_strategy`` builds the default tree from this, one call per
-        sub-component of the root: every component takes any core count, bounded only by
-        what its parent holds. The root itself is a ``RootAllocation`` and so is not one
-        of these.
-
-        Args:
-            component (ParallelComponent): Root of the component subtree to mirror.
-
-        Returns:
-            FreeAllocation: A strategy tree with one free node per component.
-        """
-        return cls(subcomponents={sub.name: cls._tree_for(sub) for sub in component.subcomponents})
-
 
 @dataclass(frozen=True, kw_only=True)
 class WholeRangeAllocation(AllocationStrategy):
@@ -1485,10 +1468,9 @@ def resolve_root_strategy(
 
     Args:
         component (ParallelComponent): Root of the component tree to lay the strategy over.
-        allocations (RootAllocation | None): The caller's strategy tree, or ``None`` to
-            build an all-free one mirroring *component*. Note that ``None`` gives a
-            sub-component of a shared parent a ``FreeAllocation()``, where a tree leaving it
-            out gives it a ``WholeRangeAllocation()``.
+        allocations (RootAllocation | None): The caller's strategy tree, or ``None``, which
+            is ``RootAllocation()``: a tree that states nothing, so that every component
+            takes its default.
         total_cores (int): The whole budget, which the fractional bounds are shares of.
 
     Returns:
@@ -1501,10 +1483,8 @@ def resolve_root_strategy(
             *total_cores*.
     """
     if allocations is None:
-        # An all-free tree states no bound at all, so there is nothing in it to resolve.
-        return RootAllocation(
-            subcomponents={sub.name: FreeAllocation._tree_for(sub) for sub in component.subcomponents}
-        )
+        # No strategy is one that states nothing, so every component takes its default.
+        allocations = RootAllocation()
     if not isinstance(allocations, RootAllocation):
         raise TypeError(
             f"allocations must be a RootAllocation, got {type(allocations).__name__}. The root "

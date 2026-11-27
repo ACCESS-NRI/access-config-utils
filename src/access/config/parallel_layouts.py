@@ -438,11 +438,12 @@ def iter_layouts(
         component (ParallelComponent): Root of the component tree. It receives all of
             *total_cores*.
         total_cores (int): Total number of CPU cores available. Must be >= 1.
-        allocations (RootAllocation | None): Allocation strategy for *component*, with one
-            entry in ``subcomponents`` for every sub-component at every level - there is no
-            default mode, so a component to be left open carries an explicit
-            ``FreeAllocation()``. ``None`` (the default) builds an all-free tree at ``(1,
-            1)`` thread. The root is a ``RootAllocation``, which states no core count of its
+        allocations (RootAllocation | None): Allocation strategy for *component*. A
+            sub-component that ``subcomponents`` leaves out, at any level, takes its
+            default: ``WholeRangeAllocation()`` under a ``CoreSharing.SHARED`` parent, and
+            ``FreeAllocation()`` under any other. ``None`` (the default) is
+            ``RootAllocation()``, which leaves every component out, at ``(1, 1)`` thread.
+            The root is a ``RootAllocation``, which states no core count of its
             own because *component* always receives the whole budget; its ``thread_range``
             is the thread range every component inherits unless it overrides it, and its
             ``subcomponents``, ``local_constraints`` and ``group_constraints`` are honoured
@@ -456,12 +457,12 @@ def iter_layouts(
 
     Raises:
         TypeError: If *allocations* is not a ``RootAllocation``.
-        ValueError: If *total_cores* < 1, or if the strategy tree does not name exactly
-            *component*'s sub-components, at any depth. A ``WeightedAllocation`` laid over
-            a sub-component whose parent shares its cores is a ``ValueError`` too, but the
-            one this call cannot raise eagerly: a strategy's mode is not consulted until
-            the parent holding it is reached, so it surfaces on the first layout requested
-            rather than here.
+        ValueError: If *total_cores* < 1, or if the strategy tree names a component that is
+            not a sub-component of the matching one, at any depth. A ``WeightedAllocation``
+            laid over a sub-component whose parent shares its cores is a ``ValueError`` too,
+            but the one this call cannot raise eagerly: a strategy's mode is not consulted
+            until the parent holding it is reached, so it surfaces on the first layout
+            requested rather than here.
 
     Examples:
         Take the first valid layout without enumerating the rest:

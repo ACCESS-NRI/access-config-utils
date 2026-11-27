@@ -210,6 +210,22 @@ class TestIterLayoutsLeaf:
         assert left_out == list(iter_layouts(parent, total_cores=4, allocations=explicit))
         assert len(left_out) == 3
 
+    def test_no_strategy_is_one_that_states_nothing(self) -> None:
+        """Test that ``allocations=None`` gives each component its default."""
+        shared = ParallelComponent(
+            "s", core_sharing=CoreSharing.SHARED, subcomponents=(ParallelComponent("a"), ParallelComponent("b"))
+        )
+        parent = ParallelComponent("p", subcomponents=(shared, ParallelComponent("c")))
+
+        layouts = list(iter_layouts(parent, total_cores=4))
+
+        assert layouts == list(iter_layouts(parent, total_cores=4, allocations=RootAllocation()))
+        assert all(
+            sub.n_cores == layout.sub_layouts[0].n_cores
+            for layout in layouts
+            for sub in layout.sub_layouts[0].sub_layouts
+        )
+
     def test_a_sub_component_of_a_shared_parent_left_out_takes_the_whole_range(self) -> None:
         """Test that a sub-component a shared parent's strategy leaves out takes it all."""
         shared = ParallelComponent(

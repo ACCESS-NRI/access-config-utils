@@ -611,10 +611,11 @@ header in `__init__.py`. Structure is a review matter; line length is not.
   unknown name is still `ValueError`, before the fractions are resolved. The default is chosen
   by module-level code below the modes, since choosing it knows the modes: don't give the base a
   default mode, or a field default that is one. A tree that leaves nothing out comes back as the
-  same object. `iter_layouts(allocations=None)` still builds an all-free tree via
-  `FreeAllocation._tree_for`, so under a shared parent `None` and a tree leaving a sub-component
-  out differ. Either way the enumerator holds a complete tree, which is why `strategies_for` can
-  index `subcomponents` directly.
+  same object. `iter_layouts(allocations=None)` is `RootAllocation()`, completed the same way, so
+  no strategy and a strategy that names nothing give the same layouts. The enumerator always holds
+  a complete tree, which is why `strategies_for` can index `subcomponents` directly. What this gives
+  up is the loud failure of a missing entry: a component forgotten in a strategy, or added to a
+  model later, silently takes its default, which under a shared parent pins it to the whole range.
 - **The scheduler is mode-agnostic**, and this is the invariant most worth protecting. Adding a
   mode means writing the class, declaring `_phase`, and implementing `_iter_core_shares`;
   nothing in `iter_core_splits` is edited, and there is no `isinstance` chain to extend. The
@@ -650,7 +651,7 @@ header in `__init__.py`. Structure is a review matter; line length is not.
   one such import, `_occupied` into `parallel_layouts`, is a Housekeeping item.) Everything a
   mode knows about *itself* stays `_`-prefixed and inside `parallel_allocation_strategies`:
   `_with_defaults`, `_core_range`, `_resolve_fractions`, `_iter_core_shares`,
-  `_shared_core_range`, `_tree_for`, `_group_by_mode`. What a caller touches is the six classes'
+  `_shared_core_range`, `_group_by_mode`. What a caller touches is the six classes'
   fields plus `iter_layouts`. Doctests run on private methods too, but keep *class-level*
   examples on the public API.
 - Code that knows *all* the modes at once sits at module level below them, never on the base

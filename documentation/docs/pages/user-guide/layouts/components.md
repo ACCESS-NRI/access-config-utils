@@ -126,9 +126,11 @@ parent needs at least their total. A parent can instead make its sub-components 
 They then all draw on the same range of cores and run on it in turn, as the components driven by
 NUOPC in ACCESS-OM3 do. The `core_offset` of a sub-component says where in the range it starts. This
 is the core index that ESMF calls `rootpe`. Here two components share 4 cores, and the second one
-starts at the third core:
+starts at the third core. Each is given a `FreeAllocation()`, so that the search offers it every count
+of cores that fits:
 
 ```python
+from access.config import FreeAllocation, RootAllocation
 from access.config.parallel_component import CoreSharing
 
 shared = ParallelComponent(
@@ -136,7 +138,8 @@ shared = ParallelComponent(
     core_sharing=CoreSharing.SHARED,
     subcomponents=(ParallelComponent("cpl"), ParallelComponent("ice", core_offset=2)),
 )
-for layout in iter_layouts(shared, 4):
+free = RootAllocation(subcomponents={"cpl": FreeAllocation(), "ice": FreeAllocation()})
+for layout in iter_layouts(shared, 4, allocations=free):
     print([(sub.name, sub.core_offset, sub.n_cores) for sub in layout.sub_layouts])
 ```
 
@@ -165,6 +168,8 @@ Offsets come with two rules:
   that leave cores idle. A sub-component left with no layout is a dead end, which is reported at
   `DEBUG` level.
 
-Each sub-component of a shared parent is offered every core count that fits, independently of the
-others. The number of combinations therefore multiplies quickly. [Allocating cores](allocations.md)
-describes how to pin them down.
+Given a `FreeAllocation()`, each sub-component of a shared parent is offered every core count that
+fits, independently of the others. The number of combinations therefore multiplies quickly. A
+sub-component that the allocation strategy leaves out takes the whole range from its offset instead,
+which is the one layout `[('cpl', 0, 4), ('ice', 2, 2)]` here. [Allocating cores](allocations.md)
+describes this default, and how to pin the others down.

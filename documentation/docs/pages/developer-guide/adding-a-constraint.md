@@ -118,6 +118,8 @@ layouts that `iter_layouts` yields with it.
 
 - Add what the constraint checks to the line of its family in the module docstring of
   `parallel_constraints`, and update the count of constraints in `AGENTS.md`.
+- Export it from the package: add it to the imports and the `__all__` of `access/config/__init__.py`,
+  and update the count of constraints in `tests/test_init.py`.
 - Add it to the table of [Constraints](../user-guide/layouts/constraints.md#the-ready-made-constraints).
 - An `Examples:` block in its docstring runs as a doctest.
 - Run the checks in [Contributing](contributing.md#before-committing).

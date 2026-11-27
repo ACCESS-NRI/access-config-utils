@@ -137,5 +137,7 @@ If the constraint is meant to prune a real enumeration, also add an integration 
 - Update the module docstring's list of families: add what the new rule checks to its family's
   line (as `EqualCoresGroupConstraint` did for core distribution), or add a family.
 - Update the constraint count in the repository layout of `AGENTS.md`.
+- Export the constraint from `access.config`, in the imports and the `__all__` of
+  `src/access/config/__init__.py`, and update the count of constraints in `tests/test_init.py`.
 - Any `Examples:` block you add runs as a doctest (`tests/test_parallel_doctests.py`).
 - Run the gate in [`skills/check/SKILL.md`](../check/SKILL.md).
